@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+if [[ "${CARGO_BUILD_TARGET:-}" == aarch64-apple-darwin ]]; then
+  export MACOSX_DEPLOYMENT_TARGET=11.0
+fi
 cargo build --release --locked
 bundle="dist/macos/EditorTool.app/Contents"
 mkdir -p "$bundle/MacOS" "$bundle/Resources"
