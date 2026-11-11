@@ -4,7 +4,12 @@ Push-Location -LiteralPath $projectRoot
 try {
     $buildTarget=$env:CARGO_BUILD_TARGET
     $buildArgs=@('build','--release','--locked')
-    if($buildTarget -like 'aarch64*') { $buildArgs += '--no-default-features' }
+    # Build MSVC libraries with the same CRT mode as Rust instead of mixing a
+    # dynamic-CRT prebuilt FLTK archive with the static-CRT release executable.
+    if($buildTarget -like '*msvc') {
+        $buildArgs += @('--no-default-features','--features','fltk/static-msvcrt')
+        $env:CFLTK_TOOLCHAIN=Join-Path $projectRoot 'packaging/msvc-static.cmake'
+    } elseif($buildTarget -like 'aarch64*') { $buildArgs += '--no-default-features' }
     cargo @buildArgs
     if ($LASTEXITCODE -ne 0) { throw 'Rust-Build fehlgeschlagen.' }
     New-Item -ItemType Directory -Force -Path 'dist/windows' | Out-Null
