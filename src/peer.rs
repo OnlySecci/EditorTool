@@ -113,6 +113,8 @@ pub struct Document {
     pub history: Vec<Revision>,
     pub members: Vec<Peer>,
     pub active: bool,
+    #[serde(default)]
+    pub departed: BTreeSet<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Offer {
@@ -138,7 +140,11 @@ struct Outbox {
 #[derive(Default, Serialize, Deserialize)]
 struct State {
     #[serde(default)]
+    departures: BTreeMap<String, BTreeSet<String>>,
+    #[serde(default)]
     denied: BTreeSet<String>,
+    #[serde(default)]
+    leaves: Vec<(String, String)>,
     #[serde(default)]
     inbox: BTreeMap<String, (Offer, Acceptance)>,
     #[serde(default)]
@@ -157,6 +163,7 @@ struct State {
 #[derive(Clone, Debug)]
 pub enum Event {
     Changed,
+    Left(String, String, String),
     Trust(Peer),
     Offer(Offer),
     Received(Offer, Acceptance),
@@ -176,6 +183,9 @@ pub struct Binding {
 }
 #[derive(Serialize, Deserialize)]
 enum Request {
+    Leave {
+        doc: String,
+    },
     Hello {
         info: Peer,
     },
@@ -369,9 +379,12 @@ impl Inner {
     }
     fn allowed(&self, s: &State, doc: &str, peer: &str) -> bool {
         s.config.clients.iter().any(|p| p.id == peer)
-            && s.docs
-                .get(doc)
-                .is_some_and(|d| d.active && d.members.iter().any(|p| p.id == peer))
+            && s.docs.get(doc).is_some_and(|d| {
+                d.active
+                    && !d.departed.contains(peer)
+                    && !d.departed.contains(&self.id)
+                    && d.members.iter().any(|p| p.id == peer)
+            })
     }
 }
 fn validate_revision(r: &Revision) -> Result<(), String> {
@@ -447,7 +460,10 @@ impl Service {
         });
         let worker = inner.clone();
         thread::spawn(move || loop {
-            let pending = !worker.state.lock().unwrap().outbox.is_empty();
+            let pending = {
+                let s = worker.state.lock().unwrap();
+                !s.outbox.is_empty() || !s.leaves.is_empty()
+            };
             let _ = rx.recv_timeout(Duration::from_secs(
                 if !worker.enabled.load(Ordering::Relaxed) {
                     3600
@@ -654,6 +670,7 @@ impl Service {
             let removed = c.clients.remove(index);
             let mut s = self.inner.state.lock().unwrap();
             s.outbox.retain(|o| o.target != removed.id);
+            s.leaves.retain(|(_, target)| target != &removed.id);
             let offers: Vec<_> = s
                 .offers
                 .values()
@@ -696,11 +713,37 @@ impl Service {
         s.inbox.remove(id);
         self.inner.save(&s)
     }
+    pub fn leave(&self, id: &str) -> Result<(), String> {
+        let mut s = self.inner.state.lock().unwrap();
+        let d = s.docs.get_mut(id).ok_or("Sync-Dokument fehlt")?;
+        let targets: Vec<_> = d
+            .members
+            .iter()
+            .filter(|p| p.id != self.inner.id && !d.departed.contains(&p.id))
+            .map(|p| p.id.clone())
+            .collect();
+        d.active = false;
+        d.departed.insert(self.inner.id.clone());
+        s.outbox.retain(|o| !o.offer.sync || o.offer.doc != id);
+        for target in targets {
+            if !s
+                .leaves
+                .iter()
+                .any(|(doc, peer)| doc == id && peer == &target)
+            {
+                s.leaves.push((id.into(), target));
+            }
+        }
+        self.inner.save(&s)?;
+        drop(s);
+        self.wake();
+        Ok(())
+    }
     pub fn set_active(&self, ids: &BTreeSet<String>) {
         let mut s = self.inner.state.lock().unwrap();
         let mut changed = false;
         for d in s.docs.values_mut() {
-            let active = ids.contains(&d.id);
+            let active = ids.contains(&d.id) && !d.departed.contains(&self.inner.id);
             if d.active != active {
                 d.active = active;
                 changed = true;
@@ -756,6 +799,7 @@ impl Service {
                     history: vec![],
                     members: members.clone(),
                     active: true,
+                    departed: BTreeSet::new(),
                 },
             );
         }
@@ -910,7 +954,7 @@ struct Verifier {
     port: u16,
 }
 fn schemes() -> Vec<SignatureScheme> {
-    rustls::crypto::ring::default_provider()
+    rustls::crypto::aws_lc_rs::default_provider()
         .signature_verification_algorithms
         .supported_schemes()
 }
@@ -923,7 +967,7 @@ fn sig12(
         msg,
         cert,
         sig,
-        &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        &rustls::crypto::aws_lc_rs::default_provider().signature_verification_algorithms,
     )
 }
 fn sig13(
@@ -935,7 +979,7 @@ fn sig13(
         msg,
         cert,
         sig,
-        &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        &rustls::crypto::aws_lc_rs::default_provider().signature_verification_algorithms,
     )
 }
 impl ServerCertVerifier for Verifier {
@@ -1112,21 +1156,19 @@ fn serve(inner: &Arc<Inner>, mut socket: TcpStream, remote: SocketAddr) -> Resul
     socket
         .set_write_timeout(Some(Duration::from_secs(15)))
         .map_err(err)?;
-    let config = rustls::ServerConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()
-    .map_err(err)?
-    .with_client_cert_verifier(Arc::new(Verifier {
-        inner: inner.clone(),
-        host: remote.ip().to_canonical().to_string(),
-        port: PORT,
-    }))
-    .with_single_cert(
-        vec![CertificateDer::from(inner.cert.clone())],
-        PrivatePkcs8KeyDer::from(inner.key.clone()).into(),
-    )
-    .map_err(err)?;
+    let config = rustls::ServerConfig::builder_with_provider(Arc::new(sharing_provider()))
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .map_err(err)?
+        .with_client_cert_verifier(Arc::new(Verifier {
+            inner: inner.clone(),
+            host: remote.ip().to_canonical().to_string(),
+            port: PORT,
+        }))
+        .with_single_cert(
+            vec![CertificateDer::from(inner.cert.clone())],
+            PrivatePkcs8KeyDer::from(inner.key.clone()).into(),
+        )
+        .map_err(err)?;
     let mut connection = rustls::ServerConnection::new(Arc::new(config)).map_err(err)?;
     while connection.is_handshaking() {
         connection.complete_io(&mut socket).map_err(err)?;
@@ -1143,6 +1185,56 @@ fn serve(inner: &Arc<Inner>, mut socket: TcpStream, remote: SocketAddr) -> Resul
         return Err("Freigabe ist deaktiviert.".into());
     }
     match read_header::<Request>(&mut stream)? {
+        Request::Leave { doc } => {
+            let mut s = inner.state.lock().unwrap();
+            if !s.docs.contains_key(&doc) {
+                if doc.len() > 128 {
+                    return Err("Ungültige Dokumentkennung".into());
+                }
+                s.departures
+                    .entry(doc.clone())
+                    .or_default()
+                    .insert(peer.clone());
+                if s.departures.len() > 1024 {
+                    let oldest = s.departures.keys().next().unwrap().clone();
+                    s.departures.remove(&oldest);
+                }
+            }
+            let cancel: Vec<_> = s
+                .offers
+                .values()
+                .filter(|o| o.doc == doc && o.revision.author == peer)
+                .map(|o| o.id.clone())
+                .collect();
+            for id in cancel {
+                s.offers.remove(&id);
+                s.decisions.remove(&id);
+                s.denied.insert(id);
+            }
+            let Some(d) = s.docs.get_mut(&doc) else {
+                inner.save(&s)?;
+                drop(s);
+                write_header(&mut stream, &Reply::Done)?;
+                return Ok(());
+            };
+            if !d.members.iter().any(|p| p.id == peer) {
+                return Err("Dokument nicht freigegeben".into());
+            }
+            let name = d
+                .members
+                .iter()
+                .find(|p| p.id == peer)
+                .map(|p| p.name.clone())
+                .unwrap_or_default();
+            let changed = d.departed.insert(peer.clone());
+            inner.save(&s)?;
+            drop(s);
+            if changed {
+                inner.event(Event::Left(doc, peer, name));
+                inner.event(Event::Changed);
+            }
+            write_header(&mut stream, &Reply::Done)?;
+        }
         Request::Hello { mut info } => {
             info.host = remote.ip().to_canonical().to_string();
             if info.id != peer || !peer_valid(&info) {
@@ -1268,6 +1360,7 @@ fn serve(inner: &Arc<Inner>, mut socket: TcpStream, remote: SocketAddr) -> Resul
             if let Some((a, o)) = acceptance {
                 let mut s = inner.state.lock().unwrap();
                 if o.sync {
+                    let departed = s.departures.remove(&doc).unwrap_or_default();
                     s.docs.entry(doc.clone()).or_insert(Document {
                         id: doc.clone(),
                         title: o.title.clone(),
@@ -1276,6 +1369,7 @@ fn serve(inner: &Arc<Inner>, mut socket: TcpStream, remote: SocketAddr) -> Resul
                         history: vec![],
                         members: o.members.clone(),
                         active: true,
+                        departed,
                     });
                 }
                 s.completed.insert(o.id.clone(), o.revision.hash.clone());
@@ -1334,22 +1428,20 @@ fn connect(
     socket
         .set_write_timeout(Some(Duration::from_secs(15)))
         .map_err(err)?;
-    let config = rustls::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()
-    .map_err(err)?
-    .dangerous()
-    .with_custom_certificate_verifier(Arc::new(Verifier {
-        inner: inner.clone(),
-        host: peer.host.clone(),
-        port: peer.port,
-    }))
-    .with_client_auth_cert(
-        vec![CertificateDer::from(inner.cert.clone())],
-        PrivatePkcs8KeyDer::from(inner.key.clone()).into(),
-    )
-    .map_err(err)?;
+    let config = rustls::ClientConfig::builder_with_provider(Arc::new(sharing_provider()))
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .map_err(err)?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(Verifier {
+            inner: inner.clone(),
+            host: peer.host.clone(),
+            port: peer.port,
+        }))
+        .with_client_auth_cert(
+            vec![CertificateDer::from(inner.cert.clone())],
+            PrivatePkcs8KeyDer::from(inner.key.clone()).into(),
+        )
+        .map_err(err)?;
     let connection = rustls::ClientConnection::new(
         Arc::new(config),
         ServerName::try_from("editortool.local").unwrap(),
@@ -1380,13 +1472,36 @@ fn sweep(inner: &Arc<Inner>) {
             if info.id != peer.id && !peer.id.is_empty() {
                 return Err("Gerätekennung stimmt nicht überein.".into());
             }
+            let leaves = inner
+                .state
+                .lock()
+                .unwrap()
+                .leaves
+                .iter()
+                .filter(|(_, target)| target == &info.id)
+                .cloned()
+                .collect::<Vec<_>>();
+            for (doc, target) in leaves {
+                let mut stream = connect(inner, &peer)?;
+                write_header(&mut stream, &Request::Leave { doc: doc.clone() })?;
+                if matches!(read_header(&mut stream)?, Reply::Done) {
+                    let mut s = inner.state.lock().unwrap();
+                    s.leaves.retain(|(d, p)| d != &doc || p != &target);
+                    inner.save(&s)?;
+                }
+            }
             let docs = inner
                 .state
                 .lock()
                 .unwrap()
                 .docs
                 .values()
-                .filter(|d| d.active && d.members.iter().any(|p| p.id == info.id))
+                .filter(|d| {
+                    d.active
+                        && !d.departed.contains(&info.id)
+                        && !d.departed.contains(&inner.id)
+                        && d.members.iter().any(|p| p.id == info.id)
+                })
                 .cloned()
                 .collect::<Vec<_>>();
             for d in docs {
@@ -1523,4 +1638,12 @@ fn sweep(inner: &Arc<Inner>) {
             inner.event(Event::Changed);
         }
     }
+}
+
+fn sharing_provider() -> rustls::crypto::CryptoProvider {
+    let mut provider = rustls::crypto::aws_lc_rs::default_provider();
+    provider.kx_groups = vec![rustls::crypto::aws_lc_rs::kx_group::X25519MLKEM768];
+    provider.cipher_suites =
+        vec![rustls::crypto::aws_lc_rs::cipher_suite::TLS13_AES_256_GCM_SHA384];
+    provider
 }

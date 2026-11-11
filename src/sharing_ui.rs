@@ -6,6 +6,7 @@ use fltk::{
 };
 pub struct Clients {
     pub win: Window,
+    pub page: crate::settings_page::Page,
     pub enabled: fltk::button::CheckButton,
     pub background: fltk::button::CheckButton,
     pub name: Input,
@@ -21,11 +22,11 @@ impl Clients {
     pub fn new(tx: app::Sender<Message>) -> Self {
         Group::set_current(None::<&Group>);
         let mut win = Window::default()
-            .with_size(660, 590)
+            .with_size(700, 800)
             .with_label("Clients und Synchronisierung — EditorTool");
         win.set_color(PANEL);
         chrome::set_icon(&mut win);
-        let mut root = Flex::new(20, 18, 620, 554, None).column();
+        let mut root = Flex::new(20, 18, 660, 764, None).column();
         root.set_spacing(10);
         let heading = theme::heading("Clients und Synchronisierung", 21);
         root.fixed(&heading, 30);
@@ -40,19 +41,29 @@ impl Clients {
         root.fixed(&background, 28);
         let mut row = Flex::default().row();
         row.set_spacing(10);
+        let mut field = Flex::default().column();
+        field.set_spacing(4);
+        let label = theme::heading("Name dieses Geräts", 12);
+        field.fixed(&label, 18);
         let mut name = Input::default();
         theme::input(&mut name);
         name.set_tooltip("Name dieses Geräts");
+        field.end();
+        let mut field = Flex::default().column();
+        field.set_spacing(4);
+        let label = theme::heading("Lokaler Port", 12);
+        field.fixed(&label, 18);
         let mut port = Input::default();
         theme::input(&mut port);
         port.set_tooltip("Lokaler TCP-Port");
-        row.fixed(&port, 90);
+        field.end();
+        row.fixed(&field, 100);
         let mut apply = Button::default().with_label("Übernehmen");
         theme::button(&mut apply, true, None);
         apply.emit(tx, (0, Action::ApplySharing));
         row.fixed(&apply, 128);
         row.end();
-        root.fixed(&row, 34);
+        root.fixed(&row, 58);
         enabled.emit(tx, (0, Action::ApplySharing));
         let mut fingerprint = Output::default();
         fingerprint.set_frame(FrameType::FlatBox);
@@ -61,32 +72,67 @@ impl Clients {
         fingerprint.set_text_size(11);
         fingerprint.set_tooltip("Eigener Schlüssel-Fingerabdruck – beim Verbinden vergleichen");
         root.fixed(&fingerprint, 30);
+        let mut crypto=Frame::default().with_label("Verschlüsselung: TLS 1.3 · AES-256-GCM\nHybrider Schlüsselaustausch: X25519 + ML-KEM-768 (Post-Quanten-Schutz)\nGeräteidentität: bestätigter SHA-256-Fingerabdruck, klassische Signatur\nErforderlich auf beiden Geräten: EditorTool 1.4.1 oder neuer");
+        crypto.set_label_size(12);
+        crypto.set_label_color(FG);
+        crypto.set_align(Align::Left | Align::Inside | Align::Wrap);
+        root.fixed(&crypto, 82);
+        let mut headers = Flex::default().row();
+        for (text, width) in [
+            ("Client-Name", 160),
+            ("IP-Adresse : Port", 260),
+            ("Verbindungsstatus", 0),
+        ] {
+            let label = theme::heading(text, 12);
+            if width > 0 {
+                headers.fixed(&label, width);
+            }
+        }
+        headers.end();
+        root.fixed(&headers, 20);
         let mut clients = HoldBrowser::default();
         clients.set_frame(FrameType::FlatBox);
         clients.set_color(BG);
         clients.set_label_color(FG);
         clients.set_text_size(13);
         clients.set_format_char('\0');
+        clients.set_column_char('\t');
+        clients.set_column_widths(&[160, 260, 0]);
         let mut row = Flex::default().row();
         row.set_spacing(8);
+        let mut field = Flex::default().column();
+        field.set_spacing(4);
+        let label = theme::heading("Client-Name", 12);
+        field.fixed(&label, 18);
         let mut alias = Input::default();
         theme::input(&mut alias);
         alias.set_tooltip("Client-Name");
-        row.fixed(&alias, 130);
+        field.end();
+        row.fixed(&field, 140);
+        let mut field = Flex::default().column();
+        field.set_spacing(4);
+        let label = theme::heading("IP-Adresse", 12);
+        field.fixed(&label, 18);
         let mut host = Input::default();
         theme::input(&mut host);
         host.set_tooltip("Interne IP-Adresse");
+        field.end();
+        let mut field = Flex::default().column();
+        field.set_spacing(4);
+        let label = theme::heading("Port", 12);
+        field.fixed(&label, 18);
         let mut remote_port = Input::default();
         theme::input(&mut remote_port);
         remote_port.set_tooltip("Client-Port");
         remote_port.set_value(&peer::PORT.to_string());
-        row.fixed(&remote_port, 80);
+        field.end();
+        row.fixed(&field, 80);
         let mut add = Button::default().with_label("Hinzufügen");
         theme::button(&mut add, false, None);
         add.emit(tx, (0, Action::AddClient));
         row.fixed(&add, 120);
         row.end();
-        root.fixed(&row, 34);
+        root.fixed(&row, 58);
         let mut row = Flex::default().row();
         row.set_spacing(8);
         let mut remove = Button::default().with_label("Client entfernen");
@@ -105,8 +151,10 @@ impl Clients {
         root.end();
         win.end();
         win.set_callback(|w| w.hide());
+        let page = crate::settings_page::Page::new(&mut win, &root);
         Self {
             win,
+            page,
             enabled,
             background,
             name,
@@ -125,7 +173,7 @@ impl Clients {
         self.clients.clear();
         for p in &config.clients {
             self.clients.add(&format!(
-                "{}    {}:{}    {}{}",
+                "{}\t{}:{}\t{}{}",
                 p.name,
                 p.host,
                 p.port,
@@ -243,7 +291,7 @@ impl Transfer {
                 self.stop.show();
                 if let Some(d) = binding.and_then(|b| service.document(&b.doc)) {
                     for (i, p) in self.choices.iter().enumerate() {
-                        if d.members.iter().any(|m| m.id == p.id) {
+                        if d.members.iter().any(|m| m.id == p.id) && !d.departed.contains(&p.id) {
                             self.clients.set_checked(i as i32 + 1);
                         }
                     }

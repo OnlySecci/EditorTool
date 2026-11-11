@@ -116,6 +116,105 @@ pub fn confirm_save(owner: &Window, title: &str) -> i32 {
     decision
 }
 
+/// Styled consent sheet. Dismissal never grants permission.
+pub fn decision(
+    owner: Option<&Window>,
+    title: &str,
+    message: &str,
+    details: &str,
+    choices: &[&str],
+    primary: usize,
+) -> Option<usize> {
+    Group::set_current(None::<&Group>);
+    let selected = Rc::new(Cell::new(None));
+    let detail_height = if details.is_empty() {
+        0
+    } else {
+        (details.lines().count() as i32 * 20 + 32).clamp(108, 240)
+    };
+    let message_height = (message.chars().count().div_ceil(78) as i32 * 20).clamp(60, 160);
+    let height = 160 + message_height + detail_height;
+    let mut win = Window::default().with_size(660, height).with_label(title);
+    win.set_color(PANEL);
+    win.make_modal(true);
+    set_icon(&mut win);
+    let mut root = Flex::new(24, 22, 612, height - 44, None).column();
+    root.set_spacing(14);
+    let label = theme::heading(title, 22);
+    root.fixed(&label, 32);
+    let mut message = Frame::default().with_label(message);
+    message.set_label_size(14);
+    message.set_label_color(theme::TEXT);
+    message.set_align(Align::Left | Align::Inside | Align::Wrap);
+    root.fixed(&message, message_height);
+    if !details.is_empty() {
+        let mut text = fltk::text::TextBuffer::default();
+        text.set_text(details);
+        let mut view = fltk::text::TextDisplay::default();
+        view.set_buffer(text);
+        view.set_color(BG);
+        view.set_text_color(theme::TEXT);
+        view.set_text_font(fltk::enums::Font::Courier);
+        view.set_text_size(12);
+        view.set_frame(FrameType::RFlatBox);
+        view.wrap_mode(fltk::text::WrapMode::AtBounds, 0);
+        view.set_scrollbar_size(14);
+        view.super_draw_first(true);
+        view.draw(|w| theme::draw_scrollbars(w));
+        let grab = Cell::new(None);
+        view.handle(move |w, e| theme::handle_scrollbars(w, e, &grab));
+        root.fixed(&view, detail_height);
+    }
+    let mut row = Flex::default().row();
+    row.set_spacing(10);
+    let mut first = None;
+    for (i, label) in choices.iter().enumerate() {
+        let mut button = Button::default().with_label(label);
+        theme::button(&mut button, i == primary, None);
+        if i == 0 {
+            first = Some(button.clone());
+        }
+        let value = selected.clone();
+        let mut sheet = win.clone();
+        button.set_callback(move |_| {
+            value.set(Some(i));
+            sheet.hide();
+        });
+    }
+    row.end();
+    root.fixed(&row, 40);
+    root.end();
+    win.end();
+    win.set_callback(|w| w.hide());
+    win.handle(|w, e| {
+        if e == Event::KeyDown && app::event_key() == Key::Escape {
+            w.hide();
+            true
+        } else {
+            false
+        }
+    });
+    if let Some(owner) = owner {
+        win.set_pos(
+            owner.x() + (owner.w() - 660) / 2,
+            owner.y() + (owner.h() - height) / 2,
+        );
+    } else {
+        win = win.center_screen();
+    }
+    win.show();
+    dark_title(&win);
+    if let Some(mut button) = first {
+        button.take_focus().ok();
+    }
+    while win.shown() {
+        app::wait();
+    }
+    let result = selected.get();
+    Window::delete(win);
+    result
+}
+
 pub struct SearchPanel {
     pub win: Window,
     pub search: Input,
@@ -275,6 +374,7 @@ impl SearchPanel {
 
 pub struct SettingsPanel {
     pub win: Window,
+    pub page: crate::settings_page::Page,
     horizontal: Button,
     vertical: Button,
     wrap: CheckButton,
@@ -289,11 +389,11 @@ impl SettingsPanel {
     pub fn new(wid: usize, tx: app::Sender<Message>, vertical: bool) -> Self {
         Group::set_current(None::<&Group>);
         let mut win = Window::default()
-            .with_size(560, 680)
+            .with_size(560, 760)
             .with_label("Einstellungen — EditorTool");
         win.set_color(PANEL);
         set_icon(&mut win);
-        let mut root = Flex::new(24, 20, 512, 640, None).column();
+        let mut root = Flex::new(24, 20, 512, 720, None).column();
         root.set_spacing(12);
         let title = theme::heading("Einstellungen", 23);
         root.fixed(&title, 34);
@@ -366,8 +466,10 @@ impl SettingsPanel {
         root.end();
         win.end();
         win.set_callback(|w| w.hide());
+        let page = crate::settings_page::Page::new(&mut win, &root);
         let mut panel = Self {
             win,
+            page,
             horizontal,
             vertical: vertical_button,
             wrap,
@@ -410,13 +512,6 @@ impl SettingsPanel {
             .set_label_color(if vertical { theme::TEXT } else { MUTED });
         self.horizontal.redraw();
         self.vertical.redraw();
-    }
-    pub fn show(&mut self, owner: &Window) {
-        self.sync();
-        self.win
-            .set_pos(owner.x() + (owner.w() - 520) / 2, owner.y() + 60);
-        self.win.show();
-        dark_title(&self.win);
     }
 }
 

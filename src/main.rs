@@ -1,4 +1,5 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+mod caret;
 mod chrome;
 mod core;
 mod ipc;
@@ -6,6 +7,7 @@ mod peer;
 mod preferences;
 mod rich;
 mod session;
+mod settings_page;
 mod sharing_runtime;
 mod sharing_ui;
 mod split;
@@ -93,6 +95,7 @@ enum Action {
     ShowFind(bool),
     ToggleReplace,
     Settings,
+    Zoom(i32),
     ImageAutoSize(bool),
     TabContext(usize, i32, i32),
     CopyPath,
@@ -152,6 +155,7 @@ struct Document {
     path: Option<PathBuf>,
     saved_revision: u64,
     comparison_visible: bool,
+    page: u8,
     sharing: Option<peer::Binding>,
     display_name: Option<String>,
     received_offer: Option<String>,
@@ -193,6 +197,9 @@ impl Document {
     }
     fn snapshot(&self) -> session::TabState {
         session::TabState {
+            page: self.page,
+            zoom: self.left.zoom(),
+            right_zoom: self.right.zoom(),
             sharing: self.sharing.clone(),
             display_name: self.display_name.clone(),
             received_offer: self.received_offer.clone(),
@@ -210,9 +217,20 @@ impl Document {
     }
 
     fn dirty(&self) -> bool {
+        if self.page != 0 {
+            return false;
+        }
         self.left_meta.borrow().revision != self.saved_revision
     }
     fn title(&self) -> String {
+        if self.page != 0 {
+            return if self.page == 1 {
+                "Einstellungen"
+            } else {
+                "Clients und Sync"
+            }
+            .into();
+        }
         format!(
             "{}{}",
             self.path
@@ -247,8 +265,13 @@ impl Document {
         };
         let c = meta.borrow().counts;
         let cursor = editor.insert_position();
+        let zoom = if self.target_right.get() {
+            self.right.zoom()
+        } else {
+            self.left.zoom()
+        };
         let key = format!(
-            "{}:{cursor}:{:?}:{}:{}",
+            "{zoom}:{}:{cursor}:{:?}:{}:{}",
             meta.borrow().revision,
             buf.selection_position(),
             self.target_right.get(),
@@ -286,7 +309,7 @@ impl Document {
         } else {
             "Keine Auswahl".to_owned()
         };
-        let text = format!("Zeile {line}, Spalte {col}     ·     {} Zeilen     ·     {} Zeichen     ·     {} Bytes\n{selection}     ·     {}", c.breaks + 1, c.chars, c.bytes, format!("{} · {} Bilder · {}",self.language(self.target_right.get()).name(),if self.target_right.get(){self.right.image_count()}else{self.left.image_count()},self.report));
+        let text = format!("Zeile {line}, Spalte {col}     ·     {} Zeilen     ·     {} Zeichen     ·     {} Bytes\n{selection}     ·     {}", c.breaks + 1, c.chars, c.bytes, format!("{} · {} Bilder · Zoom {zoom} % · {}",self.language(self.target_right.get()).name(),if self.target_right.get(){self.right.image_count()}else{self.left.image_count()},self.report));
         if text != self.status_text {
             self.status.set_label(&text);
             self.status_text = text;
@@ -480,6 +503,31 @@ impl EditorWindow {
                 Action::Find,
             ),
             (
+                "&Einstellungen/Allgemein…",
+                Shortcut::Command | ',',
+                Action::Settings,
+            ),
+            (
+                "&Einstellungen/Clients und Sync…",
+                Shortcut::None,
+                Action::SharingSettings,
+            ),
+            (
+                "&Ansicht/Zoom/Vergrössern",
+                Shortcut::Command | '+',
+                Action::Zoom(10),
+            ),
+            (
+                "&Ansicht/Zoom/Verkleinern",
+                Shortcut::Command | '-',
+                Action::Zoom(-10),
+            ),
+            (
+                "&Ansicht/Zoom/100 %",
+                Shortcut::Command | '0',
+                Action::Zoom(0),
+            ),
+            (
                 "&Ansicht/Vergleich ein oder aus",
                 Shortcut::None,
                 Action::ToggleCompare,
@@ -493,11 +541,6 @@ impl EditorWindow {
                 "&Ansicht/Vergleichstext öffnen…",
                 Shortcut::None,
                 Action::Open(true),
-            ),
-            (
-                "&Ansicht/Einstellungen…",
-                Shortcut::Command | ',',
-                Action::Settings,
             ),
         ];
         menu.add_emit(
@@ -561,7 +604,6 @@ impl EditorWindow {
                 "Vergleich ein oder aus",
                 Action::ToggleCompare,
             ),
-            (theme::Icon::Settings, "Einstellungen", Action::Settings),
         ] {
             let mut control = Button::default();
             theme::button(&mut control, false, Some(glyph));
@@ -791,6 +833,7 @@ impl EditorWindow {
             path: None,
             saved_revision: 0,
             comparison_visible: false,
+            page: 0,
             sharing: None,
             display_name: None,
             received_offer: None,
@@ -809,6 +852,24 @@ impl EditorWindow {
         self.docs[self.active].left.take_focus().ok();
     }
 
+    fn open_settings_tab(&mut self, page: u8, wid: usize, tx: app::Sender<Message>) {
+        let index = if let Some(index) = self.docs.iter().position(|d| d.page == page) {
+            index
+        } else {
+            self.add_tab(wid, tx);
+            let d = &mut self.docs[self.active];
+            d.page = page;
+            d.panes.hide();
+            d.status.hide();
+            d.group.set_margins(0, 0, 0, 0);
+            self.active
+        };
+        self.action(Action::Select(index), wid, tx);
+        if page == 1 {
+            self.settings.sync();
+        }
+        self.tab_signature.clear();
+    }
     fn resize_docs(&mut self) {
         if self.vertical {
             let width = self
@@ -837,7 +898,7 @@ impl EditorWindow {
     fn refresh(&mut self, wid: usize, tx: app::Sender<Message>) {
         self.follow_focus(wid);
         self.resize_docs();
-        if let Some(d) = self.docs.get_mut(self.active) {
+        if let Some(d) = self.docs.get_mut(self.active).filter(|d| d.page == 0) {
             d.left.reflow();
             d.right.reflow();
             d.refresh();
@@ -848,6 +909,12 @@ impl EditorWindow {
             }
             let title = format!("{} — EditorTool", d.title());
             if self.route.get() == wid && self.win.label() != title {
+                self.win.set_label(&title);
+            }
+        }
+        if self.docs[self.active].page != 0 && self.route.get() == wid {
+            let title = format!("{} — EditorTool", self.docs[self.active].title());
+            if self.win.label() != title {
                 self.win.set_label(&title);
             }
         }
@@ -1071,6 +1138,28 @@ impl EditorWindow {
     }
 
     fn action(&mut self, action: Action, wid: usize, tx: app::Sender<Message>) {
+        if self.docs[self.active].page != 0 {
+            if matches!(action, Action::Open(false)) {
+                self.add_tab(wid, tx);
+            } else if matches!(
+                action,
+                Action::Save(_)
+                    | Action::Copy
+                    | Action::Paste
+                    | Action::ShowFind(_)
+                    | Action::InsertImage
+                    | Action::Undo
+                    | Action::Cut
+                    | Action::SelectAll
+                    | Action::SetLanguage(_)
+                    | Action::Compare
+                    | Action::ToggleCompare
+                    | Action::Open(true)
+                    | Action::Zoom(_)
+            ) {
+                return;
+            }
+        }
         match action {
             Action::TabContext(index, x, y) => {
                 if index >= self.docs.len() {
@@ -1084,6 +1173,19 @@ impl EditorWindow {
                 popup.set_text_color(FG);
                 popup.set_color(PANEL);
                 popup.set_text_size(13);
+                if self.docs[index].page != 0 {
+                    for (label, action) in [
+                        ("Tab schliessen", Action::CloseTab),
+                        ("Andere Tabs schliessen", Action::CloseOtherTabs),
+                        ("Alle Tabs schliessen", Action::CloseAllTabs),
+                    ] {
+                        popup.add_emit(label, Shortcut::None, MenuFlag::Normal, tx, (wid, action));
+                    }
+                    popup.popup();
+                    self.win.remove(&popup);
+                    fltk::menu::MenuButton::delete(popup);
+                    return;
+                }
                 for (label, action) in [
                     ("Speichern", Action::Save(false)),
                     ("Speichern unter…", Action::Save(true)),
@@ -1193,7 +1295,21 @@ impl EditorWindow {
                 self.find.show(&self.win, expanded, &selected);
             }
             Action::ToggleReplace => self.find.toggle(),
-            Action::Settings => self.settings.show(&self.win),
+            Action::Settings => self.open_settings_tab(1, wid, tx),
+            Action::Zoom(step) => {
+                let d = &mut self.docs[self.active];
+                let zoom = if step == 0 {
+                    100
+                } else {
+                    (if d.target_right.get() {
+                        d.right.zoom()
+                    } else {
+                        d.left.zoom()
+                    }) + step
+                };
+                d.left.set_zoom(zoom);
+                d.right.set_zoom(zoom);
+            }
             Action::NextTab(backwards) => {
                 let count = self.docs.len();
                 let next = (self.active + if backwards { count - 1 } else { 1 }) % count;
@@ -1291,7 +1407,9 @@ impl EditorWindow {
                 self.active = i;
                 self.reveal_tab = true;
                 self.docs[i].group.show();
-                self.docs[i].left.take_focus().ok();
+                if self.docs[i].page == 0 {
+                    self.docs[i].left.take_focus().ok();
+                }
             }
             Action::CloseAllTabs => {
                 // Confirm every changed document before removing any tabs.
@@ -1590,6 +1708,12 @@ impl EditorWindow {
             let d = &mut self.docs[index];
             d.id = tab.id;
             d.cache_key = tab.key.clone();
+            d.page = tab.page.min(2);
+            if d.page != 0 {
+                d.panes.hide();
+                d.status.hide();
+                d.group.set_margins(0, 0, 0, 0);
+            }
             d.path = tab.path.clone();
             d.sharing = tab.sharing.clone();
             d.display_name = tab.display_name.clone();
@@ -1626,6 +1750,8 @@ impl EditorWindow {
                     ));
                 }
             }
+            d.left.set_zoom(tab.zoom);
+            d.right.set_zoom(tab.right_zoom);
             let revision = d.left_meta.borrow().revision;
             d.share_revision = if d
                 .sharing
@@ -1765,6 +1891,7 @@ impl Runtime {
                 }
             }
         }
+        self.mount_settings_pages();
         if self.cache_enabled
             && !self.session_pending
             && self.fingerprint() != self.last_fingerprint
@@ -1775,6 +1902,20 @@ impl Runtime {
         }
     }
     fn handle(&mut self, wid: usize, action: Action) {
+        if matches!(
+            action,
+            Action::CloseTab
+                | Action::CloseOtherTabs
+                | Action::CloseAllTabs
+                | Action::CloseWindow
+                | Action::MoveTab(_)
+                | Action::Split(_)
+                | Action::EndSplit
+                | Action::QuitAll
+                | Action::UpdateDownloaded(_)
+        ) {
+            self.park_settings_pages();
+        }
         let action = match self.sharing_action(wid, action) {
             Some(a) => a,
             None => return,
@@ -1797,7 +1938,8 @@ impl Runtime {
                         match std::fs::read_to_string(&path) {
                             Ok(text) => {
                                 let active = &w.docs[w.active];
-                                if active.dirty()
+                                if active.page != 0
+                                    || active.dirty()
                                     || active.path.is_some()
                                     || active.left_buf.length() > 0
                                     || active.right_buf.length() > 0
@@ -2153,6 +2295,7 @@ fn mac_open_file(path: *const std::ffi::c_char) {
 
 fn main() {
     let _app = app::App::default().with_scheme(app::Scheme::Base);
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let config = settings_path();
     preferences::load(&config);
     theme::init();

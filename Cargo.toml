@@ -1,6 +1,6 @@
 [package]
 name = "editortool"
-version = "1.4.0"
+version = "1.4.1"
 edition = "2021"
 rust-version = "1.90"
 description = "Schlanker Plaintext-Editor mit Textvergleich"
@@ -11,7 +11,7 @@ default = ["bundled-fltk"]
 bundled-fltk = ["fltk/fltk-bundled"]
 
 [dependencies]
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "aws_lc_rs", "prefer-post-quantum", "std", "tls12"] }
 rcgen = { version = "0.13", default-features = false, features = ["ring", "crypto"] }
 socket2 = "0.6"
 ureq = { version = "2.12", default-features = false, features = ["tls", "json"] }

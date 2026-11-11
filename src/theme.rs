@@ -220,7 +220,6 @@ fn hover<W: WidgetBase + WidgetExt>(widget: &mut W) -> Rc<Cell<bool>> {
 #[derive(Clone, Copy)]
 pub enum Icon {
     Search,
-    Settings,
     Compare,
     Plus,
     Close,
@@ -254,15 +253,6 @@ pub fn icon(kind: Icon, x: i32, y: i32, color: Color) {
             draw::draw_line(x + 6, y + 7, x + 13, y + 7);
             draw::draw_line(x + 6, y + 11, x + 13, y + 11);
             draw::draw_line(x + 6, y + 15, x + 10, y + 15);
-        }
-        Icon::Settings => {
-            for (yy, xx) in [(5, 7), (10, 14), (15, 8)] {
-                draw::draw_line(x + 2, y + yy, x + 18, y + yy);
-                draw::set_draw_color(CHROME);
-                draw::draw_rectf(x + xx - 2, y + yy - 3, 5, 6);
-                draw::set_draw_color(color);
-                draw::draw_rounded_rect(x + xx - 2, y + yy - 3, 5, 6, 2);
-            }
         }
     }
     draw::set_line_style(LineStyle::Solid, 0);
