@@ -100,7 +100,11 @@ fn target() -> Result<(Kind, String), String> {
     } else if cfg!(target_os = "macos") {
         Kind::Mac
     } else if let Ok(info) = fs::read_to_string("/.flatpak-info") {
-        if info.contains("/var/lib/flatpak/") {
+        if info
+            .lines()
+            .filter_map(|line| line.strip_prefix("app-path="))
+            .any(|path| path.starts_with("/var/lib/flatpak/app/"))
+        {
             Kind::FlatpakSystem
         } else {
             Kind::FlatpakUser

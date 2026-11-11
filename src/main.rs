@@ -842,7 +842,7 @@ impl EditorWindow {
         };
         if !self.vertical {
             let height = if content_length > self.tab_scroll.w() {
-                44
+                48
             } else {
                 34
             };
@@ -904,13 +904,13 @@ impl EditorWindow {
         // Padding here would feed back as a negative scroll position on every draw.
         let (width, height) = if self.vertical {
             (
-                (self.tab_scroll.w() - if overflow { 10 } else { 0 }).max(1),
+                (self.tab_scroll.w() - if overflow { 14 } else { 0 }).max(1),
                 content_length,
             )
         } else {
             (
                 content_length,
-                (self.tab_scroll.h() - if overflow { 10 } else { 0 }).max(1),
+                (self.tab_scroll.h() - if overflow { 14 } else { 0 }).max(1),
             )
         };
         let rect = (
