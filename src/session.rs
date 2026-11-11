@@ -33,6 +33,12 @@ pub struct WindowState {
     pub rect: (i32, i32, i32, i32),
     #[serde(default = "default_sidebar_width")]
     pub sidebar_width: i32,
+    #[serde(default)]
+    pub split_key: Option<String>,
+    #[serde(default)]
+    pub split_stacked: bool,
+    #[serde(default = "default_split_ratio")]
+    pub split_ratio: i32,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Snapshot {
@@ -41,6 +47,9 @@ pub struct Snapshot {
 }
 fn default_sidebar_width() -> i32 {
     184
+}
+fn default_split_ratio() -> i32 {
+    500
 }
 
 pub type TextWrites = Vec<(String, String)>;

@@ -8,6 +8,12 @@ Ein schlanker nativer Rust-Editor für **Text, Code und Bilder** — für Window
 
 *Hauptansicht aus V1.0 — vom Projektinhaber bereitgestellte Aufnahme.*
 
+## Neu in V1.3: Bilder und Split View
+
+Bilder anklicken und an einer Ecke proportional kleiner oder grösser ziehen. Standardmässig werden neu eingefügte Bilder auf höchstens 50 % der Textfeldbreite verkleinert; unter Einstellungen lässt sich dies abschalten. Die Anzeigegrösse wird gespeichert, die Originalbilddaten bleiben erhalten. Per Rechtsklick lassen sich Bilder an das Textfeld anpassen oder entfernen.
+
+Rechtsklick auf einen Tab öffnet Speichern, Speichern unter, Sprache, Dateipfad und Tab-Aktionen. Unter **Ansicht → Split View** lassen sich zwei unabhängige Ansichten **nebeneinander oder übereinander** öffnen. Jede hat ihre eigene Datei-/Tab-Liste; den Trenner kann man ziehen. Über das Tab-Menü lassen sich Dateien auf die andere Seite verschieben. **Als zwei Fenster weiterführen** löst die Teilung auf, ohne Dokumente oder Undo-Verläufe zu verwerfen. Die Sitzung speichert beide Ansichten und ihre Anordnung.
+
 ## Neu in V1.2: Updates
 
 Unter **Hilfe → Nach Updates suchen** werden neue stabile GitHub-Versionen und deren Release Notes angezeigt. **Jetzt aktualisieren** lädt das passende Paket, prüft SHA-256, sichert die Sitzung und startet Installation und App-Neustart. In den Einstellungen: Startprüfung an/aus, automatische Installation an/aus. Standard: Startprüfung an, automatische Installation aus. Die manuelle Prüfung funktioniert unabhängig davon.
@@ -18,7 +24,7 @@ Update-Pakete und Protokolle liegen unter `updates` im Einstellungsordner. macOS
 
 ## Neu in V1.1
 
-Zeilenumbruch, Farbschema (Dunkel/Hell/Graphit), Akzentfarbe und Textgrösse lassen sich in den Einstellungen ändern. **Datei → Alle Tabs schliessen** schliesst nach Speicherrückfragen alle Tabs des Fensters. Bilder per Doppelklick in der Anzeige verkleinern (10–100 %); per Rechtsklick Bildaktionen öffnen. Die Bildgrösse bleibt im Dokument und im Sitzungscache erhalten. Nach dem Einfügen bleibt das Bild sichtbar.
+Zeilenumbruch, Farbschema (Dunkel/Hell/Graphit), Akzentfarbe und Textgrösse lassen sich in den Einstellungen ändern. **Datei → Alle Tabs schliessen** schliesst nach Speicherrückfragen alle Tabs des Fensters. Bilder lassen sich seit V1.3 direkt an ihren Ecken verkleinern und vergrössern; per Rechtsklick Bildaktionen öffnen. Die Bildgrösse bleibt im Dokument und im Sitzungscache erhalten. Nach dem Einfügen bleibt das Bild sichtbar.
 
 ## Funktionen
 

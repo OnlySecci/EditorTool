@@ -1,5 +1,15 @@
 # Changelog
 
+## V1.3 — 2026-11-11
+
+- Proportional image resizing with four draggable corner handles.
+- Optional automatic insertion at up to half the text area width.
+- Tab context menu with save, language and tab-management actions.
+- Independent split panes side by side or stacked, with their own tabs and resizable divider.
+- Persisted split layout and image display widths; detach splits without discarding documents or undo state.
+- No tests run, as requested.
+
+
 ## V1.2 — 2026-11-11
 
 - Built-in GitHub update checks with release notes and manual installation.

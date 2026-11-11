@@ -1,24 +1,30 @@
-# EditorTool V1.2
+# EditorTool V1.3
 
-## Neu: integrierte Updates
+## Bilder
 
-- **Hilfe → Nach Updates suchen** prüft manuell auf eine neuere stabile GitHub-Version.
-- Ein Update-Dialog zeigt die installierte und verfügbare Version sowie die vollständigen Release Notes.
-- **Jetzt aktualisieren** lädt das passende Paket für Betriebssystem, Architektur und Installationsart herunter und startet die Installation mit anschliessendem Neustart.
-- In den Einstellungen lassen sich die **Update-Prüfung beim Start** und die **automatische Installation beim Start** ein- oder ausschalten. Die Startprüfung ist standardmässig aktiv; automatische Installation ist standardmässig aus. Manuelle Prüfung bleibt verfügbar.
-- Downloads werden vor der Installation mit den im Release veröffentlichten SHA-256-Prüfsummen verglichen. Fehlerhafte Downloads werden nicht installiert.
-- Vor dem Neustart wird die Sitzung gesichert und auf die Speicherung gewartet. Die App bleibt bei Fehlern vor dem Installationsstart geöffnet. Nach einem Installationsfehler wird nach Möglichkeit die bisherige App erneut geöffnet und beim nächsten Start ein Hinweis angezeigt.
+- Bild anklicken und an einer der vier Ecken ziehen, um es proportional kleiner oder grösser darzustellen. Keine Zahleneingabe mehr.
+- Neue Bilder werden standardmässig auf höchstens 50 % der Textfeldbreite verkleinert. Kleine Bilder werden beim Einfügen nicht unnötig vergrössert.
+- Unter Einstellungen lässt sich die automatische Verkleinerung deaktivieren. Die Bilder lassen sich unabhängig davon jederzeit an den Ecken anpassen.
+- Per Rechtsklick kann ein Bild an das Textfeld angepasst oder entfernt werden.
+- Die Anzeigegrösse bleibt im Dokument und in der Sitzung gespeichert. Originalbilddaten bleiben erhalten; vorhandene Dokumente sind weiterhin lesbar.
 
-## Pakete
+## Tabs und Dateien
 
-Windows Setup-EXE und portables ZIP, Linux Flatpak/RPM/DEB und portables Archiv, macOS DMG und App-ZIP. Alle Plattformen für x64 und ARM64. SHA256SUMS.txt enthält die Prüfsummen.
+- Rechtsklick auf einen Tab: Speichern, Speichern unter, Dateipfad kopieren, Sprache ändern, Tab schliessen, andere oder alle Tabs schliessen und Split View öffnen.
+- Aktionen gelten für den angeklickten Tab. Geänderte Dokumente erhalten weiterhin Speicherrückfragen.
+- Tabs lassen sich über das Kontextmenü in die andere Split-Ansicht verschieben, einschliesslich ungespeicherter Inhalte und Undo-Verlauf.
 
-Windows nutzt den Setup-Installer oder aktualisiert die portable Installation. Linux verwendet die passende Paketverwaltung, Flatpak oder die portable Programmdatei. macOS ersetzt das App-Bundle und behält eine Sicherung der bisherigen App. Je nach Installationsort kann das Betriebssystem eine Berechtigungsabfrage anzeigen.
+## Split View
 
-Flatpak erhält Netzwerkzugriff für GitHub sowie die Berechtigung, die Flatpak-Installation auf dem Host anzustossen. Beim deaktivierten Startcheck erfolgt keine automatische GitHub-Abfrage. Es läuft kein dauerhafter Hintergrunddienst und keine periodische Update-Abfrage.
+- Ansicht → Split View → Nebeneinander oder Übereinander.
+- Jede Seite besitzt eine eigene Datei-/Tab-Liste und unabhängig bearbeitbare Dokumente.
+- Die Teilung lässt sich am Trenner verschieben und zwischen den beiden Anordnungen umschalten.
+- Tastenkürzel beziehen sich auf die aktive Ansicht. Die aktive Ansicht wird durch eine Akzentlinie markiert.
+- Anordnung, Teilungsverhältnis, offene Tabs und Inhalte werden mit der Sitzung wiederhergestellt.
+- Als zwei Fenster weiterführen trennt die Ansichten wieder in zwei Fenster. Dokumente und bestehende Undo-Verläufe bleiben erhalten.
 
-## Hinweise
+## Downloads und Hinweise
 
-V1.2 muss einmal manuell installiert werden; anschliessend kann der integrierte Updater zukünftige Versionen installieren. Alle Verbesserungen aus V1.1 sind enthalten.
+Windows Setup-EXE, Linux Flatpak/RPM/DEB und macOS DMG, jeweils x64 und ARM64. Zusätzlich portable Archive, Release Notes und SHA-256-Prüfsummen. Der Update-Service aus V1.2 kann V1.3 anbieten und installieren.
 
-Auf Wunsch wurden keine automatisierten oder interaktiven Tests ausgeführt. Die Pakete sind nicht mit Entwicklerzertifikaten signiert; macOS verwendet eine Ad-hoc-Signatur ohne Notarisierung. SHA-256-Prüfsummen ersetzen keine Herausgebersignatur. Lizenz: The Unlicense für Projektdateien; Drittanbieter behalten ihre Lizenzen.
+Auf Wunsch wurden keine automatisierten, interaktiven oder Installationstests ausgeführt. Die Pakete werden ohne Entwicklerzertifikate veröffentlicht; macOS verwendet eine Ad-hoc-Signatur ohne Notarisierung. Lizenz: The Unlicense für Projektdateien, separate Lizenzen für Drittanbieter.

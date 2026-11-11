@@ -25,6 +25,8 @@ struct Asset {
     png: Rc<String>,
     #[serde(default = "full_size")]
     scale_percent: u16,
+    #[serde(default)]
+    display_width: Option<i32>,
 }
 fn full_size() -> u16 {
     100
@@ -58,6 +60,7 @@ struct State {
     style: Option<TextBuffer>,
     table: Vec<StyleTableEntry>,
     geometry: Option<(i32, i32, i32, i32)>,
+    selected_image: Option<Rc<String>>,
 }
 #[derive(Clone)]
 pub struct RichEditor {
@@ -126,6 +129,7 @@ impl RichEditor {
             style: None,
             table: vec![],
             geometry: None,
+            selected_image: None,
         }));
         let weak = Rc::downgrade(&state);
         let mut watched = buffer.clone();
@@ -149,6 +153,11 @@ impl RichEditor {
                             }
                             true
                         });
+                        if s.selected_image.as_ref().is_some_and(|selected| {
+                            !s.assets.iter().any(|a| Rc::ptr_eq(selected, &a.png))
+                        }) {
+                            s.selected_image = None;
+                        }
                         if !s.assets.is_empty() || s.parts.len() > 1 {
                             drop(s);
                             rebuild(&state);
@@ -221,6 +230,7 @@ impl RichEditor {
             let mut s = self.state.borrow_mut();
             s.guard.set(true);
             s.assets = document.images;
+            s.selected_image = None;
             s.buffer.set_text(&document.text);
             s.guard.set(false);
             drop(s);
@@ -229,6 +239,7 @@ impl RichEditor {
             let mut s = self.state.borrow_mut();
             s.guard.set(true);
             s.assets.clear();
+            s.selected_image = None;
             s.buffer.set_text(
                 &plain_text(text.trim_start_matches('\u{feff}')).replace(IMAGE_MARKER, ""),
             );
@@ -243,7 +254,7 @@ impl RichEditor {
             .and_then(|image| image.to_rgb())
             .map_err(|e| e.to_string())?;
         let png = encode(&image)?;
-        insert_image(&self.state, png);
+        insert_image(&self.state, png, image.data_w());
         Ok(())
     }
     pub fn insert_position(&self) -> i32 {
@@ -356,7 +367,7 @@ fn paste_into(editor: &TextEditor) {
     }
 }
 
-fn insert_image(state: &Rc<RefCell<State>>, png: String) {
+fn insert_image(state: &Rc<RefCell<State>>, png: String, original_width: i32) {
     let position = {
         let s = state.borrow();
         match s.parts.get(s.current) {
@@ -371,10 +382,16 @@ fn insert_image(state: &Rc<RefCell<State>>, png: String) {
             asset.position += IMAGE_MARKER.len_utf8();
         }
     }
+    let display_width = if crate::preferences::get().image_auto_size {
+        original_width.min((s.viewport.w() - 68).max(48) / 2)
+    } else {
+        original_width
+    };
     s.assets.push(Asset {
         position,
         png: Rc::new(png),
         scale_percent: 100,
+        display_width: Some(display_width.max(16)),
     });
     s.assets.sort_by_key(|a| a.position);
     s.buffer.insert(position as i32, &IMAGE_MARKER.to_string());
@@ -414,12 +431,13 @@ fn insert_image(state: &Rc<RefCell<State>>, png: String) {
 }
 
 fn queue_clipboard(state: Weak<RefCell<State>>, image: RgbImage) {
+    let original_width = image.data_w();
     match encode(&image) {
         Ok(png) => {
             let mut pending = Some(png);
             app::awake_callback(move || {
                 if let (Some(state), Some(png)) = (state.upgrade(), pending.take()) {
-                    insert_image(&state, png);
+                    insert_image(&state, png, original_width);
                 }
             });
         }
@@ -573,6 +591,15 @@ fn rebuild(state: &Rc<RefCell<State>>) {
             if crate::theme::handle_scrollbars(editor, event, &scroll_grab) {
                 return true;
             }
+            if event == Event::Push && app::event_mouse_button() == app::MouseButton::Left {
+                if let Some(state) = weak.upgrade() {
+                    if let Ok(mut s) = state.try_borrow_mut() {
+                        if s.selected_image.take().is_some() {
+                            s.viewport.redraw();
+                        }
+                    }
+                }
+            }
             if event == Event::Focus {
                 target.set(right);
                 if let Some(state) = weak.upgrade() {
@@ -659,105 +686,192 @@ fn rebuild(state: &Rc<RefCell<State>>) {
                 let image = Rc::new(RefCell::new(image));
                 let drawn = image.clone();
                 let mut frame = Frame::default();
-                frame.set_tooltip("Doppelklick: Bildgröße · Rechtsklick: Bildaktionen");
+                frame.set_tooltip(
+                    "Bild auswählen und an einer Ecke ziehen · Rechtsklick: Bildaktionen",
+                );
+                let selected_state = Rc::downgrade(state);
+                let selected_data = asset.png.clone();
                 frame.super_draw(false);
                 frame.draw(move |f| {
                     draw::push_clip(f.x(), f.y(), f.w(), f.h());
                     draw::set_draw_color(BG);
                     draw::draw_rectf(f.x(), f.y(), f.w(), f.h());
                     let mut image = drawn.borrow_mut();
-                    image.scale((f.w() - 54).max(1), (f.h() - 8).max(1), true, false);
+                    image.scale((f.w() - 54).max(1), (f.h() - 16).max(1), true, true);
                     let (w, h) = (image.w(), image.h());
-                    image.draw(f.x() + 44, f.y() + 4, w, h);
+                    image.draw(f.x() + 44, f.y() + 8, w, h);
+                    let selected = selected_state.upgrade().is_some_and(|state| {
+                        state.try_borrow().is_ok_and(|s| {
+                            s.selected_image
+                                .as_ref()
+                                .is_some_and(|a| Rc::ptr_eq(a, &selected_data))
+                        })
+                    });
+                    if selected {
+                        draw::set_draw_color(crate::theme::BLUE);
+                        draw::draw_rect(f.x() + 44, f.y() + 8, w, h);
+                        for (x, y) in [
+                            (f.x() + 44, f.y() + 8),
+                            (f.x() + 44 + w, f.y() + 8),
+                            (f.x() + 44, f.y() + 8 + h),
+                            (f.x() + 44 + w, f.y() + 8 + h),
+                        ] {
+                            draw::set_draw_color(crate::theme::TEXT);
+                            draw::draw_rectf(x - 4, y - 4, 8, 8);
+                            draw::set_draw_color(crate::theme::BLUE);
+                            draw::draw_rect(x - 4, y - 4, 8, 8);
+                        }
+                    }
                     draw::pop_clip();
                 });
                 let weak = Rc::downgrade(state);
                 let asset_data = asset.png.clone();
-                frame.handle(move |_, event| {
-                    if event == Event::Push
-                        && (app::event_clicks()
-                            || app::event_mouse_button() == app::MouseButton::Right)
-                    {
-                        let weak = weak.clone();
-                        let asset_data = asset_data.clone();
-                        let resize = app::event_mouse_button() != app::MouseButton::Right;
-                        app::awake_callback(move || {
-                            if let Some(state) = weak.upgrade() {
-                                let action = if resize {
-                                    Some(1)
-                                } else {
-                                    dialog::choice2_default(
-                                        "Bild bearbeiten",
-                                        "Abbrechen",
-                                        "Größe ändern",
-                                        "Entfernen",
-                                    )
-                                };
-                                let item = {
-                                    let s = state.borrow();
-                                    s.assets
-                                        .iter()
-                                        .find(|a| Rc::ptr_eq(&a.png, &asset_data))
-                                        .map(|a| (s.buffer.clone(), a.position, a.scale_percent))
-                                };
-                                if let Some((mut buffer, position, percent)) = item {
-                                    if action == Some(1) {
-                                        if let Some(value) = dialog::input_default(
-                                            "Bildbreite in Prozent der Originalgröße (10–100):",
-                                            &percent.to_string(),
-                                        ) {
-                                            if let Ok(percent @ 10..=100) =
-                                                value.trim().parse::<u16>()
-                                            {
-                                                let mut s = state.borrow_mut();
-                                                if let Some(asset) = s
-                                                    .assets
-                                                    .iter_mut()
-                                                    .find(|a| a.position == position)
-                                                {
-                                                    asset.scale_percent = percent;
-                                                }
-                                                s.guard.set(true);
-                                                buffer.replace(
-                                                    position as i32,
-                                                    (position + IMAGE_MARKER.len_utf8()) as i32,
-                                                    &IMAGE_MARKER.to_string(),
-                                                );
-                                                s.guard.set(false);
-                                                drop(s);
-                                                rebuild(&state);
-                                            } else {
-                                                dialog::alert_default(
-                                                    "Bitte eine Zahl zwischen 10 und 100 eingeben.",
-                                                );
-                                            }
-                                        }
-                                    } else if action == Some(2)
-                                        && dialog::choice2_default(
-                                            "Bild aus diesem Dokument entfernen?",
-                                            "Abbrechen",
-                                            "Entfernen",
-                                            "",
-                                        ) == Some(1)
-                                    {
-                                        buffer.remove(
-                                            position as i32,
-                                            (position + IMAGE_MARKER.len_utf8()) as i32,
-                                        );
-                                    }
+                let dragging = Cell::new(None::<(i32, i32, i32, i32, i32)>);
+                let drag_changed = Cell::new(false);
+                frame.handle(move |frame, event| {
+                    let (actual_w, actual_h) = {
+                        let image = image.borrow();
+                        (image.w(), image.h())
+                    };
+                    let corners = [
+                        (frame.x() + 44, frame.y() + 8, -1, -1),
+                        (frame.x() + 44 + actual_w, frame.y() + 8, 1, -1),
+                        (frame.x() + 44, frame.y() + 8 + actual_h, -1, 1),
+                        (frame.x() + 44 + actual_w, frame.y() + 8 + actual_h, 1, 1),
+                    ];
+                    let corner = corners.iter().find(|(x, y, _, _)| {
+                        (app::event_x() - x).abs() <= 9 && (app::event_y() - y).abs() <= 9
+                    });
+                    match event {
+                        Event::Move | Event::Enter => {
+                            if let Some(mut win) = frame.window() {
+                                win.set_cursor(match corner {
+                                    Some((_, _, sx, sy)) if sx == sy => fltk::enums::Cursor::NWSE,
+                                    Some(_) => fltk::enums::Cursor::NESW,
+                                    None => fltk::enums::Cursor::Default,
+                                });
+                            }
+                            true
+                        }
+                        Event::Leave => {
+                            if dragging.get().is_none() {
+                                if let Some(mut win) = frame.window() {
+                                    win.set_cursor(fltk::enums::Cursor::Default);
                                 }
                             }
-                        });
-                        true
-                    } else {
-                        false
+                            true
+                        }
+                        Event::Push => {
+                            if let Some(state) = weak.upgrade() {
+                                state.borrow_mut().selected_image = Some(asset_data.clone());
+                                let s = state.borrow();
+                                s.target.set(s.right);
+                                let mut buffer = s.buffer.clone();
+                                drop(s);
+                                buffer.unselect();
+                                state.borrow_mut().viewport.redraw();
+                                if app::event_mouse_button() == app::MouseButton::Left {
+                                    if let Some((_, _, sx, sy)) = corner {
+                                        drag_changed.set(false);
+                                        dragging.set(Some((
+                                            app::event_x(),
+                                            app::event_y(),
+                                            actual_w,
+                                            *sx,
+                                            *sy,
+                                        )));
+                                    }
+                                    return true;
+                                }
+                                if app::event_mouse_button() == app::MouseButton::Right {
+                                    let weak = weak.clone();
+                                    let asset_data = asset_data.clone();
+                                    app::awake_callback(move || {
+                                        if let Some(state) = weak.upgrade() {
+                                            match dialog::choice2_default(
+                                                "Bild bearbeiten",
+                                                "Abbrechen",
+                                                "An Textfeld anpassen",
+                                                "Entfernen",
+                                            ) {
+                                                Some(1) => {
+                                                    let width =
+                                                        (state.borrow().viewport.w() - 68).max(24);
+                                                    resize_image(&state, &asset_data, width, w, h);
+                                                    mark_image_changed(&state, &asset_data);
+                                                }
+                                                Some(2) => {
+                                                    if dialog::choice2_default(
+                                                        "Bild entfernen?",
+                                                        "Abbrechen",
+                                                        "Entfernen",
+                                                        "",
+                                                    ) == Some(1)
+                                                    {
+                                                        let item = {
+                                                            let s = state.borrow();
+                                                            s.assets
+                                                                .iter()
+                                                                .find(|a| {
+                                                                    Rc::ptr_eq(&a.png, &asset_data)
+                                                                })
+                                                                .map(|a| {
+                                                                    (s.buffer.clone(), a.position)
+                                                                })
+                                                        };
+                                                        if let Some((mut buffer, pos)) = item {
+                                                            buffer.remove(
+                                                                pos as i32,
+                                                                (pos + IMAGE_MARKER.len_utf8())
+                                                                    as i32,
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                                _ => (),
+                                            }
+                                        }
+                                    });
+                                    return true;
+                                }
+                            }
+                            false
+                        }
+                        Event::Drag => {
+                            if let (Some((x, y, width, sx, sy)), Some(state)) =
+                                (dragging.get(), weak.upgrade())
+                            {
+                                let dx = (app::event_x() - x) * sx;
+                                let dy = ((app::event_y() - y) as f64 * sy as f64 * w as f64
+                                    / h.max(1) as f64)
+                                    as i32;
+                                let delta = if dx.abs() >= dy.abs() { dx } else { dy };
+                                resize_image(&state, &asset_data, width + delta, w, h);
+                                drag_changed.set(true);
+                                return true;
+                            }
+                            false
+                        }
+                        Event::Released => {
+                            if dragging.take().is_some() {
+                                if let Some(state) = weak.upgrade().filter(|_| drag_changed.get()) {
+                                    mark_image_changed(&state, &asset_data);
+                                }
+                                return true;
+                            }
+                            false
+                        }
+                        _ => false,
                     }
                 });
-                let percent = asset.scale_percent.clamp(10, 100) as i32;
+                let display_width = asset
+                    .display_width
+                    .unwrap_or(w * asset.scale_percent.clamp(10, 100) as i32 / 100)
+                    .clamp(16, 100_000);
                 s.parts.push(Part::Image(
                     frame,
-                    (w * percent / 100).max(1),
-                    (h * percent / 100).max(1),
+                    display_width,
+                    ((display_width as f64 * h as f64 / w.max(1) as f64).round() as i32).max(1),
                 ));
             }
             start = asset.position + IMAGE_MARKER.len_utf8();
@@ -840,7 +954,7 @@ fn layout(s: &mut State) {
             }
             Part::Image(_, w, h) => {
                 let image_width = (*w).min((width - 54).max(1));
-                (image_width as f64 * (*h as f64) / (*w as f64)).round() as i32 + 8
+                (image_width as f64 * (*h as f64) / (*w as f64)).round() as i32 + 16
             }
         })
         .collect::<Vec<_>>();
@@ -868,4 +982,52 @@ fn layout(s: &mut State) {
     }
     s.content.init_sizes();
     s.viewport.redraw();
+}
+
+fn resize_image(
+    state: &Rc<RefCell<State>>,
+    data: &Rc<String>,
+    width: i32,
+    original_w: i32,
+    original_h: i32,
+) {
+    let mut s = state.borrow_mut();
+    let width = width.clamp(24, (s.viewport.w() - 68).max(24));
+    let Some(index) = s.assets.iter().position(|a| Rc::ptr_eq(&a.png, data)) else {
+        return;
+    };
+    s.assets[index].display_width = Some(width);
+    let mut image_index = 0;
+    for part in &mut s.parts {
+        if let Part::Image(_, w, h) = part {
+            if image_index == index {
+                *w = width;
+                *h = ((width as f64 * original_h as f64 / original_w.max(1) as f64).round() as i32)
+                    .max(1);
+                break;
+            }
+            image_index += 1;
+        }
+    }
+    s.geometry = None;
+    layout(&mut s);
+}
+fn mark_image_changed(state: &Rc<RefCell<State>>, data: &Rc<String>) {
+    let s = state.borrow();
+    let Some(position) = s
+        .assets
+        .iter()
+        .find(|a| Rc::ptr_eq(&a.png, data))
+        .map(|a| a.position)
+    else {
+        return;
+    };
+    s.guard.set(true);
+    let mut buffer = s.buffer.clone();
+    buffer.replace(
+        position as i32,
+        (position + IMAGE_MARKER.len_utf8()) as i32,
+        &IMAGE_MARKER.to_string(),
+    );
+    s.guard.set(false);
 }
