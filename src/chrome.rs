@@ -37,9 +37,10 @@ pub fn dark_title(win: &Window) {
             ) -> i32;
         }
         let hwnd = win.raw_handle() as *mut c_void;
-        let enabled: u32 = 1;
-        let black: u32 = 0x00272322;
-        let white: u32 = 0x00eeeeee;
+        let light = crate::preferences::get().design == 1;
+        let enabled: u32 = if light { 0 } else { 1 };
+        let black: u32 = if light { 0x00f5f3f2 } else { 0x00272322 };
+        let white: u32 = if light { 0x002a2320 } else { 0x00eeeeee };
         // Older Windows versions ignore unsupported attributes and keep their native frame.
         DwmSetWindowAttribute(hwnd, 20, &enabled as *const _ as _, 4);
         DwmSetWindowAttribute(hwnd, 35, &black as *const _ as _, 4);
@@ -276,58 +277,65 @@ pub struct SettingsPanel {
     pub win: Window,
     horizontal: Button,
     vertical: Button,
+    wrap: CheckButton,
+    design: fltk::menu::Choice,
+    accent: fltk::menu::Choice,
+    size: fltk::menu::Choice,
 }
 impl SettingsPanel {
     pub fn new(wid: usize, tx: app::Sender<Message>, vertical: bool) -> Self {
         Group::set_current(None::<&Group>);
         let mut win = Window::default()
-            .with_size(560, 414)
+            .with_size(520, 510)
             .with_label("Einstellungen — EditorTool");
         win.set_color(PANEL);
         set_icon(&mut win);
-        let mut root = Flex::new(28, 26, 504, 362, None).column();
-        root.set_spacing(16);
-        let title = theme::heading("Einstellungen", 26);
-        root.fixed(&title, 38);
-        let mut section = theme::heading("DARSTELLUNG", 11);
-        section.set_label_color(MUTED);
-        root.fixed(&section, 18);
-        let mut card = Flex::default().column();
-        card.set_frame(FrameType::RFlatBox);
-        card.set_color(BG);
-        card.set_margins(20, 18, 20, 18);
-        card.set_spacing(10);
-        let title = theme::heading("Tabs", 17);
-        card.fixed(&title, 24);
-        let mut description =
-            Frame::default().with_label("Deine Dokumente. Oben oder in der Seitenleiste.");
-        description.set_label_size(13);
-        description.set_label_color(MUTED);
-        description.set_align(Align::Left | Align::Inside);
-        card.fixed(&description, 24);
+        let mut root = Flex::new(24, 20, 472, 470, None).column();
+        root.set_spacing(12);
+        let title = theme::heading("Einstellungen", 23);
+        root.fixed(&title, 34);
         let mut segment = Flex::default().row();
-        segment.set_color(BG);
         segment.set_spacing(6);
-        let mut horizontal = Button::default().with_label("Horizontal");
+        let mut horizontal = Button::default().with_label("Tabs oben");
         theme::button(&mut horizontal, false, None);
         horizontal.emit(tx, (wid, Action::Orientation(false)));
-        let mut vertical_button = Button::default().with_label("Vertikal");
+        let mut vertical_button = Button::default().with_label("Tabs links");
         theme::button(&mut vertical_button, false, None);
         vertical_button.emit(tx, (wid, Action::Orientation(true)));
         segment.end();
-        card.fixed(&segment, 42);
-        card.end();
-        root.fixed(&card, 158);
-        let mut hint = Frame::default().with_label(
-            "Die Auswahl wird automatisch gespeichert\nund für alle Fenster übernommen.",
-        );
-        hint.set_label_size(13);
-        hint.set_label_color(MUTED);
-        hint.set_align(Align::Left | Align::Inside);
-        root.fixed(&hint, 48);
-        let mut footer = Frame::default().with_label("EditorTool     ·     1.0.0");
-        footer.set_label_size(11);
+        root.fixed(&segment, 36);
+        let mut wrap = CheckButton::default().with_label("Zeilenumbruch am Fensterrand");
+        theme::check(&mut wrap);
+        wrap.set_callback(move |w| tx.send((wid, Action::WordWrap(w.value()))));
+        root.fixed(&wrap, 34);
+        fn choice(root: &mut Flex, label: &str, values: &str) -> fltk::menu::Choice {
+            let heading = theme::heading(label, 12);
+            root.fixed(&heading, 18);
+            let mut choice = fltk::menu::Choice::default();
+            choice.set_frame(FrameType::FlatBox);
+            choice.set_color(theme::SURFACE);
+            choice.set_text_color(theme::TEXT);
+            choice.set_text_size(14);
+            choice.add_choice(values);
+            root.fixed(&choice, 34);
+            choice
+        }
+        let mut design = choice(&mut root, "Farbschema", "Dunkel|Hell|Graphit");
+        design.set_callback(move |c| tx.send((wid, Action::Design(c.value() as u8))));
+        let mut accent = choice(&mut root, "Akzentfarbe", "Blau|Violett|Grün");
+        accent.set_callback(move |c| tx.send((wid, Action::Accent(c.value() as u8))));
+        let mut size = choice(&mut root, "Textgrösse", "12|14|16|18|20|24|28");
+        size.set_callback(move |c| {
+            if let Some(value) = c.choice().and_then(|s| s.parse().ok()) {
+                tx.send((wid, Action::FontSize(value)));
+            }
+        });
+        let mut footer = Frame::default().with_label(concat!(
+            "Wird für alle Fenster gespeichert.     ·     ",
+            env!("CARGO_PKG_VERSION")
+        ));
         footer.set_label_color(MUTED);
+        footer.set_label_size(11);
         footer.set_align(Align::Left | Align::Inside);
         root.end();
         win.end();
@@ -336,9 +344,28 @@ impl SettingsPanel {
             win,
             horizontal,
             vertical: vertical_button,
+            wrap,
+            design,
+            accent,
+            size,
         };
         panel.set_orientation(vertical);
+        panel.sync();
         panel
+    }
+    pub fn sync(&mut self) {
+        let prefs = crate::preferences::get();
+        self.set_orientation(prefs.vertical);
+        self.wrap.set_value(prefs.wrap);
+        self.design.set_value(prefs.design as i32);
+        self.accent.set_value(prefs.accent as i32);
+        self.size.set_value(
+            [12, 14, 16, 18, 20, 24, 28]
+                .iter()
+                .position(|&v| v == prefs.font_size)
+                .unwrap_or(2) as i32,
+        );
+        self.win.redraw();
     }
     pub fn set_orientation(&mut self, vertical: bool) {
         self.horizontal
@@ -353,8 +380,9 @@ impl SettingsPanel {
         self.vertical.redraw();
     }
     pub fn show(&mut self, owner: &Window) {
+        self.sync();
         self.win
-            .set_pos(owner.x() + (owner.w() - 560) / 2, owner.y() + 100);
+            .set_pos(owner.x() + (owner.w() - 520) / 2, owner.y() + 60);
         self.win.show();
         dark_title(&self.win);
     }

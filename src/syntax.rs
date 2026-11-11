@@ -65,14 +65,20 @@ impl Language {
 
 pub fn table() -> Vec<StyleTableEntry> {
     // A plain, B keyword, C string, D comment, E number, F function, G variable, H punctuation.
-    [
-        0xf0f0f3, 0xcf9fff, 0xa5d6a7, 0x818794, 0xf4c78d, 0x86caff, 0xf19dc2, 0xaeb7c7,
-    ]
+    if crate::preferences::get().design == 1 {
+        [
+            0x20232a, 0x7130a5, 0x256c34, 0x666e79, 0x975717, 0x155d9b, 0xa32964, 0x536170,
+        ]
+    } else {
+        [
+            0xf0f0f3, 0xcf9fff, 0xa5d6a7, 0x818794, 0xf4c78d, 0x86caff, 0xf19dc2, 0xaeb7c7,
+        ]
+    }
     .iter()
     .map(|&c| StyleTableEntry {
         color: Color::from_hex(c),
         font: Font::Courier,
-        size: 16,
+        size: crate::preferences::get().font_size,
     })
     .collect()
 }
