@@ -8,7 +8,7 @@ case "${CARGO_BUILD_TARGET:-}" in
   *) arch=$(uname -m) ;;
 esac
 # Verify the compiled Mach-O target without executing the application.
-lipo -verify_arch "$arch" dist/macos/EditorTool.app/Contents/MacOS/EditorTool
+lipo dist/macos/EditorTool.app/Contents/MacOS/EditorTool -verify_arch "$arch"
 mkdir -p dist/packages dist/dmg-root
 codesign --force --deep --sign - dist/macos/EditorTool.app
 cp -R dist/macos/EditorTool.app dist/dmg-root/
