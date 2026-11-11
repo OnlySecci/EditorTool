@@ -23,6 +23,7 @@ Summary: Lightweight text and image editor
 License: Unlicense
 URL: https://github.com/OnlySecci/EditorTool
 BuildArch: $arch
+Requires: /usr/bin/pkexec
 %global debug_package %{nil}
 %global _build_id_links none
 %description
@@ -47,7 +48,7 @@ Section: editors
 Priority: optional
 Architecture: $debarch
 Maintainer: OnlySecci <192268366+OnlySecci@users.noreply.github.com>
-Depends: libc6 (>= 2.39), libstdc++6, libx11-6, libxext6, libxft2, libxinerama1, libxcursor1, libxrender1, libxfixes3, libpango-1.0-0, libpangocairo-1.0-0, libpangoxft-1.0-0, libcairo2, libfontconfig1
+Depends: pkexec, libc6 (>= 2.39), libstdc++6, libx11-6, libxext6, libxft2, libxinerama1, libxcursor1, libxrender1, libxfixes3, libpango-1.0-0, libpangocairo-1.0-0, libpangoxft-1.0-0, libcairo2, libfontconfig1
 Description: Lightweight native text and image editor
  Session recovery, syntax highlighting, plain-text clipboard and embedded images.
 EOF

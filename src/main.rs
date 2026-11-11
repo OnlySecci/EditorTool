@@ -7,6 +7,7 @@ mod rich;
 mod session;
 mod syntax;
 mod theme;
+mod updater;
 use rich::RichEditor;
 use syntax::Language;
 type SyntaxKey = (u64, u64, Language, Language);
@@ -52,6 +53,14 @@ enum Action {
     Design(u8),
     Accent(u8),
     FontSize(i32),
+    UpdateCheckOption(bool),
+    UpdateInstallOption(bool),
+    CheckUpdates(bool),
+    UpdateChecked(Result<Option<updater::Release>, String>, bool),
+    InstallUpdate,
+    UpdateProgress(u8),
+    UpdateDownloaded(Result<updater::Download, String>),
+    UpdateNotice(String),
     CloseWindow,
     Orientation(bool),
     Open(bool),
@@ -444,6 +453,13 @@ impl EditorWindow {
                 Action::Settings,
             ),
         ];
+        menu.add_emit(
+            "&Hilfe/Nach Updates suchen…",
+            Shortcut::Command | Shortcut::Shift | 'u',
+            MenuFlag::Normal,
+            tx,
+            (wid, Action::CheckUpdates(true)),
+        );
         for (label, shortcut, action) in entries {
             menu.add_emit(label, shortcut, MenuFlag::Normal, tx, (wid, action));
         }
@@ -1528,6 +1544,9 @@ struct Runtime {
     session_pending: bool,
     last_fingerprint: String,
     weak_self: std::rc::Weak<RefCell<Runtime>>,
+    updates: chrome::UpdatePanel,
+    update_busy: bool,
+    update_release: Option<updater::Release>,
 }
 impl Runtime {
     fn snapshot(&self) -> session::Snapshot {
@@ -1654,7 +1673,9 @@ impl Runtime {
             | Action::WordWrap(_)
             | Action::Design(_)
             | Action::Accent(_)
-            | Action::FontSize(_) => {
+            | Action::FontSize(_)
+            | Action::UpdateCheckOption(_)
+            | Action::UpdateInstallOption(_) => {
                 let mut prefs = preferences::get();
                 match action {
                     Action::Orientation(value) => prefs.vertical = value,
@@ -1662,6 +1683,18 @@ impl Runtime {
                     Action::Design(value) => prefs.design = value.min(2),
                     Action::Accent(value) => prefs.accent = value.min(2),
                     Action::FontSize(value) => prefs.font_size = value.clamp(12, 28),
+                    Action::UpdateCheckOption(value) => {
+                        prefs.update_check = value;
+                        if !value {
+                            prefs.update_install = false;
+                        }
+                    }
+                    Action::UpdateInstallOption(value) => {
+                        prefs.update_install = value;
+                        if value {
+                            prefs.update_check = true;
+                        }
+                    }
                     _ => (),
                 }
                 preferences::set(prefs);
@@ -1685,6 +1718,158 @@ impl Runtime {
                         "Einstellung konnte nicht gespeichert werden: {e}"
                     ));
                 }
+            }
+            Action::CheckUpdates(manual) => {
+                if !manual && !preferences::get().update_check {
+                    return;
+                }
+                let owner = self
+                    .windows
+                    .get(wid)
+                    .and_then(Option::as_ref)
+                    .map(|w| w.win.clone());
+                if self.update_busy {
+                    if manual {
+                        self.updates.show(owner.as_ref());
+                    }
+                    return;
+                }
+                self.update_busy = true;
+                self.update_release = None;
+                self.updates.state(
+                    "Nach Updates suchen",
+                    "GitHub wird nach einer neuen Version gefragt…",
+                    "",
+                    false,
+                    true,
+                );
+                if manual {
+                    self.updates.show(owner.as_ref());
+                }
+                let tx = self.tx;
+                std::thread::spawn(move || {
+                    tx.send((wid, Action::UpdateChecked(updater::check(), manual)))
+                });
+            }
+            Action::UpdateChecked(result, manual) => {
+                self.update_busy = false;
+                if self.windows.iter().all(Option::is_none) {
+                    return;
+                }
+                let owner = self.windows.iter().flatten().next().map(|w| w.win.clone());
+                match result {
+                    Ok(Some(release)) => {
+                        self.updates.state(
+                            &release.title,
+                            &format!(
+                                "{} ist verfügbar. Installiert: {}",
+                                release.tag,
+                                env!("CARGO_PKG_VERSION")
+                            ),
+                            &release.notes,
+                            true,
+                            false,
+                        );
+                        self.update_release = Some(release);
+                        self.updates.show(owner.as_ref());
+                        if !manual && preferences::get().update_install {
+                            self.handle(wid, Action::InstallUpdate);
+                        }
+                    }
+                    Ok(None) => {
+                        self.updates.state(
+                            "EditorTool ist aktuell",
+                            concat!("Installierte Version: ", env!("CARGO_PKG_VERSION")),
+                            "Keine neuere stabile Version verfügbar.",
+                            false,
+                            false,
+                        );
+                        if manual {
+                            self.updates.show(owner.as_ref());
+                        }
+                    }
+                    Err(error) => {
+                        self.updates.state(
+                            "Update-Suche fehlgeschlagen",
+                            "Du kannst die Prüfung später wiederholen.",
+                            &error,
+                            false,
+                            false,
+                        );
+                        if manual {
+                            self.updates.show(owner.as_ref());
+                        }
+                    }
+                }
+            }
+            Action::InstallUpdate => {
+                if self.update_busy {
+                    return;
+                }
+                if let Some(release) = self.update_release.clone() {
+                    if !self.cache_enabled {
+                        self.updates.state("Update pausiert","Die Sitzungssicherung ist nicht verfügbar.","Bitte zuerst die Dokumente speichern und das Problem mit dem Sitzungscache beheben. Es wurde nichts installiert.",true,false);
+                        return;
+                    }
+                    self.update_busy = true;
+                    self.updates.state(
+                        &release.title,
+                        "Update wird heruntergeladen…",
+                        &release.notes,
+                        false,
+                        true,
+                    );
+                    let tx = self.tx;
+                    let directory = self.config.parent().unwrap().join("updates");
+                    std::thread::spawn(move || {
+                        let result = updater::download(release, directory, |percent| {
+                            tx.send((wid, Action::UpdateProgress(percent)))
+                        });
+                        tx.send((wid, Action::UpdateDownloaded(result)));
+                    });
+                }
+            }
+            Action::UpdateProgress(percent) => self.updates.progress(percent),
+            Action::UpdateDownloaded(result) => {
+                let result = result.and_then(|download| {
+                    self.persist();
+                    self.store.flush()?;
+                    updater::install(&download, &self.config.parent().unwrap().join("updates"))
+                });
+                match result {
+                    Ok(()) => {
+                        self.updates.win.hide();
+                        for w in self.windows.iter_mut().flatten() {
+                            w.find.win.hide();
+                            w.settings.win.hide();
+                            w.win.hide();
+                        }
+                        app::quit();
+                    }
+                    Err(error) => {
+                        self.update_busy = false;
+                        self.updates.state(
+                            "Aktualisierung fehlgeschlagen",
+                            "Die App bleibt geöffnet. Es wurden keine Dokumente geschlossen.",
+                            &error,
+                            true,
+                            false,
+                        );
+                        let owner = self.windows.iter().flatten().next().map(|w| w.win.clone());
+                        self.updates.show(owner.as_ref());
+                    }
+                }
+            }
+            Action::UpdateNotice(message) => {
+                self.updates.state(
+                    "Hinweis zur letzten Aktualisierung",
+                    "Das vorherige Update konnte nicht abgeschlossen werden.",
+                    &message,
+                    false,
+                    false,
+                );
+                let owner = self.windows.iter().flatten().next().map(|w| w.win.clone());
+                self.updates.show(owner.as_ref());
             }
             Action::CloseWindow => {
                 if self.windows.get(wid).is_some_and(Option::is_some) {
@@ -1714,6 +1899,9 @@ impl Runtime {
                         Window::delete(closed.win);
                     }
                     self.persist();
+                    if self.windows.iter().all(Option::is_none) {
+                        self.updates.win.hide();
+                    }
                 }
             }
             other => {
@@ -1876,6 +2064,9 @@ fn main() {
         session_pending: false,
         last_fingerprint: String::new(),
         weak_self: std::rc::Weak::new(),
+        updates: chrome::UpdatePanel::new(tx),
+        update_busy: false,
+        update_release: None,
     }));
     {
         let mut runtime = state.borrow_mut();
@@ -1888,6 +2079,13 @@ fn main() {
         }
         runtime.update();
         runtime.persist();
+    }
+    if let Some(error) =
+        updater::previous_error(&state.borrow().config.parent().unwrap().join("updates"))
+    {
+        tx.send((0, Action::UpdateNotice(error)));
+    } else if preferences::get().update_check {
+        app::add_timeout3(1.2, move |_| tx.send((0, Action::CheckUpdates(false))));
     }
     // Single-shot timers run only after changes. There is no periodic idle polling.
     while app.wait() {

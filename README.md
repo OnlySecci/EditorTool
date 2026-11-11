@@ -8,6 +8,14 @@ Ein schlanker nativer Rust-Editor für **Text, Code und Bilder** — für Window
 
 *Hauptansicht — vom Projektinhaber bereitgestellte Aufnahme.*
 
+## Neu in V1.2: Updates
+
+Unter **Hilfe → Nach Updates suchen** werden neue stabile GitHub-Versionen und deren Release Notes angezeigt. **Jetzt aktualisieren** lädt das passende Paket, prüft SHA-256, sichert die Sitzung und startet Installation und App-Neustart. In den Einstellungen: Startprüfung an/aus, automatische Installation an/aus. Standard: Startprüfung an, automatische Installation aus. Die manuelle Prüfung funktioniert unabhängig davon.
+
+V1.2 einmal manuell installieren; danach lassen sich zukünftige Versionen aus der App aktualisieren. Windows unterstützt Setup und portable Installationen, Linux RPM/DEB/Flatpak und portable Programmdateien, macOS das App-Bundle. Systempakete oder geschützte App-Ordner können eine Berechtigungsabfrage des Betriebssystems auslösen. Flatpak erlaubt Netzwerkzugriff und einen Host-Aufruf für die Paketinstallation. Es wird nur beim Start beziehungsweise auf Wunsch geprüft; es gibt keinen ständig laufenden Dienst.
+
+Update-Pakete und Protokolle liegen unter `updates` im Einstellungsordner. macOS behält eine versteckte Sicherung des bisherigen App-Bundles im gleichen Ordner. Bei einem Fehler wird die bisherige App nach Möglichkeit erneut geöffnet; beim nächsten Start erscheint ein Hinweis. Prüfsummen ersetzen keine Herausgebersignatur.
+
 ## Neu in V1.1
 
 Zeilenumbruch, Farbschema (Dunkel/Hell/Graphit), Akzentfarbe und Textgrösse lassen sich in den Einstellungen ändern. **Datei → Alle Tabs schliessen** schliesst nach Speicherrückfragen alle Tabs des Fensters. Bilder per Doppelklick in der Anzeige verkleinern (10–100 %); per Rechtsklick Bildaktionen öffnen. Die Bildgrösse bleibt im Dokument und im Sitzungscache erhalten. Nach dem Einfügen bleibt das Bild sichtbar.
