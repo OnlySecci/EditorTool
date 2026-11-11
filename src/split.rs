@@ -407,6 +407,22 @@ impl Runtime {
                 return;
             }
         }
+        if preferences::get().keep_in_tray && self.tray.is_some() {
+            for id in ids {
+                if let Some(w) = &mut self.windows[id] {
+                    w.find.win.hide();
+                    w.settings.win.hide();
+                    if !w.embedded {
+                        w.win.hide();
+                    }
+                }
+            }
+            self.clients.win.hide();
+            self.transfer.win.hide();
+            self.conflicts.win.hide();
+            self.updates.win.hide();
+            return;
+        }
         let win = self.windows[wid].as_ref().unwrap().win.clone();
         for id in ids {
             if let Some(w) = self.windows[id].take() {

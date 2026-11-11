@@ -15,6 +15,12 @@ use std::{
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TabState {
+    #[serde(default)]
+    pub sharing: Option<crate::peer::Binding>,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub received_offer: Option<String>,
     pub key: String,
     pub id: usize,
     pub path: Option<PathBuf>,
@@ -80,7 +86,7 @@ fn valid_key(key: &str) -> bool {
     !key.is_empty() && key.len() < 120 && key.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
 }
 
-fn atomic_write(path: &Path, data: &[u8]) -> io::Result<()> {
+pub(crate) fn atomic_write(path: &Path, data: &[u8]) -> io::Result<()> {
     let tmp = path.with_extension("pending");
     {
         let mut file = File::create(&tmp)?;

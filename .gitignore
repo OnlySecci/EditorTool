@@ -7,3 +7,7 @@
 *.etdoc
 session.json
 session.previous.json
+sharing/
+sharing.json
+identity.key
+identity.der
