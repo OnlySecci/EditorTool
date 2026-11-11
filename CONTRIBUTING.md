@@ -9,7 +9,7 @@ The canonical repository is public: https://github.com/OnlySecci/EditorTool.
 5. Update `Cargo.toml` and `CHANGELOG.md`, commit, and tag the release with `V<version>`.
 6. Push the tag. The release workflow builds installation packages, collects SHA-256 checksums, and publishes a public GitHub Release.
 
-Release downloads remain accessible only to accounts with repository access. Installers are unsigned until platform signing identities are supplied. macOS bundles receive a local ad-hoc signature; they are not notarized.
+Release downloads are publicly accessible without repository membership. Installers are unsigned until platform signing identities are supplied. macOS bundles receive a local ad-hoc signature; they are not notarized.
 
 Build instructions are in README.md. Package scripts are in `scripts/` and `packaging/`. The GitHub Actions workflow uses repository-scoped `GITHUB_TOKEN` access; no personal token is stored in this project.
 
