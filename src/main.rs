@@ -5,6 +5,7 @@ mod ipc;
 mod preferences;
 mod rich;
 mod session;
+mod split;
 mod syntax;
 mod theme;
 mod updater;
@@ -70,6 +71,14 @@ enum Action {
     ShowFind(bool),
     ToggleReplace,
     Settings,
+    ImageAutoSize(bool),
+    TabContext(usize, i32, i32),
+    CopyPath,
+    CloseOtherTabs,
+    Split(bool),
+    EndSplit,
+    RelayoutSplit,
+    MoveTab(usize),
     Undo,
     Cut,
     SelectAll,
@@ -272,6 +281,11 @@ struct EditorWindow {
     vertical: bool,
     tab_signature: String,
     reveal_tab: bool,
+    route: Rc<Cell<usize>>,
+    embedded: bool,
+    split_key: Option<String>,
+    split_stacked: Rc<Cell<bool>>,
+    split_ratio: Rc<Cell<i32>>,
 }
 
 fn button(
@@ -332,6 +346,9 @@ fn editor(target: Rc<Cell<bool>>, right: bool) -> (RichEditor, TextBuffer, Rc<Re
 
 impl EditorWindow {
     fn new(wid: usize, tx: app::Sender<Message>, vertical: bool) -> Self {
+        Self::build(wid, tx, vertical, true)
+    }
+    fn build(wid: usize, tx: app::Sender<Message>, vertical: bool, show: bool) -> Self {
         Group::set_current(None::<&Group>);
         let mut win = Window::default()
             .with_size(1180, 760)
@@ -460,6 +477,16 @@ impl EditorWindow {
             tx,
             (wid, Action::CheckUpdates(true)),
         );
+        for (label, action) in [
+            ("&Ansicht/Split View/Nebeneinander", Action::Split(false)),
+            ("&Ansicht/Split View/Übereinander", Action::Split(true)),
+            (
+                "&Ansicht/Split View/Als zwei Fenster weiterführen",
+                Action::EndSplit,
+            ),
+        ] {
+            menu.add_emit(label, Shortcut::None, MenuFlag::Normal, tx, (wid, action));
+        }
         for (label, shortcut, action) in entries {
             menu.add_emit(label, shortcut, MenuFlag::Normal, tx, (wid, action));
         }
@@ -584,43 +611,8 @@ impl EditorWindow {
         win.set_callback(move |_| tx.send((wid, Action::CloseWindow)));
         let find = chrome::SearchPanel::new(wid, tx);
         let settings = chrome::SettingsPanel::new(wid, tx, vertical);
-        win.handle(move |_, ev| {
-            if ev == Event::KeyDown && app::event_key() == fltk::enums::Key::Escape {
-                return true;
-            }
-            if ev == Event::KeyDown && app::event_state().contains(Shortcut::Command) {
-                if app::event_key() == fltk::enums::Key::from_char('f') {
-                    tx.send((wid, Action::ShowFind(false)));
-                    return true;
-                }
-                if app::event_key() == fltk::enums::Key::from_char('h') {
-                    tx.send((wid, Action::ShowFind(true)));
-                    return true;
-                }
-                let shift = app::event_state().contains(Shortcut::Shift);
-                if app::event_key() == fltk::enums::Key::Tab {
-                    tx.send((wid, Action::NextTab(shift)));
-                    return true;
-                }
-                let action = match app::event_key() {
-                    k if k == fltk::enums::Key::from_char('t') => Some(Action::NewTab),
-                    k if k == fltk::enums::Key::from_char('n') => Some(Action::NewWindow),
-                    k if k == fltk::enums::Key::from_char('w') => Some(if shift {
-                        Action::CloseAllTabs
-                    } else {
-                        Action::CloseTab
-                    }),
-                    k if k == fltk::enums::Key::from_char('o') => Some(Action::Open(false)),
-                    k if k == fltk::enums::Key::from_char('s') => Some(Action::Save(shift)),
-                    _ => None,
-                };
-                if let Some(action) = action {
-                    tx.send((wid, action));
-                    return true;
-                }
-            }
-            false
-        });
+        let route = Rc::new(Cell::new(wid));
+        split::wire_window(&mut win, route.clone(), tx);
         let mut result = Self {
             win,
             root,
@@ -638,11 +630,19 @@ impl EditorWindow {
             vertical,
             tab_signature: String::new(),
             reveal_tab: true,
+            route,
+            embedded: false,
+            split_key: None,
+            split_stacked: Rc::new(Cell::new(false)),
+            split_ratio: Rc::new(Cell::new(500)),
         };
         result.layout_tabs(vertical);
         result.add_tab(wid, tx);
-        result.win.show();
-        chrome::dark_title(&result.win);
+        result.wire_root(wid);
+        if show {
+            result.win.show();
+            chrome::dark_title(&result.win);
+        }
         result
     }
 
@@ -776,6 +776,16 @@ impl EditorWindow {
     }
 
     fn resize_docs(&mut self) {
+        if self.vertical {
+            let width = self
+                .sidebar_width
+                .clamp(120, (self.root.w() - 240).max(120));
+            if width != self.sidebar_width {
+                self.sidebar_width = width;
+                self.workspace.fixed(&self.tab_scroll, width);
+                self.workspace.recalc();
+            }
+        }
         let rect = (
             self.area.x(),
             self.area.y(),
@@ -791,6 +801,7 @@ impl EditorWindow {
     }
 
     fn refresh(&mut self, wid: usize, tx: app::Sender<Message>) {
+        self.follow_focus(wid);
         self.resize_docs();
         if let Some(d) = self.docs.get_mut(self.active) {
             d.left.reflow();
@@ -802,7 +813,7 @@ impl EditorWindow {
                 app::add_timeout3(0.25, move |_| tx.send((wid, Action::SyntaxRequest(id))));
             }
             let title = format!("{} — EditorTool", d.title());
-            if self.win.label() != title {
+            if self.route.get() == wid && self.win.label() != title {
                 self.win.set_label(&title);
             }
         }
@@ -1024,8 +1035,89 @@ impl EditorWindow {
 
     fn action(&mut self, action: Action, wid: usize, tx: app::Sender<Message>) {
         match action {
+            Action::TabContext(index, x, y) => {
+                if index >= self.docs.len() {
+                    return;
+                }
+                self.action(Action::Select(index), wid, tx);
+                Group::set_current(None::<&Group>);
+                let mut popup =
+                    fltk::menu::MenuButton::new(x - self.win.x(), y - self.win.y(), 1, 1, None);
+                self.win.add(&popup);
+                popup.set_text_color(FG);
+                popup.set_color(PANEL);
+                popup.set_text_size(13);
+                for (label, action) in [
+                    ("Speichern", Action::Save(false)),
+                    ("Speichern unter…", Action::Save(true)),
+                    ("Dateipfad kopieren", Action::CopyPath),
+                    ("Tab schliessen", Action::CloseTab),
+                    ("Andere Tabs schliessen", Action::CloseOtherTabs),
+                    ("Alle Tabs schliessen", Action::CloseAllTabs),
+                    (
+                        "In andere Split-Ansicht verschieben",
+                        Action::MoveTab(index),
+                    ),
+                    ("Split View/Nebeneinander", Action::Split(false)),
+                    ("Split View/Übereinander", Action::Split(true)),
+                    ("Split View/Als zwei Fenster weiterführen", Action::EndSplit),
+                    ("Sprache/Automatisch", Action::SetLanguage(None)),
+                ] {
+                    popup.add_emit(label, Shortcut::None, MenuFlag::Normal, tx, (wid, action));
+                }
+                for language in [
+                    Language::Plain,
+                    Language::Python,
+                    Language::PowerShell,
+                    Language::Rust,
+                    Language::JavaScript,
+                    Language::Json,
+                    Language::Shell,
+                    Language::Cpp,
+                    Language::Html,
+                    Language::Css,
+                    Language::Config,
+                    Language::Sql,
+                ] {
+                    popup.add_emit(
+                        &format!("Sprache/{}", language.name().replace('/', " · ")),
+                        Shortcut::None,
+                        MenuFlag::Normal,
+                        tx,
+                        (wid, Action::SetLanguage(Some(language))),
+                    );
+                }
+                popup.popup();
+                self.win.remove(&popup);
+                fltk::menu::MenuButton::delete(popup);
+            }
+            Action::CopyPath => {
+                if let Some(path) = &self.docs[self.active].path {
+                    app::copy(&path.to_string_lossy());
+                } else {
+                    dialog::message_default(
+                        "Dieses Dokument wurde noch nicht als Datei gespeichert.",
+                    );
+                }
+            }
+            Action::CloseOtherTabs => {
+                for index in 0..self.docs.len() {
+                    if index != self.active && !self.confirm_close(index) {
+                        return;
+                    }
+                }
+                let keep = self.docs.remove(self.active);
+                for d in self.docs.drain(..) {
+                    Flex::delete(d.group);
+                }
+                self.docs.push(keep);
+                self.active = 0;
+                self.docs[0].group.show();
+                self.tab_signature.clear();
+                self.reveal_tab = true;
+            }
             Action::SidebarWidth(width) => {
-                self.sidebar_width = width.clamp(120, (self.win.w() - 320).max(120));
+                self.sidebar_width = width.clamp(120, (self.root.w() - 240).max(120));
                 if self.vertical {
                     self.workspace.fixed(&self.tab_scroll, self.sidebar_width);
                     self.workspace.recalc();
@@ -1431,6 +1523,9 @@ impl EditorWindow {
             active: self.active,
             rect: (self.win.x(), self.win.y(), self.win.w(), self.win.h()),
             sidebar_width: self.sidebar_width,
+            split_key: self.split_key.clone(),
+            split_stacked: self.split_stacked.get(),
+            split_ratio: self.split_ratio.get(),
         }
     }
     fn restore(
@@ -1442,6 +1537,9 @@ impl EditorWindow {
     ) -> bool {
         let mut success = true;
         self.sidebar_width = state.sidebar_width.clamp(120, 600);
+        self.split_key = state.split_key.clone();
+        self.split_stacked.set(state.split_stacked);
+        self.split_ratio.set(state.split_ratio.clamp(200, 800));
         self.layout_tabs(self.vertical);
         for (index, tab) in state.tabs.iter().enumerate() {
             if index > 0 {
@@ -1535,6 +1633,7 @@ fn char_boundary(buffer: &TextBuffer, position: i32) -> i32 {
 
 struct Runtime {
     windows: Vec<Option<EditorWindow>>,
+    splits: Vec<split::Host>,
     closed: Vec<session::WindowState>,
     store: session::Store,
     tx: app::Sender<Message>,
@@ -1595,6 +1694,7 @@ impl Runtime {
         self.last_fingerprint = self.fingerprint();
     }
     fn update(&mut self) {
+        self.layout_splits();
         for (id, w) in self.windows.iter_mut().enumerate() {
             if let Some(w) = w {
                 w.refresh(id, self.tx);
@@ -1675,7 +1775,8 @@ impl Runtime {
             | Action::Accent(_)
             | Action::FontSize(_)
             | Action::UpdateCheckOption(_)
-            | Action::UpdateInstallOption(_) => {
+            | Action::UpdateInstallOption(_)
+            | Action::ImageAutoSize(_) => {
                 let mut prefs = preferences::get();
                 match action {
                     Action::Orientation(value) => prefs.vertical = value,
@@ -1683,6 +1784,7 @@ impl Runtime {
                     Action::Design(value) => prefs.design = value.min(2),
                     Action::Accent(value) => prefs.accent = value.min(2),
                     Action::FontSize(value) => prefs.font_size = value.clamp(12, 28),
+                    Action::ImageAutoSize(value) => prefs.image_auto_size = value,
                     Action::UpdateCheckOption(value) => {
                         prefs.update_check = value;
                         if !value {
@@ -1871,39 +1973,11 @@ impl Runtime {
                 let owner = self.windows.iter().flatten().next().map(|w| w.win.clone());
                 self.updates.show(owner.as_ref());
             }
-            Action::CloseWindow => {
-                if self.windows.get(wid).is_some_and(Option::is_some) {
-                    if !self.cache_enabled {
-                        if let Some(Some(window)) = self.windows.get_mut(wid) {
-                            for index in 0..window.docs.len() {
-                                if !window.confirm_close(index) {
-                                    return;
-                                }
-                            }
-                        }
-                    }
-                    // Cache the still-live buffers and wait for the disk commit before closing.
-                    self.persist();
-                    if self.cache_enabled {
-                        if let Err(e) = self.store.flush() {
-                            dialog::alert_default(&format!("Fenster bleibt offen, weil der Sitzungscache nicht gespeichert werden konnte: {e}"));
-                            self.store.revisions.clear();
-                            self.last_fingerprint.clear();
-                            return;
-                        }
-                    }
-                    if let Some(closed) = self.windows[wid].take() {
-                        self.closed.push(closed.snapshot());
-                        Window::delete(closed.find.win);
-                        Window::delete(closed.settings.win);
-                        Window::delete(closed.win);
-                    }
-                    self.persist();
-                    if self.windows.iter().all(Option::is_none) {
-                        self.updates.win.hide();
-                    }
-                }
-            }
+            Action::Split(stacked) => self.open_split(wid, stacked),
+            Action::MoveTab(index) => self.move_tab(wid, index),
+            Action::EndSplit => self.end_split(wid),
+            Action::RelayoutSplit => self.layout_splits(),
+            Action::CloseWindow => self.close_editor_window(wid),
             other => {
                 if let Some(Some(w)) = self.windows.get_mut(wid) {
                     w.action(other, wid, self.tx);
@@ -2044,7 +2118,7 @@ fn main() {
             continue;
         }
         let id = windows.len();
-        let mut window = EditorWindow::new(id, tx, vertical);
+        let mut window = EditorWindow::build(id, tx, vertical, false);
         if !window.restore(state, &store, id, tx) {
             cache_enabled = false;
         }
@@ -2055,6 +2129,7 @@ fn main() {
     }
     let state = Rc::new(RefCell::new(Runtime {
         windows,
+        splits: vec![],
         closed: vec![],
         store,
         tx,
@@ -2071,7 +2146,12 @@ fn main() {
     {
         let mut runtime = state.borrow_mut();
         runtime.weak_self = Rc::downgrade(&state);
-        for w in runtime.windows.iter().flatten() {
+        runtime.restore_splits();
+        for w in runtime.windows.iter_mut().flatten().filter(|w| !w.embedded) {
+            w.win.show();
+            chrome::dark_title(&w.win);
+        }
+        for w in runtime.windows.iter().flatten().filter(|w| !w.embedded) {
             shutdown::hook(&w.win, Rc::downgrade(&state));
         }
         if !input_files.is_empty() {

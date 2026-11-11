@@ -261,7 +261,7 @@ impl SearchPanel {
             self.search.set_value(selection);
         }
         self.win
-            .set_pos(owner.x() + (owner.w() - 520) / 2, owner.y() + 80);
+            .set_pos(owner.x() + (owner.w() - 560) / 2, owner.y() + 80);
         self.win.show();
         self.win.set_opacity(0.95);
         dark_title(&self.win);
@@ -281,6 +281,7 @@ pub struct SettingsPanel {
     design: fltk::menu::Choice,
     accent: fltk::menu::Choice,
     size: fltk::menu::Choice,
+    image_auto: CheckButton,
     update_check: CheckButton,
     update_install: CheckButton,
 }
@@ -288,11 +289,11 @@ impl SettingsPanel {
     pub fn new(wid: usize, tx: app::Sender<Message>, vertical: bool) -> Self {
         Group::set_current(None::<&Group>);
         let mut win = Window::default()
-            .with_size(520, 600)
+            .with_size(560, 640)
             .with_label("Einstellungen — EditorTool");
         win.set_color(PANEL);
         set_icon(&mut win);
-        let mut root = Flex::new(24, 20, 472, 560, None).column();
+        let mut root = Flex::new(24, 20, 512, 600, None).column();
         root.set_spacing(12);
         let title = theme::heading("Einstellungen", 23);
         root.fixed(&title, 34);
@@ -332,6 +333,11 @@ impl SettingsPanel {
                 tx.send((wid, Action::FontSize(value)));
             }
         });
+        let mut image_auto = CheckButton::default()
+            .with_label("Neue Bilder automatisch auf 50 % der Textfeldbreite verkleinern");
+        theme::check(&mut image_auto);
+        image_auto.set_callback(move |c| tx.send((wid, Action::ImageAutoSize(c.value()))));
+        root.fixed(&image_auto, 30);
         let mut update_check = CheckButton::default().with_label("Beim Start nach Updates suchen");
         theme::check(&mut update_check);
         update_check.set_callback(move |c| tx.send((wid, Action::UpdateCheckOption(c.value()))));
@@ -364,6 +370,7 @@ impl SettingsPanel {
             design,
             accent,
             size,
+            image_auto,
             update_check,
             update_install,
         };
@@ -383,6 +390,7 @@ impl SettingsPanel {
                 .position(|&v| v == prefs.font_size)
                 .unwrap_or(2) as i32,
         );
+        self.image_auto.set_value(prefs.image_auto_size);
         self.update_check.set_value(prefs.update_check);
         self.update_install.set_value(prefs.update_install);
         self.win.redraw();

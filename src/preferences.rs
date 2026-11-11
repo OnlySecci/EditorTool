@@ -11,6 +11,7 @@ pub struct Preferences {
     pub font_size: i32,
     pub update_check: bool,
     pub update_install: bool,
+    pub image_auto_size: bool,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -22,6 +23,7 @@ impl Default for Preferences {
             font_size: 16,
             update_check: true,
             update_install: false,
+            image_auto_size: true,
         }
     }
 }

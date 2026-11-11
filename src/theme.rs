@@ -383,6 +383,7 @@ pub fn tab(
     b.set_frame(FrameType::NoBox);
     b.clear_visible_focus();
     let hovered = hover(&mut b);
+    let tab_hover = hovered.clone();
     b.super_draw(false);
     b.draw(move |b| {
         draw::push_clip(b.x(), b.y(), b.w(), b.h());
@@ -432,6 +433,28 @@ pub fn tab(
             if hovered.get() { TEXT } else { SECONDARY },
         );
         draw::pop_clip();
+    });
+    let hovered = tab_hover;
+    b.handle(move |b, event| match event {
+        Event::Push if app::event_mouse_button() == app::MouseButton::Right => {
+            tx.send((
+                wid,
+                Action::TabContext(index, app::event_x_root(), app::event_y_root()),
+            ));
+            true
+        }
+        Event::Released if app::event_mouse_button() == app::MouseButton::Right => true,
+        Event::Enter => {
+            hovered.set(true);
+            b.redraw();
+            true
+        }
+        Event::Leave => {
+            hovered.set(false);
+            b.redraw();
+            true
+        }
+        _ => false,
     });
     b.set_callback(move |b| {
         tx.send((wid, Action::Select(index)));
