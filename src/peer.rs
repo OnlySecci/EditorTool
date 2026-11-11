@@ -211,6 +211,7 @@ enum Reply {
 struct Listener {
     running: Arc<AtomicBool>,
     port: u16,
+    worker: thread::JoinHandle<()>,
 }
 pub struct Service {
     inner: Arc<Inner>,
@@ -557,7 +558,7 @@ impl Service {
             let flag = running.clone();
             let inner = self.inner.clone();
             self.inner.enabled.store(true, Ordering::Relaxed);
-            thread::spawn(move || {
+            let worker = thread::spawn(move || {
                 for connection in listener.incoming() {
                     if !flag.load(Ordering::Relaxed) {
                         break;
@@ -585,6 +586,7 @@ impl Service {
             self.listener = Some(Listener {
                 running,
                 port: config.port,
+                worker,
             });
         }
         self.inner.enabled.store(config.enabled, Ordering::Relaxed);
@@ -599,10 +601,21 @@ impl Service {
         self.inner.enabled.store(false, Ordering::Relaxed);
         if let Some(listener) = self.listener.take() {
             listener.running.store(false, Ordering::Relaxed);
-            let _ = TcpStream::connect_timeout(
+            let wake = TcpStream::connect_timeout(
                 &SocketAddr::from(([127, 0, 0, 1], listener.port)),
                 Duration::from_millis(200),
-            );
+            )
+            .or_else(|_| {
+                TcpStream::connect_timeout(
+                    &SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], listener.port)),
+                    Duration::from_millis(200),
+                )
+            });
+            // The accept thread owns the bound socket. Release it before a
+            // settings change binds the replacement listener.
+            if wake.is_ok() || listener.worker.is_finished() {
+                let _ = listener.worker.join();
+            }
         }
     }
     pub fn disable_after_error(&mut self) {
@@ -1175,6 +1188,14 @@ fn serve(inner: &Arc<Inner>, mut socket: TcpStream, remote: SocketAddr) -> Resul
                 return Err("Ungültige Freigabeanfrage.".into());
             }
             validate_revision(&offer.revision)?;
+            if offer
+                .revision
+                .clock
+                .keys()
+                .any(|id| !offer.members.iter().any(|p| &p.id == id))
+            {
+                return Err("Versionsautor fehlt in der Freigabe.".into());
+            }
             for p in &mut offer.members {
                 if p.id == peer {
                     p.host = remote.ip().to_canonical().to_string();
@@ -1428,15 +1449,17 @@ fn sweep(inner: &Arc<Inner>) {
                     }
                 }
             }
-            let outbox = inner
-                .state
-                .lock()
-                .unwrap()
-                .outbox
-                .iter()
-                .filter(|o| o.target == info.id)
-                .cloned()
-                .collect::<Vec<_>>();
+            let outbox = {
+                let s = inner.state.lock().unwrap();
+                s.outbox
+                    .iter()
+                    .filter(|o| {
+                        o.target == info.id
+                            && (!o.offer.sync || s.docs.get(&o.offer.doc).is_some_and(|d| d.active))
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+            };
             for item in outbox {
                 let mut stream = connect(inner, &peer)?;
                 let mut offer = item.offer.clone();

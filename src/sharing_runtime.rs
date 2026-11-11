@@ -154,6 +154,10 @@ impl Runtime {
             self.open_conflict(id);
             return Ok(());
         }
+        self.conflict_notified.remove(id);
+        if self.conflicts.doc.as_deref() == Some(id) && self.conflicts.versions.len() > 1 {
+            self.conflicts.win.hide();
+        }
         let positions: Vec<_> = self
             .windows
             .iter()
