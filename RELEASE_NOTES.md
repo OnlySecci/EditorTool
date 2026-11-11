@@ -29,7 +29,7 @@ Zusätzlich enthalten die Releases portable ZIP-Archive und `SHA256SUMS.txt`.
 
 ## Hinweise
 
-- Das Repository und seine Downloads bleiben privat.
+- Das Repository und alle Downloads sind öffentlich zugänglich.
 - Die Pakete sind nicht mit einem Windows-/Apple-Entwicklerzertifikat signiert. macOS-Bundles erhalten eine lokale Ad-hoc-Signatur; sie sind nicht notarisiert.
 - Die Builds und Installationspakete werden auf GitHub erstellt. Auf Wunsch wurden keine Test-Suites ausgeführt.
 - Syntaxfarben sind lexikalisch; es gibt keine Code-Ausführung oder Sprachprüfung. Über 4 MiB pro Textbereich bleibt die Färbung aus.

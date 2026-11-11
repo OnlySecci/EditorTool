@@ -130,7 +130,7 @@ jobs:
           pattern: packages-*
           merge-multiple: true
           path: packages
-      - name: Publish private-repository release
+      - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

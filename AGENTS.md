@@ -1,6 +1,6 @@
 # EditorTool development
 
-- Keep the GitHub repository private unless the owner explicitly changes this.
+- The owner requested a public GitHub repository for V1.0. Keep it public unless the owner changes this.
 - Use feature branches and pull requests for follow-up work; releases come from version tags on main.
 - The owner requested builds and packages without automated or interactive tests. Do not add or run test suites unless the owner changes this preference.
 - Preserve the native Rust/FLTK architecture, event-driven idle behavior and plain-text clipboard output.

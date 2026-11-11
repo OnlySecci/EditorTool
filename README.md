@@ -30,7 +30,7 @@ Diese bereitgestellte Aufnahme zeigt die Suche vor ihrer Verkleinerung. V1.0 ver
 
 ## Installation
 
-Downloads unter [Releases](https://github.com/OnlySecci/EditorTool/releases). Das Repository bleibt **privat**; Downloads erfordern Repository-Zugriff.
+Downloads unter [Releases](https://github.com/OnlySecci/EditorTool/releases). Das Repository und die Downloads sind **öffentlich** zugänglich.
 
 | System | Pakete für x64 und ARM64 |
 | --- | --- |
