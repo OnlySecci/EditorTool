@@ -1713,7 +1713,12 @@ impl Runtime {
         match action {
             Action::OpenExternal(paths) => {
                 let id = if let Some(index) = self.windows.iter().position(Option::is_some) {
-                    index
+                    let active = self.windows[index].as_ref().unwrap().route.get();
+                    if self.windows.get(active).is_some_and(Option::is_some) {
+                        active
+                    } else {
+                        index
+                    }
                 } else {
                     self.handle(0, Action::NewWindow);
                     self.windows.len() - 1

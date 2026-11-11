@@ -763,11 +763,35 @@ fn rebuild(state: &Rc<RefCell<State>>) {
                         }
                         Event::Push => {
                             if let Some(state) = weak.upgrade() {
-                                state.borrow_mut().selected_image = Some(asset_data.clone());
-                                let s = state.borrow();
+                                let mut s = state.borrow_mut();
+                                s.selected_image = Some(asset_data.clone());
                                 s.target.set(s.right);
+                                let after = s
+                                    .assets
+                                    .iter()
+                                    .find(|a| Rc::ptr_eq(&a.png, &asset_data))
+                                    .map(|a| a.position + IMAGE_MARKER.len_utf8());
+                                let next = after.and_then(|position| {
+                                    s.parts.iter().position(
+                                        |part| matches!(part,Part::Text(t) if t.start==position),
+                                    )
+                                });
+                                let mut focus = None;
+                                if let Some(index) = next {
+                                    s.current = index;
+                                    if let Part::Text(t) = &mut s.parts[index] {
+                                        t.editor.set_insert_position(0);
+                                        focus = Some(t.editor.clone());
+                                    }
+                                }
+                                let mut viewport = s.viewport.clone();
+                                let offset = viewport.yposition();
                                 let mut buffer = s.buffer.clone();
                                 drop(s);
+                                if let Some(mut editor) = focus {
+                                    editor.take_focus().ok();
+                                }
+                                viewport.scroll_to(0, offset);
                                 buffer.unselect();
                                 state.borrow_mut().viewport.redraw();
                                 if app::event_mouse_button() == app::MouseButton::Left {
