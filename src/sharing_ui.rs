@@ -294,6 +294,7 @@ impl Conflicts {
         let mut list = HoldBrowser::default();
         list.set_color(BG);
         list.set_label_color(FG);
+        list.set_format_char('\0');
         list.set_text_size(13);
         list.set_frame(FrameType::FlatBox);
         list.emit(tx, (0, Action::PreviewConflict));
@@ -347,7 +348,7 @@ impl Conflicts {
                 "{} · Stand {} · Inhalt {}",
                 r.name,
                 r.clock.values().copied().fold(0u64, u64::saturating_add),
-                &r.hash[..12]
+                r.hash.get(..12).unwrap_or(&r.hash)
             ));
         }
         self.list.select(1);
