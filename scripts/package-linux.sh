@@ -7,7 +7,7 @@ debarch=$(dpkg --print-architecture)
 pkgroot="$PWD/dist/pkgroot"
 mkdir -p "$pkgroot/usr/bin" "$pkgroot/usr/share/applications" "$pkgroot/usr/share/icons/hicolor/256x256/apps" "$pkgroot/usr/share/mime/packages" "$pkgroot/usr/share/doc/editortool" dist/packages
 install -m755 dist/linux/EditorTool "$pkgroot/usr/bin/editortool"
-cp packaging/editortool.desktop "$pkgroot/usr/share/applications/"
+cp packaging/editortool.desktop "$pkgroot/usr/share/applications/com.github.OnlySecci.EditorTool.desktop"
 cp assets/editortool.png "$pkgroot/usr/share/icons/hicolor/256x256/apps/editortool.png"
 cp packaging/editortool-mime.xml "$pkgroot/usr/share/mime/packages/"
 cp README.md LICENSE "$pkgroot/usr/share/doc/editortool/"
@@ -33,7 +33,7 @@ mkdir -p %{buildroot}
 cp -a $pkgroot/. %{buildroot}/
 %files
 /usr/bin/editortool
-/usr/share/applications/editortool.desktop
+/usr/share/applications/com.github.OnlySecci.EditorTool.desktop
 /usr/share/icons/hicolor/256x256/apps/editortool.png
 /usr/share/mime/packages/editortool-mime.xml
 /usr/share/doc/editortool

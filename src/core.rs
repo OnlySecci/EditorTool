@@ -50,20 +50,42 @@ pub struct Comparison {
     pub added: usize,
 }
 
+#[allow(dead_code)]
 pub fn compare(left: &str, right: &str) -> Comparison {
+    compare_impl(left, right, None).expect("uncancelled comparison")
+}
+pub fn compare_interruptible(
+    left: &str,
+    right: &str,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Option<Comparison> {
+    compare_impl(left, right, Some(cancel))
+}
+fn compare_impl(
+    left: &str,
+    right: &str,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> Option<Comparison> {
+    let stopped = || cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed));
+    if stopped() {
+        return None;
+    }
     // Bound the expensive diff computation; huge inputs receive a coarse comparison.
     if left.len() + right.len() > 16 * 1024 * 1024 {
         let equal = left == right;
-        return Comparison {
+        return Some(Comparison {
             left_style: (if equal { "A" } else { "B" }).repeat(left.len()),
             right_style: (if equal { "A" } else { "C" }).repeat(right.len()),
             removed: if equal { 0 } else { left.lines().count() },
             added: if equal { 0 } else { right.lines().count() },
-        };
+        });
     }
     let diff = TextDiff::configure()
         .timeout(Duration::from_secs(2))
         .diff_lines(left, right);
+    if stopped() {
+        return None;
+    }
     let mut result = Comparison {
         left_style: String::with_capacity(left.len()),
         right_style: String::with_capacity(right.len()),
@@ -71,6 +93,9 @@ pub fn compare(left: &str, right: &str) -> Comparison {
         added: 0,
     };
     for change in diff.iter_all_changes() {
+        if stopped() {
+            return None;
+        }
         let len = change.value().len();
         match change.tag() {
             ChangeTag::Equal => {
@@ -87,5 +112,9 @@ pub fn compare(left: &str, right: &str) -> Comparison {
             }
         }
     }
-    result
+    if stopped() {
+        None
+    } else {
+        Some(result)
+    }
 }

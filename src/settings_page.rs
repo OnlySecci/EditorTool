@@ -103,6 +103,7 @@ impl Page {
 impl Runtime {
     pub fn park_settings_pages(&mut self) {
         self.clients.page.park(&mut self.clients.win);
+        self.keyboard.page.park(&mut self.keyboard.win);
         for w in self.windows.iter_mut().flatten() {
             w.settings.page.park(&mut w.settings.win);
         }
@@ -124,6 +125,49 @@ impl Runtime {
             self.clients.page.mount(&mut w.docs[w.active].group);
         } else {
             self.clients.page.park(&mut self.clients.win);
+        }
+        if let Some(w) = self
+            .windows
+            .iter_mut()
+            .flatten()
+            .find(|w| w.docs[w.active].page == 3)
+        {
+            self.keyboard.page.mount(&mut w.docs[w.active].group);
+        } else {
+            self.keyboard.page.park(&mut self.keyboard.win);
+        }
+    }
+    pub fn open_keyboard_tab(&mut self, wid: usize) {
+        if self.windows.iter().all(Option::is_none) {
+            self.handle(0, Action::NewWindow);
+        }
+        let existing = self.windows.iter().enumerate().find_map(|(wi, w)| {
+            w.as_ref()
+                .and_then(|w| w.docs.iter().position(|d| d.page == 3).map(|di| (wi, di)))
+        });
+        let wi = if let Some((wi, di)) = existing {
+            self.windows[wi]
+                .as_mut()
+                .unwrap()
+                .action(Action::Select(di), wi, self.tx);
+            wi
+        } else {
+            let wi = if self.windows.get(wid).is_some_and(Option::is_some) {
+                wid
+            } else {
+                self.windows.iter().position(Option::is_some).unwrap()
+            };
+            self.windows[wi]
+                .as_mut()
+                .unwrap()
+                .open_settings_tab(3, wi, self.tx);
+            wi
+        };
+        let w = self.windows[wi].as_mut().unwrap();
+        if !w.embedded {
+            w.win.show();
+            chrome::dark_title(&w.win);
+            shutdown::hook(&w.win, self.weak_self.clone());
         }
     }
     pub fn open_clients_tab(&mut self, wid: usize) {

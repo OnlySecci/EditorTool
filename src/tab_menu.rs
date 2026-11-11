@@ -48,6 +48,7 @@ fn items(page: u8, settings: bool, index: usize) -> Vec<Item> {
             Section("SPLIT VIEW"),
             Action("Nebeneinander", "", crate::Action::Split(false)),
             Action("Übereinander", "", crate::Action::Split(true)),
+            Action("Split zusammenführen", "", crate::Action::MergeSplit),
             Action(
                 "In andere Ansicht verschieben",
                 "",
@@ -119,6 +120,11 @@ pub fn popup(owner: &Window, index: usize, settings: bool, x: i32, y: i32) -> Op
                 Item::Page(l, _) => (*l, if page == 0 { "›" } else { "‹" }, true),
                 _ => unreachable!(),
             };
+            let hint = if let Item::Action(_, _, action) = item {
+                crate::shortcuts::action_hint(action).unwrap_or_else(|| hint.to_owned())
+            } else {
+                hint.to_owned()
+            };
             let mut button = Button::new(8, row_y, width - 16, 32, None);
             button.set_frame(FrameType::NoBox);
             button.clear_visible_focus();
@@ -144,7 +150,7 @@ pub fn popup(owner: &Window, index: usize, settings: bool, x: i32, y: i32) -> Op
                 draw::set_font(Font::Helvetica, if submenu { 16 } else { 10 });
                 draw::set_draw_color(if active { Color::White } else { MUTED });
                 draw::draw_text2(
-                    hint,
+                    &hint,
                     b.x() + b.w() - 108,
                     b.y(),
                     96,

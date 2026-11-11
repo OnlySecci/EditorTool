@@ -96,7 +96,10 @@ impl Runtime {
         source.reveal_tab = true;
         if target.docs.len() == 1 {
             let blank = &target.docs[0];
-            if !blank.dirty()
+            if blank.page == 0
+                && blank.sharing.is_none()
+                && blank.right_path.is_none()
+                && !blank.dirty()
                 && blank.path.is_none()
                 && blank.left_buf.length() == 0
                 && blank.right_buf.length() == 0
@@ -112,21 +115,7 @@ impl Runtime {
         target.next_doc += 1;
         document.syntax_pending = false;
         document.clear_styles();
-        if let Some(controls) = document.rightcol.child(0).and_then(|w| w.as_group()) {
-            for i in 0..controls.children() {
-                if let Some(widget) = controls.child(i) {
-                    if let Some(mut button) = Button::from_dyn_widget(&widget) {
-                        match button.label().as_str() {
-                            "Vergleichstext öffnen" => {
-                                button.emit(self.tx, (peer, Action::Open(true)))
-                            }
-                            "Vergleichen" => button.emit(self.tx, (peer, Action::Compare)),
-                            _ => (),
-                        }
-                    }
-                }
-            }
-        }
+        document.rewire_comparison(peer, self.tx);
         target.area.add(&document.group);
         target.area.resizable(&document.group);
         document.group.show();
@@ -301,6 +290,87 @@ impl Runtime {
             host.panels.redraw();
         }
     }
+    pub fn merge_split(&mut self, wid: usize) {
+        let Some(index) = self
+            .splits
+            .iter()
+            .position(|h| h.first == wid || h.second == wid)
+        else {
+            return;
+        };
+        let mut host = self.splits.remove(index);
+        let mut first = self.windows[host.first].take().unwrap();
+        let mut second = self.windows[host.second].take().unwrap();
+        host.panels.remove(&first.root);
+        host.panels.remove(&second.root);
+        first.win.remove(&host.panels);
+        Flex::delete(host.panels);
+        first.win.add(&first.root);
+        first.win.resizable(&first.root);
+        let selected = if wid == host.second {
+            second.docs[second.active].cache_key.clone()
+        } else {
+            first.docs[first.active].cache_key.clone()
+        };
+        for mut document in second.docs.drain(..) {
+            second.area.remove(&document.group);
+            if document.page != 0 && first.docs.iter().any(|d| d.page == document.page) {
+                Flex::delete(document.group);
+                continue;
+            }
+            document.id = first.next_doc;
+            first.next_doc += 1;
+            document.syntax_pending = false;
+            document.rewire_comparison(host.first, self.tx);
+            document.group.hide();
+            first.area.add(&document.group);
+            first.docs.push(document);
+        }
+        if first.docs.len() > 1 {
+            let mut i = 0;
+            while i < first.docs.len() {
+                let d = &first.docs[i];
+                let blank = d.page == 0
+                    && !d.dirty()
+                    && d.path.is_none()
+                    && d.right_path.is_none()
+                    && d.sharing.is_none()
+                    && d.left_buf.length() == 0
+                    && d.right_buf.length() == 0;
+                if blank && first.docs.len() > 1 {
+                    let d = first.docs.remove(i);
+                    Flex::delete(d.group);
+                } else {
+                    i += 1;
+                }
+            }
+        }
+        first.active = first
+            .docs
+            .iter()
+            .position(|d| d.cache_key == selected)
+            .unwrap_or(0);
+        for d in &mut first.docs {
+            d.group.hide();
+        }
+        first.docs[first.active].group.show();
+        first.area.resizable(&first.docs[first.active].group);
+        first.split_key = None;
+        first.route = Rc::new(Cell::new(host.first));
+        first.wire_root(host.first);
+        wire_window(&mut first.win, first.route.clone(), self.tx);
+        first.root.resize(0, 0, first.win.w(), first.win.h());
+        first.root.recalc();
+        first.resize_docs();
+        first.tab_signature.clear();
+        first.reveal_tab = true;
+        Window::delete(second.find.win);
+        Window::delete(second.settings.win);
+        Flex::delete(second.root);
+        first.win.redraw();
+        self.windows[host.first] = Some(first);
+        self.persist();
+    }
     pub fn end_split(&mut self, wid: usize) {
         let Some(index) = self
             .splits
@@ -447,14 +517,10 @@ pub fn wire_window(win: &mut Window, route: Rc<Cell<usize>>, tx: app::Sender<Mes
     win.set_callback(move |_| tx.send((close_route.get(), Action::CloseWindow)));
     win.handle(move |_, ev| {
         let wid = route.get();
-        if ev == Event::KeyDown && app::event_key() == fltk::enums::Key::F3 {
-            tx.send((wid, Action::Find));
-            return true;
-        }
-        if ev == Event::KeyDown && app::event_key() == fltk::enums::Key::Escape {
-            return true;
-        }
-        if ev == Event::KeyDown && app::event_state().contains(Shortcut::Command) {
+        if ev == Event::KeyDown {
+            if shortcuts::capturing() {
+                return false;
+            }
             if app::focus().is_some_and(|w| {
                 fltk::input::Input::from_dyn_widget(&w).is_some()
                     || fltk::output::Output::from_dyn_widget(&w).is_some()
@@ -463,53 +529,16 @@ pub fn wire_window(win: &mut Window, route: Rc<Cell<usize>>, tx: app::Sender<Mes
                 if ['a', 'c', 'v', 'x', 'z']
                     .iter()
                     .any(|c| key == fltk::enums::Key::from_char(*c))
+                    && app::event_state().contains(Shortcut::Command)
                 {
                     return false;
                 }
             }
-            if app::event_key() == fltk::enums::Key::from_char('f') {
-                tx.send((wid, Action::ShowFind(false)));
+            if let Some(command) = shortcuts::resolve() {
+                tx.send((wid, command.action()));
                 return true;
             }
-            if app::event_key() == fltk::enums::Key::from_char('h') {
-                tx.send((wid, Action::ShowFind(true)));
-                return true;
-            }
-            let shift = app::event_state().contains(Shortcut::Shift);
-            if app::event_key() == fltk::enums::Key::Tab {
-                tx.send((wid, Action::NextTab(shift)));
-                return true;
-            }
-            let action = match app::event_key() {
-                k if k == fltk::enums::Key::from_char('=')
-                    || k == fltk::enums::Key::from_char('+') =>
-                {
-                    Some(Action::Zoom(10))
-                }
-                k if k == fltk::enums::Key::from_char('-') => Some(Action::Zoom(-10)),
-                k if k == fltk::enums::Key::from_char('0') => Some(Action::Zoom(0)),
-                k if k == fltk::enums::Key::from_char('t') => Some(Action::NewTab),
-                k if k == fltk::enums::Key::from_char('n') => Some(Action::NewWindow),
-                k if k == fltk::enums::Key::from_char('w') => Some(if shift {
-                    Action::CloseAllTabs
-                } else {
-                    Action::CloseTab
-                }),
-                k if k == fltk::enums::Key::from_char('o') => Some(Action::Open(false)),
-                k if k == fltk::enums::Key::from_char('s') => Some(Action::Save(shift)),
-                k if k == fltk::enums::Key::from_char('v') => Some(Action::Paste),
-                k if k == fltk::enums::Key::from_char('x') => Some(Action::Cut),
-                k if k == fltk::enums::Key::from_char('z') => Some(Action::Undo),
-                k if k == fltk::enums::Key::from_char('a') => Some(Action::SelectAll),
-                k if k == fltk::enums::Key::from_char('i') && shift => Some(Action::InsertImage),
-                k if k == fltk::enums::Key::from_char('u') && shift => {
-                    Some(Action::CheckUpdates(true))
-                }
-                k if k == fltk::enums::Key::from_char(',') => Some(Action::Settings),
-                _ => None,
-            };
-            if let Some(action) = action {
-                tx.send((wid, action));
+            if app::event_key() == fltk::enums::Key::Escape {
                 return true;
             }
         }

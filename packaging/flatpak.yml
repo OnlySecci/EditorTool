@@ -17,7 +17,7 @@ modules:
     build-commands:
       - install -Dm755 usr/bin/editortool /app/bin/editortool
       - install -Dm644 usr/share/icons/hicolor/256x256/apps/editortool.png /app/share/icons/hicolor/256x256/apps/com.github.OnlySecci.EditorTool.png
-      - install -Dm644 usr/share/applications/editortool.desktop /app/share/applications/com.github.OnlySecci.EditorTool.desktop
+      - install -Dm644 usr/share/applications/com.github.OnlySecci.EditorTool.desktop /app/share/applications/com.github.OnlySecci.EditorTool.desktop
       - sed -i 's/Icon=editortool/Icon=com.github.OnlySecci.EditorTool/' /app/share/applications/com.github.OnlySecci.EditorTool.desktop
       - install -Dm644 usr/share/mime/packages/editortool-mime.xml /app/share/mime/packages/com.github.OnlySecci.EditorTool.xml
       - mkdir -p /app/share/doc/editortool
