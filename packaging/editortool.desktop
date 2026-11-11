@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=EditorTool
+Comment=Text, code and images in a lightweight editor
+Exec=editortool %F
+Icon=editortool
+Terminal=false
+Type=Application
+Categories=Utility;TextEditor;
+MimeType=application/x-editortool;
+StartupNotify=true

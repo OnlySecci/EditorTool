@@ -1,0 +1,143 @@
+name: Build and release
+on:
+  push:
+    tags: ['v*', 'V*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Optionaler Release-Tag, z.B. V1.0 (leer: nur Pakete bauen)'
+        required: false
+        type: string
+        default: ''
+permissions:
+  contents: read
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+jobs:
+  package:
+    name: Package ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            platform: windows-x64
+            target: x86_64-pc-windows-msvc
+            arch: x64
+          - os: windows-11-arm
+            platform: windows-arm64
+            target: aarch64-pc-windows-msvc
+            arch: arm64
+          - os: ubuntu-24.04
+            platform: linux-x64
+            target: x86_64-unknown-linux-gnu
+            arch: x64
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
+            target: aarch64-unknown-linux-gnu
+            arch: arm64
+          - os: macos-15
+            platform: macos-arm64
+            target: aarch64-apple-darwin
+            arch: arm64
+          - os: macos-15-intel
+            platform: macos-x64
+            target: x86_64-apple-darwin
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_BUILD_TARGET: ${{ matrix.target }}
+      PACKAGE_ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust toolchain
+        shell: bash
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup target add "${CARGO_BUILD_TARGET}"
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm flatpak flatpak-builder libx11-dev libxext-dev libxft-dev libxinerama-dev libxcursor-dev libxrender-dev libxfixes-dev libpango1.0-dev libcairo2-dev libfontconfig1-dev libgl1-mesa-dev libglu1-mesa-dev
+      - name: Windows build and installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          RUSTFLAGS: '-C target-feature=+crt-static'
+        run: |
+          ./scripts/build-windows.ps1
+          ./scripts/package-windows.ps1 -PortableOnly
+      - name: Linux build and packages
+        if: runner.os == 'Linux'
+        run: |
+          bash scripts/build-linux.sh
+          bash scripts/package-linux.sh
+          bash scripts/package-flatpak.sh
+      - name: macOS build and packages
+        if: runner.os == 'macOS'
+        run: bash scripts/build-macos.sh && bash scripts/package-macos.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packages-${{ matrix.platform }}
+          path: dist/packages/*
+          if-no-files-found: error
+          retention-days: 14
+  installers:
+    name: Windows setup executables
+    needs: package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: packages-windows-*
+          merge-multiple: true
+          path: downloads
+      - name: Build native setup executables
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nsis
+          version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+          mkdir -p dist/windows dist/packages
+          for arch in x64 arm64; do
+            unzip -o "downloads/EditorTool-$version-windows-$arch-portable.zip" -d dist/windows
+            makensis -DVERSION="$version" -DARCH="$arch" packaging/windows.nsi
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: packages-windows-installers
+          path: dist/packages/*setup.exe
+          if-no-files-found: error
+  release:
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+    needs: [package, installers]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: packages-*
+          merge-multiple: true
+          path: packages
+      - name: Publish private-repository release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          cd packages
+          sha256sum * > SHA256SUMS.txt
+          gh release create "$RELEASE_TAG" --target "$SOURCE_COMMIT" --title "EditorTool $RELEASE_TAG" --notes-file ../RELEASE_NOTES.md ./*

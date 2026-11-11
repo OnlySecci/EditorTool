@@ -1,0 +1,9 @@
+/target/
+/dist/
+*.log
+.DS_Store
+/work/
+*.pending
+*.etdoc
+session.json
+session.previous.json
