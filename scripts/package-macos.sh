@@ -2,7 +2,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
-arch=$(uname -m)
+case "${CARGO_BUILD_TARGET:-}" in
+  aarch64-apple-darwin) arch=arm64 ;;
+  x86_64-apple-darwin) arch=x86_64 ;;
+  *) arch=$(uname -m) ;;
+esac
+# Verify the compiled Mach-O target without executing the application.
+lipo -verify_arch "$arch" dist/macos/EditorTool.app/Contents/MacOS/EditorTool
 mkdir -p dist/packages dist/dmg-root
 codesign --force --deep --sign - dist/macos/EditorTool.app
 cp -R dist/macos/EditorTool.app dist/dmg-root/
