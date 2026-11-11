@@ -1,5 +1,13 @@
 use crate::*;
-use std::collections::BTreeSet;
+use std::{
+    collections::BTreeSet,
+    time::{Duration, Instant},
+};
+pub struct Pending {
+    pub revision: u64,
+    pub timer: app::TimeoutHandle,
+    pub deadline: Instant,
+}
 
 impl Runtime {
     fn doc_position(&self, key: &str) -> Option<(usize, usize)> {
@@ -30,39 +38,146 @@ impl Runtime {
             .windows
             .iter()
             .flatten()
-            .flat_map(|w| w.docs.iter().map(|d| d.cache_key.clone()))
+            .flat_map(|w| {
+                w.docs
+                    .iter()
+                    .filter(|d| d.sharing.is_some())
+                    .map(|d| d.cache_key.clone())
+            })
             .collect();
-        self.share_timers.retain(|key, (_, timer)| {
+        self.share_timers.retain(|key, pending| {
             if !live.contains(key) {
-                app::remove_timeout3(*timer);
+                app::remove_timeout3(pending.timer);
                 false
             } else {
                 true
             }
         });
-        for w in self.windows.iter().flatten() {
-            for d in &w.docs {
+        let now = Instant::now();
+        let mut visible_countdown = false;
+        for w in self.windows.iter_mut().flatten() {
+            for d in &mut w.docs {
                 let revision = d.left_meta.borrow().revision;
-                if d.sharing.is_none() || revision == d.share_revision {
-                    continue;
-                }
-                if self
-                    .share_timers
-                    .get(&d.cache_key)
-                    .is_some_and(|(r, _)| *r == revision)
+                if d.sharing.is_some()
+                    && revision != d.share_revision
+                    && d.sync_error != Some(revision)
                 {
-                    continue;
+                    if !self
+                        .share_timers
+                        .get(&d.cache_key)
+                        .is_some_and(|p| p.revision == revision)
+                    {
+                        if let Some(p) = self.share_timers.remove(&d.cache_key) {
+                            app::remove_timeout3(p.timer);
+                        }
+                        d.sync_error = None;
+                        let key = d.cache_key.clone();
+                        let tx = self.tx;
+                        let timer = app::add_timeout3(5.0, move |_| {
+                            tx.send((0, Action::PublishDoc(key.clone(), revision)))
+                        });
+                        self.share_timers.insert(
+                            d.cache_key.clone(),
+                            Pending {
+                                revision,
+                                timer,
+                                deadline: now + Duration::from_secs(5),
+                            },
+                        );
+                    }
                 }
-                if let Some((_, timer)) = self.share_timers.remove(&d.cache_key) {
-                    app::remove_timeout3(timer);
+                let note = if let Some(binding) = &d.sharing {
+                    if let Some(service) = &self.sharing {
+                        let progress = service.progress(&binding.doc);
+                        if d.sync_error == Some(revision) {
+                            "Sync fehlgeschlagen · Bearbeiten oder Verbindung erneut prüfen".into()
+                        } else if let Some(p) = self.share_timers.get(&d.cache_key) {
+                            if d.group.visible_r() {
+                                visible_countdown = true;
+                            }
+                            let remaining = p
+                                .deadline
+                                .saturating_duration_since(now)
+                                .as_secs_f64()
+                                .ceil() as u64;
+                            if !progress.enabled {
+                                format!("Sync pausiert · Änderungen in {remaining} s lokal bereit")
+                            } else if remaining > 0 {
+                                format!("Sync in {remaining} s · nach der letzten Eingabe")
+                            } else {
+                                "Sync wird vorbereitet…".into()
+                            }
+                        } else if !progress.enabled {
+                            "Sync pausiert · Senden/Sync ist ausgeschaltet".into()
+                        } else if progress.conflict {
+                            "Sync-Konflikt · Bitte eine Version auswählen".into()
+                        } else if progress.clients == 0 {
+                            "Sync · Keine aktiven Clients".into()
+                        } else if progress.offers > 0 {
+                            format!(
+                                "Sync wartet auf Freigabe · {} Client{}",
+                                progress.offers,
+                                if progress.offers == 1 { "" } else { "s" }
+                            )
+                        } else if progress.confirmed == progress.clients {
+                            if progress.online == progress.clients {
+                                format!(
+                                    "Synchronisiert · {} Client{} bestätigt",
+                                    progress.clients,
+                                    if progress.clients == 1 { "" } else { "s" }
+                                )
+                            } else {
+                                format!(
+                                    "Zuletzt bestätigt · {} Client{} derzeit offline",
+                                    progress.clients - progress.online,
+                                    if progress.clients - progress.online == 1 {
+                                        ""
+                                    } else {
+                                        "s"
+                                    }
+                                )
+                            }
+                        } else if progress.online == 0 {
+                            format!(
+                                "Sync ausstehend · Warte auf {} Client{}",
+                                progress.clients,
+                                if progress.clients == 1 { "" } else { "s" }
+                            )
+                        } else {
+                            format!(
+                                "Sync ausstehend · {} von {} Clients bestätigt",
+                                progress.confirmed, progress.clients
+                            )
+                        }
+                    } else {
+                        "Sync nicht verfügbar".into()
+                    }
+                } else {
+                    String::new()
+                };
+                if note != d.sync_text {
+                    let show = !note.is_empty();
+                    d.sync_text = note;
+                    d.sync_status.set_label(&d.sync_text);
+                    if show != d.sync_status.visible() {
+                        if show {
+                            d.sync_status.show();
+                        } else {
+                            d.sync_status.hide();
+                        }
+                        d.group.recalc();
+                    }
                 }
-                let key = d.cache_key.clone();
-                let tx = self.tx;
-                let timer = app::add_timeout3(5.0, move |_| {
-                    tx.send((0, Action::PublishDoc(key.clone(), revision)))
-                });
-                self.share_timers
-                    .insert(d.cache_key.clone(), (revision, timer));
+            }
+        }
+        if visible_countdown && self.countdown_timer.is_none() {
+            let tx = self.tx;
+            self.countdown_timer = Some(app::add_timeout3(1.0, move |_| {
+                tx.send((0, Action::SyncCountdown))
+            }));
+        } else if !visible_countdown {
+            if let Some(timer) = self.countdown_timer.take() {
+                app::remove_timeout3(timer);
             }
         }
     }
@@ -77,6 +192,15 @@ impl Runtime {
         let Some(binding) = d.sharing.clone() else {
             return Ok(());
         };
+        if self
+            .share_timers
+            .get(key)
+            .is_some_and(|p| p.revision == expected)
+        {
+            if let Some(p) = self.share_timers.remove(key) {
+                app::remove_timeout3(p.timer);
+            }
+        }
         let data = d.left.cache_text();
         let revision = self
             .sharing
@@ -89,9 +213,7 @@ impl Runtime {
             b.hash = revision.hash;
         }
         d.share_revision = expected;
-        if let Some((_, timer)) = self.share_timers.remove(key) {
-            app::remove_timeout3(timer);
-        }
+        d.sync_error = None;
         // A divergent local edit remains in the editor until a version is chosen.
         if self
             .sharing
@@ -203,11 +325,8 @@ impl Runtime {
                 if data.is_none() {
                     data = Some(self.sharing.as_ref().unwrap().body(&document.head.hash)?);
                 }
-                let cursor = d.left.insert_position();
-                d.left.set_cache_text(data.as_ref().unwrap())?;
-                d.left
-                    .set_insert_position(char_boundary(&d.left_buf, cursor));
                 d.clear_styles();
+                d.left.apply_sync_text(data.as_ref().unwrap())?;
             }
             let b = d.sharing.as_mut().unwrap();
             b.hash = document.head.hash.clone();
@@ -360,6 +479,7 @@ impl Runtime {
                 | Action::ResolveConflict
                 | Action::PeerEvent(_)
                 | Action::PublishDoc(..)
+                | Action::SyncCountdown
                 | Action::InitTray
                 | Action::TrayUnavailable
                 | Action::ShowWindows
@@ -417,6 +537,11 @@ impl Runtime {
                 Action::ProbeClients => {
                     if let Some(s) = &self.sharing {
                         s.retry();
+                        for w in self.windows.iter_mut().flatten() {
+                            for d in &mut w.docs {
+                                d.sync_error = None;
+                            }
+                        }
                     }
                 }
                 Action::KeepTray => {
@@ -635,7 +760,17 @@ impl Runtime {
                     self.conflicts.win.hide();
                     self.apply_shared(&id)?;
                 }
-                Action::PublishDoc(key, revision) => self.publish_shared(&key, revision)?,
+                Action::SyncCountdown => {
+                    self.countdown_timer = None;
+                }
+                Action::PublishDoc(key, revision) => {
+                    if let Err(e) = self.publish_shared(&key, revision) {
+                        if let Some((wi, di)) = self.doc_position(&key) {
+                            self.windows[wi].as_mut().unwrap().docs[di].sync_error = Some(revision);
+                        }
+                        return Err(e);
+                    }
+                }
                 Action::PeerEvent(event) => match event {
                     peer::Event::Changed => {
                         if let Some(s) = &self.sharing {

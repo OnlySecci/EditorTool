@@ -181,6 +181,15 @@ pub struct Binding {
     #[serde(default)]
     pub disk_hash: Option<String>,
 }
+#[derive(Default)]
+pub struct Progress {
+    pub enabled: bool,
+    pub conflict: bool,
+    pub clients: usize,
+    pub online: usize,
+    pub confirmed: usize,
+    pub offers: usize,
+}
 #[derive(Serialize, Deserialize)]
 enum Request {
     Leave {
@@ -240,6 +249,7 @@ struct Inner {
     transfers: AtomicUsize,
     seen: Mutex<BTreeSet<String>>,
     statuses: Mutex<BTreeMap<String, bool>>,
+    acknowledgements: Mutex<BTreeMap<(String, String), String>>,
     wake: mpsc::Sender<()>,
 }
 impl std::fmt::Debug for Inner {
@@ -248,6 +258,29 @@ impl std::fmt::Debug for Inner {
     }
 }
 impl Inner {
+    fn confirmed(&self, peer: &str, doc: &str, revision: &Revision) {
+        if !self
+            .state
+            .lock()
+            .unwrap()
+            .docs
+            .get(doc)
+            .is_some_and(|d| d.members.iter().any(|m| m.id == peer))
+        {
+            return;
+        }
+        let key = (doc.to_string(), peer.to_string());
+        let value = revision.key();
+        let changed = self
+            .acknowledgements
+            .lock()
+            .unwrap()
+            .insert(key, value.clone())
+            != Some(value);
+        if changed {
+            self.event(Event::Changed);
+        }
+    }
     fn event(&self, event: Event) {
         self.tx.send((0, Action::PeerEvent(event)));
     }
@@ -456,6 +489,7 @@ impl Service {
             transfers: AtomicUsize::new(0),
             seen: Mutex::new(BTreeSet::new()),
             statuses: Mutex::new(BTreeMap::new()),
+            acknowledgements: Mutex::new(BTreeMap::new()),
             wake: wake.clone(),
         });
         let worker = inner.clone();
@@ -707,6 +741,42 @@ impl Service {
     }
     pub fn document(&self, id: &str) -> Option<Document> {
         self.inner.state.lock().unwrap().docs.get(id).cloned()
+    }
+    pub fn progress(&self, id: &str) -> Progress {
+        let s = self.inner.state.lock().unwrap();
+        let Some(d) = s.docs.get(id) else {
+            return Progress::default();
+        };
+        let mut p = Progress {
+            enabled: self.inner.enabled.load(Ordering::Relaxed),
+            conflict: !d.conflicts.is_empty(),
+            offers: s
+                .outbox
+                .iter()
+                .filter(|o| o.offer.sync && o.offer.doc == id)
+                .count(),
+            ..Default::default()
+        };
+        let acknowledgements = self.inner.acknowledgements.lock().unwrap();
+        let statuses = self.inner.statuses.lock().unwrap();
+        let key = d.head.key();
+        for member in d
+            .members
+            .iter()
+            .filter(|m| m.id != self.inner.id && !d.departed.contains(&m.id))
+        {
+            p.clients += 1;
+            let configured = s.config.clients.iter().find(|c| c.id == member.id);
+            if let Some(client) = configured {
+                if statuses.get(&format!("{}:{}", client.host, client.port)) == Some(&true) {
+                    p.online += 1;
+                }
+                if acknowledgements.get(&(id.into(), member.id.clone())) == Some(&key) {
+                    p.confirmed += 1;
+                }
+            }
+        }
+        p
     }
     pub fn delivered(&self, id: &str) -> Result<(), String> {
         let mut s = self.inner.state.lock().unwrap();
@@ -1472,6 +1542,9 @@ fn sweep(inner: &Arc<Inner>) {
             if info.id != peer.id && !peer.id.is_empty() {
                 return Err("Gerätekennung stimmt nicht überein.".into());
             }
+            for (doc, revision) in &heads {
+                inner.confirmed(&info.id, doc, revision);
+            }
             let leaves = inner
                 .state
                 .lock()
@@ -1560,7 +1633,9 @@ fn sweep(inner: &Arc<Inner>) {
                     )?;
                     if matches!(read_header(&mut stream)?, Reply::Ready) {
                         send_body(inner, &mut stream, &local.hash)?;
-                        let _: Reply = read_header(&mut stream)?;
+                        if matches!(read_header(&mut stream)?, Reply::Done) {
+                            inner.confirmed(&info.id, &d.id, local);
+                        }
                     }
                 }
             }
@@ -1622,6 +1697,9 @@ fn sweep(inner: &Arc<Inner>) {
                     _ => false,
                 };
                 if finished {
+                    if !matches!(reply, Reply::Rejected) {
+                        inner.confirmed(&info.id, &offer.doc, &offer.revision);
+                    }
                     let mut s = inner.state.lock().unwrap();
                     s.outbox.retain(|o| o.offer.id != item.offer.id);
                     inner.save(&s)?;

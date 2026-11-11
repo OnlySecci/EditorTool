@@ -207,47 +207,146 @@ impl RichEditor {
         .expect("Document serialization")
     }
     pub fn set_cache_text(&mut self, text: &str) -> Result<(), String> {
-        let parsed = if text.starts_with('{') {
+        self.load_snapshot(text, false)
+    }
+    pub fn apply_sync_text(&mut self, text: &str) -> Result<(), String> {
+        self.load_snapshot(text, true)
+    }
+    fn load_snapshot(&mut self, text: &str, preserve_view: bool) -> Result<(), String> {
+        let mut document = if text.starts_with('{') {
             serde_json::from_str::<FileDocument>(text)
                 .ok()
                 .filter(|d| d.format == MAGIC)
         } else {
             None
-        };
-        if let Some(document) = parsed {
+        }
+        .unwrap_or_else(|| FileDocument {
+            format: MAGIC.into(),
+            text: plain_text(text.trim_start_matches('\u{feff}')).replace(IMAGE_MARKER, ""),
+            images: vec![],
+        });
+        {
+            let s = self.state.borrow();
             let mut previous = None;
-            for asset in &document.images {
+            let mut used = std::collections::BTreeSet::new();
+            for (index, asset) in document.images.iter_mut().enumerate() {
                 if !document.text.is_char_boundary(asset.position)
                     || !document.text[asset.position..].starts_with(IMAGE_MARKER)
                     || previous.is_some_and(|p| p >= asset.position)
                 {
                     return Err("Ungültige Bildposition im Dokument".into());
                 }
-                decode(&asset.png)?;
+                let old = s
+                    .assets
+                    .get(index)
+                    .filter(|a| a.png == asset.png && !used.contains(&index))
+                    .map(|_| index)
+                    .or_else(|| {
+                        s.assets
+                            .iter()
+                            .enumerate()
+                            .find(|(i, a)| !used.contains(i) && a.png == asset.png)
+                            .map(|(i, _)| i)
+                    });
+                if let Some(i) = old {
+                    asset.png = s.assets[i].png.clone();
+                    used.insert(i);
+                } else {
+                    decode(&asset.png)?;
+                }
                 previous = Some(asset.position);
             }
             if document.text.matches(IMAGE_MARKER).count() != document.images.len() {
                 return Err("Bildreferenzen und Bilddaten stimmen nicht überein".into());
             }
-            let mut s = self.state.borrow_mut();
-            s.guard.set(true);
-            s.assets = document.images;
+        }
+        let mut s = self.state.borrow_mut();
+        let old = s.buffer.text();
+        if preserve_view && old == document.text && same_assets(&s.assets, &document.images) {
+            return Ok(());
+        }
+        let view = preserve_view.then(|| View::capture(&s));
+        let edit = Edit::between(&old, &document.text);
+        let reuse = s.assets.len() == document.images.len()
+            && s.assets.iter().zip(&document.images).all(|(a, b)| {
+                a.png == b.png
+                    && a.display_width == b.display_width
+                    && a.scale_percent == b.scale_percent
+            });
+        // All updates and final layout happen in one event turn. Existing image
+        // frames remain in place for ordinary text-only sync revisions.
+        s.guard.set(true);
+        s.style = None;
+        s.table.clear();
+        for part in &mut s.parts {
+            if let Part::Text(t) = part {
+                t.editor.unset_highlight_data(None::<TextBuffer>);
+                t.style = None;
+            }
+        }
+        s.buffer.replace(
+            edit.start as i32,
+            edit.old_end as i32,
+            &document.text[edit.start..edit.new_end],
+        );
+        // Image-only changes must also invalidate the cached document revision.
+        if edit.start == edit.old_end
+            && edit.start == edit.new_end
+            && !same_assets(&s.assets, &document.images)
+        {
+            if let Some(asset) = document.images.first() {
+                s.buffer.replace(
+                    asset.position as i32,
+                    (asset.position + IMAGE_MARKER.len_utf8()) as i32,
+                    &IMAGE_MARKER.to_string(),
+                );
+            }
+        }
+        s.assets = document.images;
+        if !preserve_view {
             s.selected_image = None;
-            s.buffer.set_text(&document.text);
+        } else if s
+            .selected_image
+            .as_ref()
+            .is_some_and(|png| !s.assets.iter().any(|a| &a.png == png))
+        {
+            s.selected_image = None;
+        }
+        if reuse && preserve_view {
+            let ranges: Vec<_> = s
+                .assets
+                .iter()
+                .map(|a| a.position)
+                .chain(std::iter::once(document.text.len()))
+                .collect();
+            let mut start = 0;
+            let mut ti = 0;
+            let mixed = !s.assets.is_empty();
+            for part in &mut s.parts {
+                if let Part::Text(t) = part {
+                    let end = ranges[ti];
+                    t.start = start;
+                    if mixed {
+                        replace_text(&mut t.buffer, &document.text[start..end]);
+                    }
+                    start = end + IMAGE_MARKER.len_utf8();
+                    ti += 1;
+                }
+            }
+            s.geometry = None;
+            layout(&mut s);
             s.guard.set(false);
-            drop(s);
-            rebuild(&self.state);
         } else {
-            let mut s = self.state.borrow_mut();
-            s.guard.set(true);
-            s.assets.clear();
-            s.selected_image = None;
-            s.buffer.set_text(
-                &plain_text(text.trim_start_matches('\u{feff}')).replace(IMAGE_MARKER, ""),
-            );
-            s.guard.set(false);
             drop(s);
             rebuild(&self.state);
+            s = self.state.borrow_mut();
+        }
+        if let Some(view) = view {
+            view.restore(&mut s, &edit);
+        } else {
+            s.viewport.scroll_to(0, 0);
+            s.geometry = None;
+            layout(&mut s);
         }
         Ok(())
     }
@@ -996,7 +1095,17 @@ fn layout(s: &mut State) {
     let width = (rect.2 - if mixed { 14 } else { 0 }).max(1);
     for part in &mut s.parts {
         if let Part::Text(t) = part {
-            t.editor.resize(rect.0, t.editor.y(), width, t.editor.h());
+            t.editor.set_scrollbar_align(if mixed {
+                fltk::enums::Align::Bottom
+            } else {
+                fltk::enums::Align::Right | fltk::enums::Align::Bottom
+            });
+            if mixed && crate::preferences::get().wrap {
+                let margin = (width - 50).max(1);
+                t.editor.wrap_mode(WrapMode::AtPixel, margin);
+            }
+            t.editor
+                .resize(rect.0, t.editor.y(), width, t.editor.h().max(32));
         }
     }
     let heights = s
@@ -1015,10 +1124,10 @@ fn layout(s: &mut State) {
                     }
                     let horizontal = if !crate::preferences::get().wrap {
                         draw::set_font(t.editor.text_font(), t.editor.text_size());
-                        t.buffer
-                            .text()
-                            .lines()
-                            .any(|line| draw::width(line) > (width - 50).max(1) as f64)
+                        t.buffer.text().lines().any(|line| {
+                            draw::width(&expand_tabs(line, t.buffer.tab_distance()))
+                                > (width - 50).max(1) as f64
+                        })
                     } else {
                         false
                     };
@@ -1129,4 +1238,206 @@ fn set_zoom(state: &Rc<RefCell<State>>, percent: i32) {
     apply_styles(&mut s);
     s.geometry = None;
     layout(&mut s);
+}
+
+fn same_assets(a: &[Asset], b: &[Asset]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(a, b)| {
+            a.position == b.position
+                && a.png == b.png
+                && a.display_width == b.display_width
+                && a.scale_percent == b.scale_percent
+        })
+}
+struct Edit {
+    start: usize,
+    old_end: usize,
+    new_end: usize,
+}
+impl Edit {
+    fn between(old: &str, new: &str) -> Self {
+        let mut start = old
+            .bytes()
+            .zip(new.bytes())
+            .take_while(|(a, b)| a == b)
+            .count();
+        while !old.is_char_boundary(start) || !new.is_char_boundary(start) {
+            start -= 1;
+        }
+        let mut suffix = old.as_bytes()[start..]
+            .iter()
+            .rev()
+            .zip(new.as_bytes()[start..].iter().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
+        while !old.is_char_boundary(old.len() - suffix) || !new.is_char_boundary(new.len() - suffix)
+        {
+            suffix -= 1;
+        }
+        Self {
+            start,
+            old_end: old.len() - suffix,
+            new_end: new.len() - suffix,
+        }
+    }
+    fn map(&self, pos: usize) -> usize {
+        if pos <= self.start {
+            pos
+        } else if pos >= self.old_end {
+            self.new_end + (pos - self.old_end)
+        } else {
+            self.start + (pos - self.start).min(self.new_end - self.start)
+        }
+    }
+}
+fn replace_text(buffer: &mut TextBuffer, text: &str) {
+    let old = buffer.text();
+    if old == text {
+        return;
+    }
+    let e = Edit::between(&old, text);
+    buffer.replace(e.start as i32, e.old_end as i32, &text[e.start..e.new_end]);
+}
+struct View {
+    x: i32,
+    y: i32,
+    cursor: usize,
+    selection: Option<(i32, i32)>,
+    focused: bool,
+    image: Option<(Rc<String>, i32)>,
+    text: Option<(usize, i32)>,
+}
+impl View {
+    fn capture(s: &State) -> Self {
+        let focused = s
+            .parts
+            .iter()
+            .any(|p| matches!(p,Part::Text(t)if t.editor.has_focus()));
+        let cursor = match s.parts.get(s.current) {
+            Some(Part::Text(t)) => t.start + t.editor.insert_position().max(0) as usize,
+            _ => 0,
+        };
+        let mut image = None;
+        let mut text = None;
+        let mut ai = 0;
+        if s.viewport.visible_r() {
+            for part in &s.parts {
+                match part {
+                    Part::Image(frame, _, _) => {
+                        if image.is_none()
+                            && frame.y() < s.viewport.y() + s.viewport.h()
+                            && frame.y() + frame.h() > s.viewport.y()
+                        {
+                            image = Some((s.assets[ai].png.clone(), frame.y() - s.viewport.y()));
+                        }
+                        ai += 1;
+                    }
+                    Part::Text(t) => {
+                        if text.is_none()
+                            && t.editor.y() <= s.viewport.y()
+                            && t.editor.y() + t.editor.h() > s.viewport.y()
+                        {
+                            let pos = t.editor.xy_to_position(
+                                t.editor.x() + 48,
+                                s.viewport.y() + 2,
+                                fltk::text::PositionType::Cursor,
+                            );
+                            let (_, y) = t.editor.position_to_xy(pos);
+                            text = Some((t.start + pos.max(0) as usize, y - s.viewport.y()));
+                        }
+                    }
+                }
+            }
+        }
+        Self {
+            x: s.viewport.xposition(),
+            y: s.viewport.yposition(),
+            cursor,
+            selection: s.buffer.selection_position(),
+            focused,
+            image,
+            text,
+        }
+    }
+    fn restore(self, s: &mut State, edit: &Edit) {
+        let cursor = s
+            .buffer
+            .utf8_align(edit.map(self.cursor).min(s.buffer.length() as usize) as i32)
+            .max(0) as usize;
+        let mut current = 0;
+        for (i, part) in s.parts.iter().enumerate() {
+            if let Part::Text(t) = part {
+                if t.start <= cursor {
+                    current = i;
+                }
+            }
+        }
+        s.current = current;
+        if let Some(Part::Text(t)) = s.parts.get_mut(current) {
+            t.editor
+                .set_insert_position((cursor - t.start).min(t.buffer.length() as usize) as i32);
+            if self.focused {
+                t.editor.take_focus().ok();
+            }
+        }
+        if let Some((a, b)) = self.selection {
+            s.buffer.select(
+                s.buffer
+                    .utf8_align(edit.map(a.max(0) as usize).min(s.buffer.length() as usize) as i32),
+                s.buffer
+                    .utf8_align(edit.map(b.max(0) as usize).min(s.buffer.length() as usize) as i32),
+            );
+            sync_selection(s);
+        }
+        let mut target = self.y;
+        if let Some((png, relative)) = self.image {
+            if let Some(ai) = s.assets.iter().position(|a| Rc::ptr_eq(&a.png, &png)) {
+                if let Some(Part::Image(f, _, _)) = s
+                    .parts
+                    .iter()
+                    .filter(|p| matches!(p, Part::Image(..)))
+                    .nth(ai)
+                {
+                    target = s.viewport.yposition() + f.y() - s.viewport.y() - relative;
+                }
+            }
+        } else if let Some((pos, relative)) = self.text {
+            let pos = s
+                .buffer
+                .utf8_align(edit.map(pos).min(s.buffer.length() as usize) as i32)
+                .max(0) as usize;
+            if let Some(Part::Text(t)) = s
+                .parts
+                .iter()
+                .rev()
+                .find(|p| matches!(p,Part::Text(t)if t.start<=pos))
+            {
+                let (_, y) = t
+                    .editor
+                    .position_to_xy((pos - t.start).min(t.buffer.length() as usize) as i32);
+                target = s.viewport.yposition() + y - s.viewport.y() - relative;
+            }
+        }
+        let maximum = (s.content.h() - s.viewport.h()).max(0);
+        s.viewport.scroll_to(self.x, target.clamp(0, maximum));
+        s.geometry = None;
+        layout(s);
+    }
+}
+
+fn expand_tabs(line: &str, distance: i32) -> String {
+    let distance = distance.max(1) as usize;
+    let mut column = 0;
+    let mut out = String::with_capacity(line.len());
+    for c in line.chars() {
+        if c == '\t' {
+            let pad = distance - column % distance;
+            out.extend(std::iter::repeat_n(' ', pad));
+            column += pad;
+        } else {
+            out.push(c);
+            column += 1;
+        }
+    }
+    out
 }

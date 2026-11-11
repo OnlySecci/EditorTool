@@ -8,6 +8,14 @@ Ein schlanker nativer Rust-Editor für **Text, Code und Bilder** — für Window
 
 *Hauptansicht aus V1.0 — vom Projektinhaber bereitgestellte Aufnahme.*
 
+## Neu in V1.4.5
+
+Sync-Änderungen verwenden vorhandene Bild- und Textansichten weiter und erhalten die sichtbare Scrollposition. Eine feste Umbruchbreite verhindert vorübergehende Layout-Sprünge bei gemischten Dokumenten. Neue oder entfernte Bilder werden ohne Zwischenansicht übernommen.
+
+Synchronisierte Dokumente zeigen unten einen **Countdown der fünf Sekunden Schreibpause**. Anschliessend stehen dort Freigabe-/Abgleichstatus, Offline-Warten, Pause, Konflikte oder die Bestätigung der aktuellen Revision durch die aktiven Clients. Der Countdown zeigt die lokale Schreibpause; die anschliessende Übertragung kann länger dauern. Ein Sekunden-Timer läuft nur während einer sichtbaren Schreibpause.
+
+Das **Tab-Kontextmenü** verwendet abgerundete Zeilen, Akzentfarbe, Gruppen und eigene Unterseiten für Sprache und Split View. Maus und Pfeiltasten wählen, Enter bestätigt, Escape oder ein Klick ausserhalb schliesst. Details stehen in den [Release Notes](RELEASE_NOTES.md).
+
 ## Neu in V1.4.1
 
 **Einstellungen** steht neben **Bearbeiten** und öffnet **Allgemein** beziehungsweise **Clients und Sync** als Tabs in der Datei-Liste. Client-Name, IP-Adresse und Ports sind sichtbar beschriftet; Freigaben verwenden die Gestaltung der App. Der Textcursor blinkt. **Ansicht → Zoom**, **Strg/Cmd + Plus/Minus/0** und **Strg/Cmd + Mausrad** zoomen Textansichten zwischen 50 und 300 %. Zoom bleibt im Sitzungscache gespeichert. Bildabstände werden anhand der nativen Schriftmetriken berechnet, auch auf macOS.
