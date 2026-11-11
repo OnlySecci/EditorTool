@@ -12,6 +12,7 @@ mod sharing_runtime;
 mod sharing_ui;
 mod split;
 mod syntax;
+mod tab_menu;
 mod theme;
 mod tray;
 mod updater;
@@ -65,6 +66,7 @@ enum Action {
     ResolveConflict,
     PeerEvent(peer::Event),
     PublishDoc(String, u64),
+    SyncCountdown,
     InitTray,
     TrayUnavailable,
     ShowWindows,
@@ -148,6 +150,9 @@ struct Document {
     styles: Option<(TextBuffer, TextBuffer)>,
     compared: Option<(u64, u64)>,
     status: Frame,
+    sync_status: Frame,
+    sync_text: String,
+    sync_error: Option<u64>,
     status_text: String,
     status_key: String,
     report: String,
@@ -805,6 +810,12 @@ impl EditorWindow {
         status.set_label_size(11);
         status.set_label_color(MUTED);
         group.fixed(&status, 36);
+        let mut sync_status = Frame::default();
+        sync_status.set_align(Align::Left | Align::Inside);
+        sync_status.set_label_color(theme::BLUE);
+        sync_status.set_label_size(12);
+        group.fixed(&sync_status, 20);
+        sync_status.hide();
         group.end();
         self.area.end();
         Group::set_current(None::<&Group>);
@@ -826,6 +837,9 @@ impl EditorWindow {
             styles: None,
             compared: None,
             status,
+            sync_status,
+            sync_text: String::new(),
+            sync_error: None,
             status_text: String::new(),
             status_key: String::new(),
             comparing: false,
@@ -1166,72 +1180,11 @@ impl EditorWindow {
                     return;
                 }
                 self.action(Action::Select(index), wid, tx);
-                Group::set_current(None::<&Group>);
-                let mut popup =
-                    fltk::menu::MenuButton::new(x - self.win.x(), y - self.win.y(), 1, 1, None);
-                self.win.add(&popup);
-                popup.set_text_color(FG);
-                popup.set_color(PANEL);
-                popup.set_text_size(13);
-                if self.docs[index].page != 0 {
-                    for (label, action) in [
-                        ("Tab schliessen", Action::CloseTab),
-                        ("Andere Tabs schliessen", Action::CloseOtherTabs),
-                        ("Alle Tabs schliessen", Action::CloseAllTabs),
-                    ] {
-                        popup.add_emit(label, Shortcut::None, MenuFlag::Normal, tx, (wid, action));
-                    }
-                    popup.popup();
-                    self.win.remove(&popup);
-                    fltk::menu::MenuButton::delete(popup);
-                    return;
+                if let Some(action) =
+                    tab_menu::popup(&self.win, index, self.docs[index].page != 0, x, y)
+                {
+                    tx.send((wid, action));
                 }
-                for (label, action) in [
-                    ("Speichern", Action::Save(false)),
-                    ("Speichern unter…", Action::Save(true)),
-                    ("Dateipfad kopieren", Action::CopyPath),
-                    ("Senden an Client…", Action::Transfer(false)),
-                    ("Synchronisieren…", Action::Transfer(true)),
-                    ("Sync-Versionen / Konflikte…", Action::ShowConflicts),
-                    ("Tab schliessen", Action::CloseTab),
-                    ("Andere Tabs schliessen", Action::CloseOtherTabs),
-                    ("Alle Tabs schliessen", Action::CloseAllTabs),
-                    (
-                        "In andere Split-Ansicht verschieben",
-                        Action::MoveTab(index),
-                    ),
-                    ("Split View/Nebeneinander", Action::Split(false)),
-                    ("Split View/Übereinander", Action::Split(true)),
-                    ("Split View/Als zwei Fenster weiterführen", Action::EndSplit),
-                    ("Sprache/Automatisch", Action::SetLanguage(None)),
-                ] {
-                    popup.add_emit(label, Shortcut::None, MenuFlag::Normal, tx, (wid, action));
-                }
-                for language in [
-                    Language::Plain,
-                    Language::Python,
-                    Language::PowerShell,
-                    Language::Rust,
-                    Language::JavaScript,
-                    Language::Json,
-                    Language::Shell,
-                    Language::Cpp,
-                    Language::Html,
-                    Language::Css,
-                    Language::Config,
-                    Language::Sql,
-                ] {
-                    popup.add_emit(
-                        &format!("Sprache/{}", language.name().replace('/', " · ")),
-                        Shortcut::None,
-                        MenuFlag::Normal,
-                        tx,
-                        (wid, Action::SetLanguage(Some(language))),
-                    );
-                }
-                popup.popup();
-                self.win.remove(&popup);
-                fltk::menu::MenuButton::delete(popup);
             }
             Action::CopyPath => {
                 if let Some(path) = &self.docs[self.active].path {
@@ -1830,7 +1783,8 @@ struct Runtime {
     clients: sharing_ui::Clients,
     transfer: sharing_ui::Transfer,
     conflicts: sharing_ui::Conflicts,
-    share_timers: std::collections::HashMap<String, (u64, app::TimeoutHandle)>,
+    share_timers: std::collections::HashMap<String, sharing_runtime::Pending>,
+    countdown_timer: Option<app::TimeoutHandle>,
     conflict_notified: std::collections::BTreeSet<String>,
     tray: Option<tray::Native>,
     quit_requested: bool,
@@ -2378,6 +2332,7 @@ fn main() {
         transfer: sharing_ui::Transfer::new(tx),
         conflicts: sharing_ui::Conflicts::new(tx),
         share_timers: Default::default(),
+        countdown_timer: None,
         conflict_notified: Default::default(),
         tray: None,
         quit_requested: false,

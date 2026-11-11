@@ -1,5 +1,15 @@
 # Changelog
 
+## V1.4.5 — 2026-11-11
+
+- Apply sync revisions in place, reuse image frames/decoded assets, and preserve viewport, caret, selection and focus.
+- Stable mixed-document wrap measurement without transient inner vertical scrollbars.
+- Persist image-only revisions without losing cached image/size changes.
+- Visible five-second sync countdown and per-peer revision confirmation status.
+- Themed, grouped tab popup with language/split subpages and keyboard navigation.
+- Build/package only; no tests run, as requested.
+
+
 ## V1.4.1 — 2026-11-11
 
 - Settings menu next to Edit, with general/client settings embedded as document-list tabs.
