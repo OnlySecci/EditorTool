@@ -8,6 +8,14 @@ Ein schlanker nativer Rust-Editor für **Text, Code und Bilder** — für Window
 
 *Hauptansicht aus V1.0 — vom Projektinhaber bereitgestellte Aufnahme.*
 
+## Neu in V1.4.1
+
+**Einstellungen** steht neben **Bearbeiten** und öffnet **Allgemein** beziehungsweise **Clients und Sync** als Tabs in der Datei-Liste. Client-Name, IP-Adresse und Ports sind sichtbar beschriftet; Freigaben verwenden die Gestaltung der App. Der Textcursor blinkt. **Ansicht → Zoom**, **Strg/Cmd + Plus/Minus/0** und **Strg/Cmd + Mausrad** zoomen Textansichten zwischen 50 und 300 %. Zoom bleibt im Sitzungscache gespeichert. Bildabstände werden anhand der nativen Schriftmetriken berechnet, auch auf macOS.
+
+Senden und Sync verwenden jetzt verpflichtend **TLS 1.3 + AES-256-GCM** mit hybridem Schlüsselaustausch **X25519 + ML-KEM-768**. Die Einstellungen zeigen den Schutz an. Gerätesignaturen und Fingerabdruckfreigaben bleiben klassisch; die Hybridtechnik schützt den Schlüsselaustausch. **Alle beteiligten Geräte benötigen V1.4.1 oder neuer**, da kein stiller Rückfall auf klassische Verbindungen erlaubt ist. Geräteidentitäten und lokale Daten bleiben erhalten. [Technische Hintergründe bei Rustls](https://rustls.dev/docs/rustls/manual/_05_defaults/index.html).
+
+**Sync beenden** benachrichtigt die anderen Teilnehmer und beendet dort die Verbindung für diesen Client und dieses Dokument. Bei Gruppen bleiben die übrigen Teilnehmer verbunden. Offline-Abmeldungen werden nachgeholt, lokale Kopien bleiben erhalten. Alle Änderungen stehen in den [Release Notes](RELEASE_NOTES.md).
+
 ## Neu in V1.4: Senden und Sync
 
 Unter **Einstellungen → Clients, Senden und Sync** interne IP-Adresse und Port anderer Geräte hinzufügen. Standard ist **TCP 51473**; der eigene Port und Client-Ports sind änderbar. Erst **Senden und Sync aktivieren** öffnet den Freigabe-Port. Verschlüsseltes gegenseitiges TLS mit beidseitig bestätigten Fingerabdrücken schützt die Verbindung. **Connected / Not connected** zeigt die Erreichbarkeit. Interne geroutete Netze und VPN sind möglich; öffentliche IP-Adressen werden abgelehnt. Firewalls müssen den gewählten TCP-Port erlauben. EditorTool ändert keine Firewall-Regeln.
@@ -22,7 +30,7 @@ Maximal 64 MiB je Dokument und 32 Geräte je Sync-Gruppe. Geänderte Teilnehmerl
 
 Bilder anklicken und an einer Ecke proportional kleiner oder grösser ziehen. Standardmässig werden neu eingefügte Bilder auf höchstens 50 % der Textfeldbreite verkleinert; unter Einstellungen lässt sich dies abschalten. Die Anzeigegrösse wird gespeichert, die Originalbilddaten bleiben erhalten. Per Rechtsklick lassen sich Bilder an das Textfeld anpassen oder entfernen.
 
-Rechtsklick auf einen Tab öffnet Speichern, Speichern unter, Sprache, Dateipfad und Tab-Aktionen. Unter **Ansicht → Split View** lassen sich zwei unabhängige Ansichten **nebeneinander oder übereinander** öffnen. Jede hat ihre eigene Datei-/Tab-Liste; den Trenner kann man ziehen. Über das Tab-Menü lassen sich Dateien auf die andere Seite verschieben. **Als zwei Fenster weiterführen** löst die Teilung auf, ohne Dokumente oder Undo-Verläufe zu verwerfen. Die Sitzung speichert beide Ansichten und ihre Anordnung.
+Rechtsklick auf einen Dokument-Tab öffnet Speichern, Speichern unter, Sprache, Dateipfad und Tab-Aktionen. Unter **Ansicht → Split View** lassen sich zwei unabhängige Ansichten **nebeneinander oder übereinander** öffnen. Jede hat ihre eigene Datei-/Tab-Liste; den Trenner kann man ziehen. Über das Tab-Menü lassen sich Dateien auf die andere Seite verschieben. **Als zwei Fenster weiterführen** löst die Teilung auf, ohne Dokumente oder Undo-Verläufe zu verwerfen. Die Sitzung speichert beide Ansichten und ihre Anordnung.
 
 ## Neu in V1.2: Updates
 

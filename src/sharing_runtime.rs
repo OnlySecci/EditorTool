@@ -150,6 +150,23 @@ impl Runtime {
         let Some(document) = self.sharing.as_ref().and_then(|s| s.document(id)) else {
             return Ok(());
         };
+        let own = self.sharing.as_ref().unwrap().identity();
+        if document.departed.contains(&own)
+            || !document
+                .members
+                .iter()
+                .any(|p| p.id != own && !document.departed.contains(&p.id))
+        {
+            for w in self.windows.iter_mut().flatten() {
+                for d in &mut w.docs {
+                    if d.sharing.as_ref().is_some_and(|b| b.doc == id) {
+                        d.sharing = None;
+                        d.report = "Sync für dieses Dokument beendet".into();
+                    }
+                }
+            }
+            return Ok(());
+        }
         if !document.conflicts.is_empty() {
             self.open_conflict(id);
             return Ok(());
@@ -262,7 +279,12 @@ impl Runtime {
         };
         let w = self.windows[wi].as_mut().unwrap();
         let d = &w.docs[w.active];
-        if d.dirty() || d.path.is_some() || d.left_buf.length() > 0 || d.sharing.is_some() {
+        if d.page != 0
+            || d.dirty()
+            || d.path.is_some()
+            || d.left_buf.length() > 0
+            || d.sharing.is_some()
+        {
             w.add_tab(wi, self.tx);
         }
         let d = &mut w.docs[w.active];
@@ -350,8 +372,7 @@ impl Runtime {
                 Action::SharingSettings => {
                     if let Some(s) = &self.sharing {
                         self.clients.refresh(s, true);
-                        self.clients.win.show();
-                        chrome::dark_title(&self.clients.win);
+                        self.open_clients_tab(wid);
                     } else {
                         return Err("Senden/Sync konnte nicht gestartet werden.".into());
                     }
@@ -456,6 +477,9 @@ impl Runtime {
                 Action::Transfer(sync) => {
                     if let Some(Some(w)) = self.windows.get(wid) {
                         let d = &w.docs[w.active];
+                        if d.page != 0 {
+                            return Ok(());
+                        }
                         self.transfer.show(
                             self.sharing.as_ref().ok_or("Freigabe fehlt")?,
                             wid,
@@ -489,7 +513,7 @@ impl Runtime {
                         && old.is_some_and(|doc| {
                             doc.members
                                 .iter()
-                                .filter(|p| p.id != s.identity())
+                                .filter(|p| p.id != s.identity() && !doc.departed.contains(&p.id))
                                 .map(|p| p.id.clone())
                                 .collect::<BTreeSet<_>>()
                                 == peers.iter().map(|p| p.id.clone()).collect()
@@ -502,7 +526,7 @@ impl Runtime {
                             .as_ref()
                             .and_then(|p| std::fs::read(p).ok().map(|v| peer::hash(&v)));
                     } else {
-                        if sync&&d.sharing.is_some()&&dialog::choice2_default("Eine geänderte Client-Auswahl startet eine neue Sync-Gruppe mit neuen Freigaben. Die bisherigen Kopien bleiben erhalten.","Abbrechen","Neue Gruppe","")!=Some(1){return Ok(());}
+                        if sync&&d.sharing.is_some()&&chrome::decision(Some(&w.win),"Neue Sync-Gruppe","Ein geänderter Teilnehmerkreis benötigt neue Freigaben. Die bisherigen Kopien bleiben erhalten.","",&["Abbrechen","Neue Gruppe"],1)!=Some(1){return Ok(());}
                         let (doc, r) = s.begin(
                             d.title().trim_end_matches(" *").into(),
                             &d.left.cache_text(),
@@ -510,6 +534,9 @@ impl Runtime {
                             sync,
                         )?;
                         if sync {
+                            if let Some(binding) = &d.sharing {
+                                s.leave(&binding.doc)?;
+                            }
                             d.sharing = Some(peer::Binding {
                                 doc,
                                 clock: r.clock,
@@ -536,8 +563,15 @@ impl Runtime {
                     if let Some((wi, id, _)) = self.transfer.context {
                         if let Some(Some(w)) = self.windows.get_mut(wi) {
                             if let Some(d) = w.docs.iter_mut().find(|d| d.id == id) {
+                                if let Some(binding) = &d.sharing {
+                                    self.sharing
+                                        .as_ref()
+                                        .ok_or("Freigabe fehlt")?
+                                        .leave(&binding.doc)?;
+                                }
                                 d.sharing = None;
-                                d.report = "Sync für dieses Dokument beendet".into();
+                                d.report =
+                                    "Sync beendet · Andere Clients werden benachrichtigt".into();
                             }
                         }
                     }
@@ -617,7 +651,13 @@ impl Runtime {
                         {
                             return Ok(());
                         }
-                        let accept=dialog::choice2_default(&format!("Gerät {}:{} freigeben?\n\nFingerabdruck des anderen Geräts:\n{}\n\nVergleiche ihn auf dem anderen Gerät unter Clients. Danach auch dort dieses Gerät freigeben. Dateien benötigen eine zusätzliche Freigabe.",p.host,p.port,p.id),"Ablehnen","Gerät freigeben","")==Some(1);
+                        let owner = self
+                            .windows
+                            .iter()
+                            .flatten()
+                            .find(|w| !w.embedded && w.win.shown())
+                            .map(|w| w.win.clone());
+                        let accept=chrome::decision(owner.as_ref(),"Gerät verbinden","Vergleiche den Fingerabdruck auf dem anderen Gerät. Die Gerätefreigabe erlaubt noch keine Dokumentübertragung.",&format!("Gerät: {}:{}\nFingerabdruck:\n{}\n\nAnschliessend auch auf dem anderen Gerät freigeben.",p.host,p.port,p.id),&["Ablehnen","Gerät freigeben"],1)==Some(1);
                         self.sharing.as_mut().unwrap().trust(p, accept)?;
                     }
                     peer::Event::Offer(o) => {
@@ -627,25 +667,27 @@ impl Runtime {
                             .map(|p| format!("{} ({}:{})", p.name, p.host, p.port))
                             .collect::<Vec<_>>()
                             .join("\n");
-                        let choice = dialog::choice2_default(
-                            &format!(
-                                "{}: {}\n\nTeilnehmer:\n{}\n\n{}",
-                                if o.sync {
-                                    "Sync-Anfrage"
-                                } else {
-                                    "Datei empfangen"
-                                },
-                                o.title,
-                                participants,
-                                if o.sync {
-                                    "Nach Annahme werden Änderungen mit diesen Geräten ausgetauscht. Lokale Datei nur bei entsprechender Auswahl speichern."
-                                } else {
-                                    "Dokument als neuen Tab öffnen?"
-                                }
-                            ),
-                            "Ablehnen",
-                            "Nur im Editor",
-                            "Mit lokaler Datei",
+                        let owner = self
+                            .windows
+                            .iter()
+                            .flatten()
+                            .find(|w| !w.embedded && w.win.shown())
+                            .map(|w| w.win.clone());
+                        let choice = chrome::decision(
+                            owner.as_ref(),
+                            if o.sync {
+                                "Dokument synchronisieren"
+                            } else {
+                                "Dokument empfangen"
+                            },
+                            if o.sync {
+                                "Nach Annahme werden Änderungen mit diesen Geräten ausgetauscht. Wähle, ob Änderungen auch in eine lokale Datei gespeichert werden sollen."
+                            } else {
+                                "Das Dokument wird nach Annahme als neuer Tab geöffnet."
+                            },
+                            &format!("Dokument: {}\n\nTeilnehmer:\n{}", o.title, participants),
+                            &["Ablehnen", "Nur im Editor", "Mit lokaler Datei"],
+                            1,
                         );
                         let accepted = matches!(choice, Some(1 | 2));
                         let mut path = None;
@@ -667,6 +709,29 @@ impl Runtime {
                             path.clone(),
                             o.sync && path.is_some(),
                         )?;
+                    }
+                    peer::Event::Left(id, client, name) => {
+                        let title = self
+                            .sharing
+                            .as_ref()
+                            .and_then(|s| s.document(&id))
+                            .map(|d| d.title)
+                            .unwrap_or_default();
+                        for w in self.windows.iter_mut().flatten() {
+                            for d in &mut w.docs {
+                                if d.sharing.as_ref().is_some_and(|b| b.doc == id) {
+                                    d.report = format!("{} hat Sync für diese Datei beendet", name);
+                                }
+                            }
+                        }
+                        self.apply_shared(&id)?;
+                        let owner = self
+                            .windows
+                            .iter()
+                            .flatten()
+                            .find(|w| !w.embedded && w.win.shown())
+                            .map(|w| w.win.clone());
+                        chrome::decision(owner.as_ref(),"Sync für Client beendet",&format!("{} synchronisiert dieses Dokument nicht mehr. Die Verbindung für diesen Client und dieses Dokument wurde auch hier beendet. Andere Dokumente bleiben verbunden.",name),&format!("Dokument: {}\nClient: {}",title,client),&["Verstanden"],0);
                     }
                     peer::Event::Received(o, a) => self.receive_shared(o, a)?,
                     peer::Event::Updated(id) => self.apply_shared(&id)?,
@@ -690,7 +755,20 @@ impl Runtime {
             Ok(())
         })();
         if let Err(e) = result {
-            dialog::alert_default(&e);
+            let owner = self
+                .windows
+                .iter()
+                .flatten()
+                .find(|w| !w.embedded && w.win.shown())
+                .map(|w| w.win.clone());
+            chrome::decision(
+                owner.as_ref(),
+                "Hinweis zu Senden und Sync",
+                &e,
+                "",
+                &["Schliessen"],
+                0,
+            );
         }
         None
     }

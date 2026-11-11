@@ -16,6 +16,12 @@ use std::{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TabState {
     #[serde(default)]
+    pub page: u8,
+    #[serde(default = "default_zoom")]
+    pub zoom: i32,
+    #[serde(default = "default_zoom")]
+    pub right_zoom: i32,
+    #[serde(default)]
     pub sharing: Option<crate::peer::Binding>,
     #[serde(default)]
     pub display_name: Option<String>,
@@ -50,6 +56,9 @@ pub struct WindowState {
 pub struct Snapshot {
     pub version: u32,
     pub windows: Vec<WindowState>,
+}
+fn default_zoom() -> i32 {
+    100
 }
 fn default_sidebar_width() -> i32 {
     184

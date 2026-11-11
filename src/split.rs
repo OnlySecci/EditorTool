@@ -57,7 +57,7 @@ impl Runtime {
             .windows
             .get(wid)
             .and_then(Option::as_ref)
-            .is_none_or(|w| index >= w.docs.len())
+            .is_none_or(|w| index >= w.docs.len() || w.docs[index].page != 0)
         {
             return;
         }
@@ -455,6 +455,18 @@ pub fn wire_window(win: &mut Window, route: Rc<Cell<usize>>, tx: app::Sender<Mes
             return true;
         }
         if ev == Event::KeyDown && app::event_state().contains(Shortcut::Command) {
+            if app::focus().is_some_and(|w| {
+                fltk::input::Input::from_dyn_widget(&w).is_some()
+                    || fltk::output::Output::from_dyn_widget(&w).is_some()
+            }) {
+                let key = app::event_key();
+                if ['a', 'c', 'v', 'x', 'z']
+                    .iter()
+                    .any(|c| key == fltk::enums::Key::from_char(*c))
+                {
+                    return false;
+                }
+            }
             if app::event_key() == fltk::enums::Key::from_char('f') {
                 tx.send((wid, Action::ShowFind(false)));
                 return true;
@@ -469,6 +481,13 @@ pub fn wire_window(win: &mut Window, route: Rc<Cell<usize>>, tx: app::Sender<Mes
                 return true;
             }
             let action = match app::event_key() {
+                k if k == fltk::enums::Key::from_char('=')
+                    || k == fltk::enums::Key::from_char('+') =>
+                {
+                    Some(Action::Zoom(10))
+                }
+                k if k == fltk::enums::Key::from_char('-') => Some(Action::Zoom(-10)),
+                k if k == fltk::enums::Key::from_char('0') => Some(Action::Zoom(0)),
                 k if k == fltk::enums::Key::from_char('t') => Some(Action::NewTab),
                 k if k == fltk::enums::Key::from_char('n') => Some(Action::NewWindow),
                 k if k == fltk::enums::Key::from_char('w') => Some(if shift {

@@ -1,5 +1,17 @@
 # Changelog
 
+## V1.4.1 — 2026-11-11
+
+- Settings menu next to Edit, with general/client settings embedded as document-list tabs.
+- Labeled client fields and connection-list columns; styled device/document consent sheets.
+- Focus-only caret blinking and persistent 50–300% text zoom.
+- Native font metrics for mixed-document spacing, fixing growing image gaps on macOS.
+- Durable document-specific sync departure notifications with remaining group members preserved.
+- Required TLS 1.3, AES-256-GCM and hybrid X25519MLKEM768 via Rustls/AWS-LC; classical pinned device signatures retained.
+- All sharing peers must update to V1.4.1 or newer; existing identities/data are retained.
+- Build/package only; no tests run, as requested.
+
+
 ## V1.4 — 2026-11-11
 
 - Opt-in private-network document transfer and multi-peer sync over pinned mutual TLS.

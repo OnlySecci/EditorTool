@@ -60,6 +60,7 @@ struct State {
     style: Option<TextBuffer>,
     table: Vec<StyleTableEntry>,
     geometry: Option<(i32, i32, i32, i32)>,
+    zoom: i32,
     selected_image: Option<Rc<String>>,
 }
 #[derive(Clone)]
@@ -129,6 +130,7 @@ impl RichEditor {
             style: None,
             table: vec![],
             geometry: None,
+            zoom: 100,
             selected_image: None,
         }));
         let weak = Rc::downgrade(&state);
@@ -318,12 +320,19 @@ impl RichEditor {
             paste_into(&ed);
         }
     }
+    pub fn zoom(&self) -> i32 {
+        self.state.borrow().zoom
+    }
+    pub fn set_zoom(&mut self, percent: i32) {
+        set_zoom(&self.state, percent);
+    }
     pub fn configure(&mut self) {
         let mut s = self.state.borrow_mut();
         let prefs = crate::preferences::get();
+        let size = scaled_size(prefs.font_size, s.zoom);
         for part in &mut s.parts {
             if let Part::Text(t) = part {
-                t.editor.set_text_size(prefs.font_size);
+                t.editor.set_text_size(size);
                 t.editor.wrap_mode(
                     if prefs.wrap {
                         WrapMode::AtBounds
@@ -334,6 +343,7 @@ impl RichEditor {
                 );
             }
         }
+        apply_styles(&mut s);
         s.geometry = None;
         layout(&mut s);
     }
@@ -346,10 +356,13 @@ impl RichEditor {
         s.style = Some(style);
         s.table = table;
         apply_styles(&mut s);
+        s.geometry = None;
     }
     pub fn unset_highlight_data(&mut self, _style: Option<TextBuffer>) {
         let mut s = self.state.borrow_mut();
         s.style = None;
+        s.table.clear();
+        s.geometry = None;
         for part in &mut s.parts {
             if let Part::Text(t) = part {
                 t.editor.unset_highlight_data(None::<TextBuffer>);
@@ -500,7 +513,7 @@ fn rebuild(state: &Rc<RefCell<State>>) {
         editor.set_buffer(local.clone());
         editor.set_text_font(Font::Courier);
         let prefs = crate::preferences::get();
-        editor.set_text_size(prefs.font_size);
+        editor.set_text_size(scaled_size(prefs.font_size, s.zoom));
         editor.wrap_mode(
             if prefs.wrap {
                 WrapMode::AtBounds
@@ -512,6 +525,7 @@ fn rebuild(state: &Rc<RefCell<State>>) {
         editor.set_text_color(FG);
         editor.set_color(BG);
         editor.set_cursor_color(FG);
+        editor.show_cursor(false);
         editor.set_selection_color(ACCENT);
         editor.set_frame(FrameType::FlatBox);
         editor.set_linenumber_width(44);
@@ -588,6 +602,26 @@ fn rebuild(state: &Rc<RefCell<State>>) {
         let weak = Rc::downgrade(state);
         let scroll_grab = Cell::new(None);
         editor.handle(move |editor, event| {
+            if event == Event::Unfocus || event == Event::Hide {
+                crate::caret::stop(editor);
+            }
+            if matches!(event, Event::Focus | Event::Push | Event::KeyDown) {
+                crate::caret::reset(editor);
+            }
+            if event == Event::MouseWheel
+                && app::event_state().intersects(Shortcut::Ctrl | Shortcut::Meta)
+            {
+                if let Some(state) = weak.upgrade() {
+                    let delta = match app::event_dy() {
+                        app::MouseWheel::Up => 10,
+                        app::MouseWheel::Down => -10,
+                        _ => 0,
+                    };
+                    let zoom = state.borrow().zoom;
+                    set_zoom(&state, zoom + delta);
+                }
+                return true;
+            }
             if crate::theme::handle_scrollbars(editor, event, &scroll_grab) {
                 return true;
             }
@@ -925,7 +959,10 @@ fn apply_styles(s: &mut State) {
     let Some(styles) = s.style.clone() else {
         return;
     };
-    let table = s.table.clone();
+    let mut table = s.table.clone();
+    for entry in &mut table {
+        entry.size = scaled_size(entry.size, s.zoom);
+    }
     for part in &mut s.parts {
         if let Part::Text(t) = part {
             if s.assets.is_empty() {
@@ -968,10 +1005,27 @@ fn layout(s: &mut State) {
         .map(|part| match part {
             Part::Text(t) => {
                 if mixed {
-                    ((t.editor.count_lines(0, t.buffer.length(), true) + 1)
-                        * (crate::preferences::get().font_size + 5)
-                        + 18)
-                        .max(32)
+                    // Use the same native font metrics as Fl_Text_Display.
+                    // Guessing font_size + 5 accumulated a gap on macOS Menlo.
+                    draw::set_font(t.editor.text_font(), t.editor.text_size());
+                    let mut line_height = draw::height();
+                    for style in &s.table {
+                        draw::set_font(style.font, scaled_size(style.size, s.zoom));
+                        line_height = line_height.max(draw::height());
+                    }
+                    let horizontal = if !crate::preferences::get().wrap {
+                        draw::set_font(t.editor.text_font(), t.editor.text_size());
+                        t.buffer
+                            .text()
+                            .lines()
+                            .any(|line| draw::width(line) > (width - 50).max(1) as f64)
+                    } else {
+                        false
+                    };
+                    ((t.editor.count_lines(0, t.buffer.length(), true) + 1) * line_height
+                        + 2
+                        + if horizontal { 14 } else { 0 })
+                    .max(line_height + 2)
                 } else {
                     rect.3.max(1)
                 }
@@ -1054,4 +1108,25 @@ fn mark_image_changed(state: &Rc<RefCell<State>>, data: &Rc<String>) {
         &IMAGE_MARKER.to_string(),
     );
     s.guard.set(false);
+}
+
+fn scaled_size(base: i32, zoom: i32) -> i32 {
+    ((base * zoom + 50) / 100).clamp(6, 112)
+}
+fn set_zoom(state: &Rc<RefCell<State>>, percent: i32) {
+    let mut s = state.borrow_mut();
+    let zoom = percent.clamp(50, 300);
+    if s.zoom == zoom {
+        return;
+    }
+    s.zoom = zoom;
+    let size = scaled_size(crate::preferences::get().font_size, zoom);
+    for part in &mut s.parts {
+        if let Part::Text(t) = part {
+            t.editor.set_text_size(size);
+        }
+    }
+    apply_styles(&mut s);
+    s.geometry = None;
+    layout(&mut s);
 }
