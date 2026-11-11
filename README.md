@@ -6,7 +6,7 @@ Ein schlanker nativer Rust-Editor für **Text, Code und Bilder** — für Window
 
 ![EditorTool mit kompakter dunkler Oberfläche und vertikalen Tabs](docs/images/editor-main.png)
 
-*Hauptansicht — vom Projektinhaber bereitgestellte Aufnahme.*
+*Hauptansicht aus V1.0 — vom Projektinhaber bereitgestellte Aufnahme.*
 
 ## Neu in V1.2: Updates
 
