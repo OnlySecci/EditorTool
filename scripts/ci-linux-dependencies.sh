@@ -9,11 +9,23 @@ export no_proxy="${no_proxy:-${NO_PROXY:-}}"
 # Keep signature verification and fail quickly if the build network is down.
 arch=$(dpkg --print-architecture)
 if [ "$arch" = arm64 ]; then
-  archive=https://ports.ubuntu.com/ubuntu-ports
+  archives=(https://ports.ubuntu.com/ubuntu-ports https://mirrors.mit.edu/ubuntu-ports)
 else
-  archive=https://archive.ubuntu.com/ubuntu
+  archives=(https://archive.ubuntu.com/ubuntu https://mirrors.edge.kernel.org/ubuntu https://mirror.math.princeton.edu/pub/ubuntu)
 fi
 . /etc/os-release
+archive=
+for candidate in "${archives[@]}"; do
+  if curl --fail --silent --show-error --location --connect-timeout 5 --max-time 12 --output /dev/null "$candidate/dists/$VERSION_CODENAME/InRelease"; then
+    archive=$candidate
+    break
+  fi
+done
+if [ -z "$archive" ]; then
+  echo 'No signed Ubuntu package archive reachable from this runner.' >&2
+  exit 1
+fi
+printf 'Build package archive: %s\n' "$archive"
 sudo rm -f /etc/apt/sources.list.d/ubuntu.sources
 printf 'deb %s %s main universe restricted multiverse\ndeb %s %s-updates main universe restricted multiverse\ndeb %s %s-security main universe restricted multiverse\n' \
   "$archive" "$VERSION_CODENAME" "$archive" "$VERSION_CODENAME" "$archive" "$VERSION_CODENAME" | sudo tee /etc/apt/sources.list >/dev/null
