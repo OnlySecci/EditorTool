@@ -8,6 +8,10 @@ Ein schlanker nativer Rust-Editor für **Text, Code und Bilder** — für Window
 
 *Hauptansicht — vom Projektinhaber bereitgestellte Aufnahme.*
 
+## Neu in V1.1
+
+Zeilenumbruch, Farbschema (Dunkel/Hell/Graphit), Akzentfarbe und Textgrösse lassen sich in den Einstellungen ändern. **Datei → Alle Tabs schliessen** schliesst nach Speicherrückfragen alle Tabs des Fensters. Bilder per Doppelklick in der Anzeige verkleinern (10–100 %); per Rechtsklick Bildaktionen öffnen. Die Bildgrösse bleibt im Dokument und im Sitzungscache erhalten. Nach dem Einfügen bleibt das Bild sichtbar.
+
 ## Funktionen
 
 - Mehrere Fenster und Tabs; Tab-Leiste oben oder links. Die vertikale Leiste lässt sich am Trennstrich verbreitern. Ihre Breite bleibt gespeichert.
@@ -77,7 +81,7 @@ Windows/Linux: **Strg**, macOS: **Cmd**.
 | Strg/Cmd+Umschalt+I | Bild einfügen |
 | Strg/Cmd+, | Einstellungen |
 
-Suchen, Ersetzen und **Ansicht → Sprache** arbeiten im zuletzt aktiven Textbereich. Bilder lassen sich per Doppelklick nach Rückfrage entfernen. Textabschnitte vor und nach Bildern besitzen eigene Undo-Verläufe.
+Suchen, Ersetzen und **Ansicht → Sprache** arbeiten im zuletzt aktiven Textbereich. Bildaktionen zum Entfernen sind per Rechtsklick erreichbar. Textabschnitte vor und nach Bildern besitzen eigene Undo-Verläufe.
 
 ## Selbst bauen
 

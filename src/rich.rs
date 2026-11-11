@@ -8,7 +8,7 @@ use fltk::{
     group::{Group, Scroll, ScrollType},
     image::{RgbImage, SharedImage},
     prelude::*,
-    text::{StyleTableEntry, TextBuffer, TextEditor},
+    text::{StyleTableEntry, TextBuffer, TextEditor, WrapMode},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -23,6 +23,11 @@ const MAGIC: &str = "EditorTool.Document.v1";
 struct Asset {
     position: usize,
     png: Rc<String>,
+    #[serde(default = "full_size")]
+    scale_percent: u16,
+}
+fn full_size() -> u16 {
+    100
 }
 #[derive(Serialize, Deserialize)]
 struct FileDocument {
@@ -95,7 +100,11 @@ impl RichEditor {
         let mut scroll = Scroll::default();
         scroll.set_frame(FrameType::FlatBox);
         scroll.set_color(BG);
-        scroll.set_scrollbar_size(10);
+        scroll.set_scrollbar_size(14);
+        scroll.super_draw_first(true);
+        scroll.draw(|w| crate::theme::draw_scrollbars(w));
+        let scroll_grab = Cell::new(None);
+        scroll.handle(move |w, e| crate::theme::handle_scrollbars(w, e, &scroll_grab));
         let mut content = Group::default();
         content.set_color(BG);
         content.set_frame(FrameType::FlatBox);
@@ -298,6 +307,25 @@ impl RichEditor {
             paste_into(&ed);
         }
     }
+    pub fn configure(&mut self) {
+        let mut s = self.state.borrow_mut();
+        let prefs = crate::preferences::get();
+        for part in &mut s.parts {
+            if let Part::Text(t) = part {
+                t.editor.set_text_size(prefs.font_size);
+                t.editor.wrap_mode(
+                    if prefs.wrap {
+                        WrapMode::AtBounds
+                    } else {
+                        WrapMode::None
+                    },
+                    0,
+                );
+            }
+        }
+        s.geometry = None;
+        layout(&mut s);
+    }
     pub fn reflow(&mut self) {
         let mut s = self.state.borrow_mut();
         layout(&mut s);
@@ -346,6 +374,7 @@ fn insert_image(state: &Rc<RefCell<State>>, png: String) {
     s.assets.push(Asset {
         position,
         png: Rc::new(png),
+        scale_percent: 100,
     });
     s.assets.sort_by_key(|a| a.position);
     s.buffer.insert(position as i32, &IMAGE_MARKER.to_string());
@@ -358,7 +387,30 @@ fn insert_image(state: &Rc<RefCell<State>>, png: String) {
     };
     editor.set_insert_position((position + IMAGE_MARKER.len_utf8()) as i32);
     editor.take_focus().ok();
-    editor.show_insert_position();
+    // Keep the inserted image in view instead of scrolling to the text after it.
+    let mut s = state.borrow_mut();
+    let asset_index = s
+        .assets
+        .iter()
+        .position(|a| a.position == position)
+        .unwrap_or(0);
+    let image_y = s
+        .parts
+        .iter()
+        .filter_map(|part| {
+            if let Part::Image(frame, _, _) = part {
+                Some(frame.y())
+            } else {
+                None
+            }
+        })
+        .nth(asset_index);
+    if let Some(y) = image_y {
+        let offset = (s.viewport.yposition() + y - s.viewport.y() - 8)
+            .clamp(0, (s.content.h() - s.viewport.h()).max(0));
+        s.viewport.scroll_to(0, offset);
+        s.viewport.redraw();
+    }
 }
 
 fn queue_clipboard(state: Weak<RefCell<State>>, image: RgbImage) {
@@ -429,7 +481,16 @@ fn rebuild(state: &Rc<RefCell<State>>) {
         let mut editor = TextEditor::default();
         editor.set_buffer(local.clone());
         editor.set_text_font(Font::Courier);
-        editor.set_text_size(16);
+        let prefs = crate::preferences::get();
+        editor.set_text_size(prefs.font_size);
+        editor.wrap_mode(
+            if prefs.wrap {
+                WrapMode::AtBounds
+            } else {
+                WrapMode::None
+            },
+            0,
+        );
         editor.set_text_color(FG);
         editor.set_color(BG);
         editor.set_cursor_color(FG);
@@ -439,7 +500,9 @@ fn rebuild(state: &Rc<RefCell<State>>) {
         editor.set_linenumber_size(11);
         editor.set_linenumber_fgcolor(MUTED);
         editor.set_linenumber_bgcolor(BG);
-        editor.set_scrollbar_size(10);
+        editor.set_scrollbar_size(14);
+        editor.super_draw_first(true);
+        editor.draw(|w| crate::theme::draw_scrollbars(w));
         let index = s.parts.len();
         let weak = Rc::downgrade(state);
         let target = s.target.clone();
@@ -505,7 +568,11 @@ fn rebuild(state: &Rc<RefCell<State>>) {
             });
         }
         let weak = Rc::downgrade(state);
+        let scroll_grab = Cell::new(None);
         editor.handle(move |editor, event| {
+            if crate::theme::handle_scrollbars(editor, event, &scroll_grab) {
+                return true;
+            }
             if event == Event::Focus {
                 target.set(right);
                 if let Some(state) = weak.upgrade() {
@@ -592,7 +659,7 @@ fn rebuild(state: &Rc<RefCell<State>>) {
                 let image = Rc::new(RefCell::new(image));
                 let drawn = image.clone();
                 let mut frame = Frame::default();
-                frame.set_tooltip("Bild · Doppelklick zum Entfernen");
+                frame.set_tooltip("Doppelklick: Bildgröße · Rechtsklick: Bildaktionen");
                 frame.super_draw(false);
                 frame.draw(move |f| {
                     draw::push_clip(f.x(), f.y(), f.w(), f.h());
@@ -607,26 +674,72 @@ fn rebuild(state: &Rc<RefCell<State>>) {
                 let weak = Rc::downgrade(state);
                 let asset_data = asset.png.clone();
                 frame.handle(move |_, event| {
-                    if event == Event::Push && app::event_clicks() {
+                    if event == Event::Push
+                        && (app::event_clicks()
+                            || app::event_mouse_button() == app::MouseButton::Right)
+                    {
                         let weak = weak.clone();
                         let asset_data = asset_data.clone();
+                        let resize = app::event_mouse_button() != app::MouseButton::Right;
                         app::awake_callback(move || {
                             if let Some(state) = weak.upgrade() {
-                                if dialog::choice2_default(
-                                    "Bild aus diesem Dokument entfernen?",
-                                    "Abbrechen",
-                                    "Entfernen",
-                                    "",
-                                ) == Some(1)
-                                {
-                                    let item = {
-                                        let s = state.borrow();
-                                        s.assets
-                                            .iter()
-                                            .find(|a| Rc::ptr_eq(&a.png, &asset_data))
-                                            .map(|a| (s.buffer.clone(), a.position))
-                                    };
-                                    if let Some((mut buffer, position)) = item {
+                                let action = if resize {
+                                    Some(1)
+                                } else {
+                                    dialog::choice2_default(
+                                        "Bild bearbeiten",
+                                        "Abbrechen",
+                                        "Größe ändern",
+                                        "Entfernen",
+                                    )
+                                };
+                                let item = {
+                                    let s = state.borrow();
+                                    s.assets
+                                        .iter()
+                                        .find(|a| Rc::ptr_eq(&a.png, &asset_data))
+                                        .map(|a| (s.buffer.clone(), a.position, a.scale_percent))
+                                };
+                                if let Some((mut buffer, position, percent)) = item {
+                                    if action == Some(1) {
+                                        if let Some(value) = dialog::input_default(
+                                            "Bildbreite in Prozent der Originalgröße (10–100):",
+                                            &percent.to_string(),
+                                        ) {
+                                            if let Ok(percent @ 10..=100) =
+                                                value.trim().parse::<u16>()
+                                            {
+                                                let mut s = state.borrow_mut();
+                                                if let Some(asset) = s
+                                                    .assets
+                                                    .iter_mut()
+                                                    .find(|a| a.position == position)
+                                                {
+                                                    asset.scale_percent = percent;
+                                                }
+                                                s.guard.set(true);
+                                                buffer.replace(
+                                                    position as i32,
+                                                    (position + IMAGE_MARKER.len_utf8()) as i32,
+                                                    &IMAGE_MARKER.to_string(),
+                                                );
+                                                s.guard.set(false);
+                                                drop(s);
+                                                rebuild(&state);
+                                            } else {
+                                                dialog::alert_default(
+                                                    "Bitte eine Zahl zwischen 10 und 100 eingeben.",
+                                                );
+                                            }
+                                        }
+                                    } else if action == Some(2)
+                                        && dialog::choice2_default(
+                                            "Bild aus diesem Dokument entfernen?",
+                                            "Abbrechen",
+                                            "Entfernen",
+                                            "",
+                                        ) == Some(1)
+                                    {
                                         buffer.remove(
                                             position as i32,
                                             (position + IMAGE_MARKER.len_utf8()) as i32,
@@ -640,7 +753,12 @@ fn rebuild(state: &Rc<RefCell<State>>) {
                         false
                     }
                 });
-                s.parts.push(Part::Image(frame, w, h));
+                let percent = asset.scale_percent.clamp(10, 100) as i32;
+                s.parts.push(Part::Image(
+                    frame,
+                    (w * percent / 100).max(1),
+                    (h * percent / 100).max(1),
+                ));
             }
             start = asset.position + IMAGE_MARKER.len_utf8();
         }
@@ -701,13 +819,21 @@ fn layout(s: &mut State) {
     s.geometry = Some(rect);
     let mixed = !s.assets.is_empty();
     let width = (rect.2 - if mixed { 10 } else { 0 }).max(1);
+    for part in &mut s.parts {
+        if let Part::Text(t) = part {
+            t.editor.resize(rect.0, t.editor.y(), width, t.editor.h());
+        }
+    }
     let heights = s
         .parts
         .iter()
         .map(|part| match part {
             Part::Text(t) => {
                 if mixed {
-                    ((t.buffer.count_lines(0, t.buffer.length()) + 1) * 21 + 18).max(32)
+                    ((t.editor.count_lines(0, t.buffer.length(), true) + 1)
+                        * (crate::preferences::get().font_size + 5)
+                        + 18)
+                        .max(32)
                 } else {
                     rect.3.max(1)
                 }

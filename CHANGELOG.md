@@ -1,5 +1,14 @@
 # Changelog
 
+## V1.1 — 2026-11-11
+
+- Configurable word wrap, color schemes, accent colors and editor font size.
+- Close all tabs with save/cancel handling.
+- Persisted image display size and image-anchored paste scrolling.
+- Rounded visible scrollbars, edge-aligned editor and removal of the duplicate menu logo.
+- No tests run, as requested.
+
+
 ## V1.0 — 2026-11-11
 
 - Native Rust/FLTK editor for Windows, Linux and macOS, each for x64 and ARM64.

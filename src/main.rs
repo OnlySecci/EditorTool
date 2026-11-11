@@ -2,6 +2,7 @@
 mod chrome;
 mod core;
 mod ipc;
+mod preferences;
 mod rich;
 mod session;
 mod syntax;
@@ -46,6 +47,11 @@ enum Action {
     NewTab,
     Select(usize),
     CloseTab,
+    CloseAllTabs,
+    WordWrap(bool),
+    Design(u8),
+    Accent(u8),
+    FontSize(i32),
     CloseWindow,
     Orientation(bool),
     Open(bool),
@@ -330,21 +336,6 @@ impl EditorWindow {
         menurow.set_margins(10, 3, 10, 3);
         menurow.set_spacing(5);
         menurow.set_color(PANEL);
-        let mut brand = theme::heading("", 18);
-        menurow.fixed(&brand, 28);
-        brand.super_draw(false);
-        brand.draw(|f| {
-            fltk::draw::push_clip(f.x(), f.y(), f.w(), f.h());
-            fltk::draw::set_draw_color(PANEL);
-            fltk::draw::draw_rectf(f.x(), f.y(), f.w(), f.h());
-            theme::icon(
-                theme::Icon::Document,
-                f.x(),
-                f.y() + (f.h() - 20) / 2,
-                theme::BLUE,
-            );
-            fltk::draw::pop_clip();
-        });
         let mut menu = MenuBar::default();
         menu.set_frame(FrameType::FlatBox);
         menu.set_color(PANEL);
@@ -376,6 +367,11 @@ impl EditorWindow {
                 "&Datei/Tab schließen",
                 Shortcut::Command | 'w',
                 Action::CloseTab,
+            ),
+            (
+                "&Datei/Alle Tabs schließen",
+                Shortcut::Command | Shortcut::Shift | 'w',
+                Action::CloseAllTabs,
             ),
             (
                 "&Datei/Fenster schließen",
@@ -508,6 +504,11 @@ impl EditorWindow {
         let mut tab_scroll = Scroll::default();
         tab_scroll.set_color(PANEL);
         tab_scroll.set_frame(FrameType::FlatBox);
+        tab_scroll.set_scrollbar_size(14);
+        tab_scroll.super_draw_first(true);
+        tab_scroll.draw(|w| theme::draw_scrollbars(w));
+        let tab_grab = Cell::new(None);
+        tab_scroll.handle(move |w, e| theme::handle_scrollbars(w, e, &tab_grab));
         let mut bar = Group::default();
         bar.set_color(PANEL);
         bar.set_frame(FrameType::FlatBox);
@@ -588,7 +589,11 @@ impl EditorWindow {
                 let action = match app::event_key() {
                     k if k == fltk::enums::Key::from_char('t') => Some(Action::NewTab),
                     k if k == fltk::enums::Key::from_char('n') => Some(Action::NewWindow),
-                    k if k == fltk::enums::Key::from_char('w') => Some(Action::CloseTab),
+                    k if k == fltk::enums::Key::from_char('w') => Some(if shift {
+                        Action::CloseAllTabs
+                    } else {
+                        Action::CloseTab
+                    }),
                     k if k == fltk::enums::Key::from_char('o') => Some(Action::Open(false)),
                     k if k == fltk::enums::Key::from_char('s') => Some(Action::Save(shift)),
                     _ => None,
@@ -675,7 +680,7 @@ impl EditorWindow {
         group.set_spacing(8);
         group.set_frame(FrameType::RFlatBox);
         group.set_color(BG);
-        group.set_margins(8, 8, 8, 6);
+        group.set_margins(0, 4, 0, 0);
         let mut panes = Flex::default().row();
         panes.set_spacing(18);
         panes.set_color(BG);
@@ -756,9 +761,9 @@ impl EditorWindow {
 
     fn resize_docs(&mut self) {
         let rect = (
-            self.area.x() + 6,
+            self.area.x(),
             self.area.y(),
-            (self.area.w() - 12).max(1),
+            self.area.w().max(1),
             (self.area.h() - 6).max(1),
         );
         for d in &mut self.docs {
@@ -1140,6 +1145,19 @@ impl EditorWindow {
                 self.docs[i].group.show();
                 self.docs[i].left.take_focus().ok();
             }
+            Action::CloseAllTabs => {
+                // Confirm every changed document before removing any tabs.
+                for index in 0..self.docs.len() {
+                    if !self.confirm_close(index) {
+                        return;
+                    }
+                }
+                for d in self.docs.drain(..) {
+                    Flex::delete(d.group);
+                }
+                self.active = 0;
+                self.add_tab(wid, tx);
+            }
             Action::CloseTab => {
                 if self.confirm_close(self.active) {
                     let d = self.docs.remove(self.active);
@@ -1270,17 +1288,17 @@ impl EditorWindow {
                         StyleTableEntry {
                             color: FG,
                             font: Font::Courier,
-                            size: 16,
+                            size: preferences::get().font_size,
                         },
                         StyleTableEntry {
                             color: Color::from_hex(0xff929d),
                             font: Font::Courier,
-                            size: 16,
+                            size: preferences::get().font_size,
                         },
                         StyleTableEntry {
                             color: Color::from_hex(0x83deab),
                             font: Font::Courier,
-                            size: 16,
+                            size: preferences::get().font_size,
                         },
                     ];
                     d.left.set_highlight_data(a.clone(), styles.clone());
@@ -1632,19 +1650,37 @@ impl Runtime {
                     shutdown::hook(&w.win, self.weak_self.clone());
                 }
             }
-            Action::Orientation(value) => {
-                self.vertical = value;
-                for w in self.windows.iter_mut().flatten() {
-                    w.layout_tabs(value);
+            Action::Orientation(_)
+            | Action::WordWrap(_)
+            | Action::Design(_)
+            | Action::Accent(_)
+            | Action::FontSize(_) => {
+                let mut prefs = preferences::get();
+                match action {
+                    Action::Orientation(value) => prefs.vertical = value,
+                    Action::WordWrap(value) => prefs.wrap = value,
+                    Action::Design(value) => prefs.design = value.min(2),
+                    Action::Accent(value) => prefs.accent = value.min(2),
+                    Action::FontSize(value) => prefs.font_size = value.clamp(12, 28),
+                    _ => (),
                 }
-                if let Err(e) =
-                    std::fs::create_dir_all(self.config.parent().unwrap()).and_then(|_| {
-                        std::fs::write(
-                            &self.config,
-                            if value { "vertical\n" } else { "horizontal\n" },
-                        )
-                    })
-                {
+                preferences::set(prefs);
+                self.vertical = prefs.vertical;
+                theme::apply_palette();
+                for w in self.windows.iter_mut().flatten() {
+                    if w.vertical != prefs.vertical {
+                        w.layout_tabs(prefs.vertical);
+                    }
+                    w.settings.sync();
+                    for d in &mut w.docs {
+                        d.clear_styles();
+                        d.left.configure();
+                        d.right.configure();
+                    }
+                    w.win.redraw();
+                    chrome::dark_title(&w.win);
+                }
+                if let Err(e) = preferences::save(&self.config) {
                     dialog::alert_default(&format!(
                         "Einstellung konnte nicht gespeichert werden: {e}"
                     ));
@@ -1774,11 +1810,10 @@ fn mac_open_file(path: *const std::ffi::c_char) {
 
 fn main() {
     let app = app::App::default().with_scheme(app::Scheme::Base);
-    theme::init();
     let config = settings_path();
-    let vertical = std::fs::read_to_string(&config)
-        .map(|s| s.trim() == "vertical")
-        .unwrap_or(false);
+    preferences::load(&config);
+    theme::init();
+    let vertical = preferences::get().vertical;
     let (tx, rx) = app::channel::<Message>();
     let input_files = std::env::args_os()
         .skip(1)

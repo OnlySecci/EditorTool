@@ -11,13 +11,34 @@ use fltk::{
 };
 use std::{cell::Cell, rc::Rc};
 
-pub const CANVAS: Color = Color::from_hex(0x1c1d21);
-pub const CHROME: Color = Color::from_hex(0x222327);
-pub const SURFACE: Color = Color::from_hex(0x303136);
-pub const BORDER: Color = Color::from_hex(0x3c3d43);
-pub const BLUE: Color = Color::from_hex(0x0a84ff);
-pub const TEXT: Color = Color::from_hex(0xf0f0f3);
-pub const SECONDARY: Color = Color::from_hex(0x999ba5);
+pub const CANVAS: Color = Color::Background2;
+pub const CHROME: Color = Color::Background;
+pub const SURFACE: Color = Color::Free;
+pub const BORDER: Color = Color::Inactive;
+pub const BLUE: Color = Color::Selection;
+pub const TEXT: Color = Color::Foreground;
+pub const SECONDARY: Color = Color::Dark3;
+
+pub fn apply_palette() {
+    let p = crate::preferences::get();
+    let palette = match p.design {
+        1 => [0xffffff, 0xf2f3f5, 0xe4e6eb, 0xc8cbd2, 0x20232a, 0x5c6270],
+        2 => [0x121719, 0x1c2427, 0x2b363a, 0x45565d, 0xe8f1f1, 0xa6b9bd],
+        _ => [0x1c1d21, 0x222327, 0x303136, 0x484b54, 0xf0f0f3, 0xa6a9b4],
+    };
+    for (slot, rgb) in [CANVAS, CHROME, SURFACE, BORDER, TEXT, SECONDARY]
+        .into_iter()
+        .zip(palette)
+    {
+        app::set_color(slot, (rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8);
+    }
+    let (r, g, b) = match p.accent {
+        1 => (158, 104, 238),
+        2 => (36, 158, 118),
+        _ => (10, 132, 255),
+    };
+    app::set_color(BLUE, r, g, b);
+}
 
 pub fn init() {
     app::background(34, 35, 39);
@@ -66,6 +87,107 @@ pub fn init() {
     fltk::misc::Tooltip::set_color(SURFACE);
     fltk::misc::Tooltip::set_text_color(TEXT);
     fltk::misc::Tooltip::set_font_size(12);
+    apply_palette();
+}
+
+fn bars<W: WidgetExt>(widget: &W) -> Vec<fltk::valuator::Scrollbar> {
+    widget
+        .as_group()
+        .map(|group| {
+            (0..group.children())
+                .filter_map(|i| {
+                    group
+                        .child(i)
+                        .and_then(|child| fltk::valuator::Scrollbar::from_dyn_widget(&child))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+fn thumb(bar: &fltk::valuator::Scrollbar) -> (bool, i32, i32, i32) {
+    let vertical = bar.h() > bar.w();
+    let length = if vertical { bar.h() } else { bar.w() };
+    let size = ((length as f32 * bar.slider_size()) as i32)
+        .max(24)
+        .min(length);
+    let range = bar.maximum() - bar.minimum();
+    let ratio = if range > 0.0 {
+        ((bar.value() - bar.minimum()) / range).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    (
+        vertical,
+        length,
+        size,
+        ((length - size) as f64 * ratio) as i32,
+    )
+}
+pub fn draw_scrollbars<W: WidgetExt>(widget: &W) {
+    for bar in bars(widget).into_iter().filter(|b| b.visible()) {
+        let (vertical, _, size, offset) = thumb(&bar);
+        draw::push_clip(bar.x(), bar.y(), bar.w(), bar.h());
+        draw::set_draw_color(CANVAS);
+        draw::draw_rectf(bar.x(), bar.y(), bar.w(), bar.h());
+        let hover = app::event_x() >= bar.x()
+            && app::event_x() < bar.x() + bar.w()
+            && app::event_y() >= bar.y()
+            && app::event_y() < bar.y() + bar.h();
+        draw::set_draw_color(if hover { BLUE } else { SECONDARY });
+        if vertical {
+            draw::draw_rounded_rectf(bar.x() + 3, bar.y() + offset, (bar.w() - 6).max(4), size, 4);
+        } else {
+            draw::draw_rounded_rectf(bar.x() + offset, bar.y() + 3, size, (bar.h() - 6).max(4), 4);
+        }
+        draw::pop_clip();
+    }
+}
+pub fn handle_scrollbars<W: WidgetExt>(
+    widget: &mut W,
+    event: Event,
+    grab: &Cell<Option<(usize, i32)>>,
+) -> bool {
+    if event == Event::Released && grab.get().is_some() {
+        grab.set(None);
+        return true;
+    }
+    if !matches!(event, Event::Push | Event::Drag) {
+        return false;
+    }
+    let list = bars(widget);
+    for (index, mut bar) in list.into_iter().enumerate().filter(|(_, b)| b.visible()) {
+        let inside = app::event_x() >= bar.x()
+            && app::event_x() < bar.x() + bar.w()
+            && app::event_y() >= bar.y()
+            && app::event_y() < bar.y() + bar.h();
+        if (event == Event::Push && inside) || grab.get().is_some_and(|g| g.0 == index) {
+            let (vertical, length, size, offset) = thumb(&bar);
+            let point = if vertical {
+                app::event_y() - bar.y()
+            } else {
+                app::event_x() - bar.x()
+            };
+            if event == Event::Push {
+                grab.set(Some((
+                    index,
+                    if point >= offset && point <= offset + size {
+                        point - offset
+                    } else {
+                        size / 2
+                    },
+                )));
+            }
+            if let Some((_, anchor)) = grab.get() {
+                let ratio = (point - anchor).clamp(0, (length - size).max(0)) as f64
+                    / (length - size).max(1) as f64;
+                bar.set_value(bar.minimum() + ratio * (bar.maximum() - bar.minimum()));
+                bar.do_callback();
+                widget.redraw();
+            }
+            return true;
+        }
+    }
+    false
 }
 
 fn hover<W: WidgetBase + WidgetExt>(widget: &mut W) -> Rc<Cell<bool>> {
@@ -267,14 +389,10 @@ pub fn tab(
         draw::set_draw_color(CHROME);
         draw::draw_rectf(b.x(), b.y(), b.w(), b.h());
         if active || hovered.get() {
-            draw::set_draw_color(if active {
-                SURFACE
-            } else {
-                Color::from_hex(0x292a2f)
-            });
+            draw::set_draw_color(if active { SURFACE } else { SURFACE });
             draw::draw_rounded_rectf(b.x() + 2, b.y() + 4, b.w() - 4, b.h() - 8, 9);
             if active {
-                draw::set_draw_color(Color::from_hex(0x45464e));
+                draw::set_draw_color(BORDER);
                 draw::draw_rounded_rect(b.x() + 2, b.y() + 4, b.w() - 5, b.h() - 9, 9);
             }
         }
