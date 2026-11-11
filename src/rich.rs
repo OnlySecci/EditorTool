@@ -818,7 +818,7 @@ fn layout(s: &mut State) {
     }
     s.geometry = Some(rect);
     let mixed = !s.assets.is_empty();
-    let width = (rect.2 - if mixed { 10 } else { 0 }).max(1);
+    let width = (rect.2 - if mixed { 14 } else { 0 }).max(1);
     for part in &mut s.parts {
         if let Part::Text(t) = part {
             t.editor.resize(rect.0, t.editor.y(), width, t.editor.h());

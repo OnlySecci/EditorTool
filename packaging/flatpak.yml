@@ -4,6 +4,8 @@ runtime-version: '25.08'
 sdk: org.freedesktop.Sdk
 command: editortool
 finish-args:
+  - --share=network
+  - --talk-name=org.freedesktop.Flatpak
   - --socket=x11
   - --share=ipc
   - --device=dri

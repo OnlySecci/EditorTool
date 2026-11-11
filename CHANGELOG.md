@@ -1,5 +1,14 @@
 # Changelog
 
+## V1.2 — 2026-11-11
+
+- Built-in GitHub update checks with release notes and manual installation.
+- Optional startup checks and opt-in automatic startup installation.
+- Bounded background downloads, SHA-256 verification, session-safe installer handoff and restart.
+- Native installation paths for setup/portable Windows, macOS bundles, Linux packages and Flatpak.
+- No tests run, as requested.
+
+
 ## V1.1 — 2026-11-11
 
 - Configurable word wrap, color schemes, accent colors and editor font size.

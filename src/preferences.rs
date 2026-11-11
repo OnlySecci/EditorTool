@@ -9,6 +9,8 @@ pub struct Preferences {
     pub design: u8,
     pub accent: u8,
     pub font_size: i32,
+    pub update_check: bool,
+    pub update_install: bool,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -18,6 +20,8 @@ impl Default for Preferences {
             design: 0,
             accent: 0,
             font_size: 16,
+            update_check: true,
+            update_install: false,
         }
     }
 }

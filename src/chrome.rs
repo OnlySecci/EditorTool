@@ -281,16 +281,18 @@ pub struct SettingsPanel {
     design: fltk::menu::Choice,
     accent: fltk::menu::Choice,
     size: fltk::menu::Choice,
+    update_check: CheckButton,
+    update_install: CheckButton,
 }
 impl SettingsPanel {
     pub fn new(wid: usize, tx: app::Sender<Message>, vertical: bool) -> Self {
         Group::set_current(None::<&Group>);
         let mut win = Window::default()
-            .with_size(520, 510)
+            .with_size(520, 600)
             .with_label("Einstellungen — EditorTool");
         win.set_color(PANEL);
         set_icon(&mut win);
-        let mut root = Flex::new(24, 20, 472, 470, None).column();
+        let mut root = Flex::new(24, 20, 472, 560, None).column();
         root.set_spacing(12);
         let title = theme::heading("Einstellungen", 23);
         root.fixed(&title, 34);
@@ -330,6 +332,20 @@ impl SettingsPanel {
                 tx.send((wid, Action::FontSize(value)));
             }
         });
+        let mut update_check = CheckButton::default().with_label("Beim Start nach Updates suchen");
+        theme::check(&mut update_check);
+        update_check.set_callback(move |c| tx.send((wid, Action::UpdateCheckOption(c.value()))));
+        root.fixed(&update_check, 28);
+        let mut update_install =
+            CheckButton::default().with_label("Updates beim Start automatisch installieren");
+        theme::check(&mut update_install);
+        update_install
+            .set_callback(move |c| tx.send((wid, Action::UpdateInstallOption(c.value()))));
+        root.fixed(&update_install, 28);
+        let mut check_now = Button::default().with_label("Jetzt nach Updates suchen…");
+        theme::button(&mut check_now, false, None);
+        check_now.emit(tx, (wid, Action::CheckUpdates(true)));
+        root.fixed(&check_now, 32);
         let mut footer = Frame::default().with_label(concat!(
             "Wird für alle Fenster gespeichert.     ·     ",
             env!("CARGO_PKG_VERSION")
@@ -348,6 +364,8 @@ impl SettingsPanel {
             design,
             accent,
             size,
+            update_check,
+            update_install,
         };
         panel.set_orientation(vertical);
         panel.sync();
@@ -365,6 +383,8 @@ impl SettingsPanel {
                 .position(|&v| v == prefs.font_size)
                 .unwrap_or(2) as i32,
         );
+        self.update_check.set_value(prefs.update_check);
+        self.update_install.set_value(prefs.update_install);
         self.win.redraw();
     }
     pub fn set_orientation(&mut self, vertical: bool) {
@@ -383,6 +403,115 @@ impl SettingsPanel {
         self.sync();
         self.win
             .set_pos(owner.x() + (owner.w() - 520) / 2, owner.y() + 60);
+        self.win.show();
+        dark_title(&self.win);
+    }
+}
+
+pub struct UpdatePanel {
+    pub win: Window,
+    title: Frame,
+    status: Frame,
+    notes: fltk::text::TextBuffer,
+    install: Button,
+    check: Button,
+}
+impl UpdatePanel {
+    pub fn new(tx: app::Sender<Message>) -> Self {
+        Group::set_current(None::<&Group>);
+        let mut win = Window::default()
+            .with_size(640, 560)
+            .with_label("Updates — EditorTool");
+        win.set_color(PANEL);
+        set_icon(&mut win);
+        let mut root = Flex::new(22, 18, 596, 524, None).column();
+        root.set_spacing(12);
+        let title = theme::heading("EditorTool aktualisieren", 21);
+        root.fixed(&title, 30);
+        let mut status = Frame::default();
+        status.set_label_color(MUTED);
+        status.set_label_size(13);
+        status.set_align(Align::Left | Align::Inside | Align::Wrap);
+        root.fixed(&status, 46);
+        let notes = fltk::text::TextBuffer::default();
+        let mut display = fltk::text::TextDisplay::default();
+        display.set_buffer(notes.clone());
+        display.set_color(BG);
+        display.set_text_color(theme::TEXT);
+        display.set_text_font(fltk::enums::Font::Helvetica);
+        display.set_text_size(14);
+        display.set_frame(FrameType::FlatBox);
+        display.set_scrollbar_size(14);
+        display.wrap_mode(fltk::text::WrapMode::AtBounds, 0);
+        display.super_draw_first(true);
+        display.draw(|w| theme::draw_scrollbars(w));
+        let grab = Cell::new(None);
+        display.handle(move |w, e| theme::handle_scrollbars(w, e, &grab));
+        let mut hint = Frame::default().with_label(
+            "Vor der Installation wird die Sitzung gesichert. Die App startet danach neu.",
+        );
+        hint.set_label_size(11);
+        hint.set_label_color(MUTED);
+        hint.set_align(Align::Left | Align::Inside | Align::Wrap);
+        root.fixed(&hint, 36);
+        let mut controls = Flex::default().row();
+        controls.set_spacing(8);
+        let mut check = Button::default().with_label("Erneut prüfen");
+        theme::button(&mut check, false, None);
+        check.emit(tx, (0, Action::CheckUpdates(true)));
+        let mut install = Button::default().with_label("Jetzt aktualisieren");
+        theme::button(&mut install, true, None);
+        install.emit(tx, (0, Action::InstallUpdate));
+        install.deactivate();
+        let mut close = Button::default().with_label("Schliessen");
+        theme::button(&mut close, false, None);
+        close.set_callback(|b| {
+            if let Some(mut w) = b.window() {
+                w.hide()
+            }
+        });
+        controls.end();
+        root.fixed(&controls, 38);
+        root.end();
+        win.end();
+        win.set_callback(|w| w.hide());
+        Self {
+            win,
+            title,
+            status,
+            notes,
+            install,
+            check,
+        }
+    }
+    pub fn state(&mut self, title: &str, status: &str, notes: &str, available: bool, busy: bool) {
+        self.title.set_label(title);
+        self.status.set_label(status);
+        self.notes.set_text(notes);
+        if available && !busy {
+            self.install.activate()
+        } else {
+            self.install.deactivate()
+        }
+        if busy {
+            self.check.deactivate()
+        } else {
+            self.check.activate()
+        }
+        self.win.redraw();
+    }
+    pub fn progress(&mut self, percent: u8) {
+        self.status
+            .set_label(&format!("Update wird heruntergeladen: {percent} %"));
+        self.win.redraw();
+    }
+    pub fn show(&mut self, owner: Option<&Window>) {
+        if !self.win.shown() {
+            if let Some(owner) = owner {
+                self.win
+                    .set_pos(owner.x() + (owner.w() - 640) / 2, owner.y() + 60);
+            }
+        }
         self.win.show();
         dark_title(&self.win);
     }
