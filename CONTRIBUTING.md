@@ -1,13 +1,13 @@
 # GitHub workflow
 
-The canonical repository is private: https://github.com/OnlySecci/EditorTool.
+The canonical repository is public: https://github.com/OnlySecci/EditorTool.
 
 1. Branch from `main`, e.g. `feat/image-flow` or `fix/tab-scroll`.
 2. Commit the source change and update the relevant documentation.
 3. Push the branch and open a pull request. GitHub Actions builds Windows, Linux, macOS Intel and macOS Apple Silicon. No tests are run.
 4. Merge the pull request after review.
 5. Update `Cargo.toml` and `CHANGELOG.md`, commit, and tag the release with `V<version>`.
-6. Push the tag. The release workflow builds installation packages, collects SHA-256 checksums, and publishes a GitHub Release in the private repository.
+6. Push the tag. The release workflow builds installation packages, collects SHA-256 checksums, and publishes a public GitHub Release.
 
 Release downloads remain accessible only to accounts with repository access. Installers are unsigned until platform signing identities are supplied. macOS bundles receive a local ad-hoc signature; they are not notarized.
 

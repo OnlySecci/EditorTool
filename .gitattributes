@@ -1,5 +1,6 @@
 * text=auto
 *.rs text eol=lf
+*.cmake text eol=lf
 *.sh text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf

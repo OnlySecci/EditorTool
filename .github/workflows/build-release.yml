@@ -62,9 +62,9 @@ jobs:
           rustup target add "${CARGO_BUILD_TARGET}"
       - name: Linux dependencies
         if: runner.os == 'Linux'
+        timeout-minutes: 8
         run: |
-          sudo apt-get update
-          sudo apt-get install -y rpm flatpak flatpak-builder libx11-dev libxext-dev libxft-dev libxinerama-dev libxcursor-dev libxrender-dev libxfixes-dev libpango1.0-dev libcairo2-dev libfontconfig1-dev libgl1-mesa-dev libglu1-mesa-dev
+          bash scripts/ci-linux-dependencies.sh rpm flatpak flatpak-builder libx11-dev libxext-dev libxft-dev libxinerama-dev libxcursor-dev libxrender-dev libxfixes-dev libpango1.0-dev libcairo2-dev libfontconfig1-dev libgl1-mesa-dev libglu1-mesa-dev
       - name: Windows build and installer
         if: runner.os == 'Windows'
         shell: pwsh
@@ -103,8 +103,7 @@ jobs:
           path: downloads
       - name: Build native setup executables
         run: |
-          sudo apt-get update
-          sudo apt-get install -y nsis
+          bash scripts/ci-linux-dependencies.sh nsis
           version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
           mkdir -p dist/windows dist/packages
           for arch in x64 arm64; do
@@ -131,7 +130,7 @@ jobs:
           pattern: packages-*
           merge-multiple: true
           path: packages
-      - name: Publish private-repository release
+      - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

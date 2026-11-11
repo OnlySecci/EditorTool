@@ -6,6 +6,8 @@ bundle="dist/macos/EditorTool.app/Contents"
 mkdir -p "$bundle/MacOS" "$bundle/Resources"
 cp assets/editortool.icns "$bundle/Resources/EditorTool.icns"
 cp README.md LICENSE dist/macos/
+cp LICENSE "$bundle/Resources/"
+cp -R third-party-licenses "$bundle/Resources/"
 cp "target/${CARGO_BUILD_TARGET:+$CARGO_BUILD_TARGET/}release/editortool" "$bundle/MacOS/EditorTool"
 chmod +x "$bundle/MacOS/EditorTool"
 version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
