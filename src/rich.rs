@@ -742,10 +742,12 @@ fn rebuild(state: &Rc<RefCell<State>>) {
                 }
             }
             if event == Event::KeyDown
-                && app::event_state().contains(Shortcut::Command)
-                && app::event_key() == Key::from_char('v')
+                && crate::shortcuts::is_event(crate::shortcuts::Command::Paste)
             {
                 paste_into(editor);
+                return true;
+            }
+            if event == Event::KeyDown && crate::shortcuts::block_old_default() {
                 return true;
             }
             if event == Event::Paste {

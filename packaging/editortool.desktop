@@ -8,3 +8,4 @@ Type=Application
 Categories=Utility;TextEditor;
 MimeType=application/x-editortool;
 StartupNotify=true
+StartupWMClass=com.github.OnlySecci.EditorTool

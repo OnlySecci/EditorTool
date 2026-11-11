@@ -1,5 +1,15 @@
 # Changelog
 
+## V1.4.8 — 2026-11-11
+
+- Requested Settings/File/Edit/View/Help menu order.
+- Configurable, persistent editor shortcuts with capture, conflict detection, removal and reset.
+- Styled comparison controls with close/stop and stale-result rejection.
+- Merge split panes into one tab context while retaining live document widgets.
+- Consistent Linux window/desktop identity and user-local portable launchers for taskbar pinning.
+- Build/package only; no tests run, as requested.
+
+
 ## V1.4.5 — 2026-11-11
 
 - Apply sync revisions in place, reuse image frames/decoded assets, and preserve viewport, caret, selection and focus.

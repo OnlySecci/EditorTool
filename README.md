@@ -8,6 +8,14 @@ Ein schlanker nativer Rust-Editor für **Text, Code und Bilder** — für Window
 
 *Hauptansicht aus V1.0 — vom Projektinhaber bereitgestellte Aufnahme.*
 
+## Neu in V1.4.8
+
+Die Menüleiste ist jetzt **Einstellungen, Datei, Bearbeiten, Ansicht, Hilfe**. Unter **Einstellungen → Tastenkürzel** lassen sich Befehle aufnehmen, zuweisen, entfernen und auf Standard zurücksetzen. Doppelte Kombinationen werden angezeigt. **Für alle Fenster übernehmen** speichert die Belegung lokal in `shortcuts.json` und aktualisiert die Menüs.
+
+Vergleich hat eine gestaltete Kopfzeile mit **Stopp** und **X**. Stopp beendet die Markierung/Berechnung; X blendet die rechte Ansicht aus. Die Texte bleiben erhalten. **Split View → Zusammenführen** verschiebt die Tabs beider Seiten zurück in eine gemeinsame Liste; **Als zwei Fenster weiterführen** bleibt separat verfügbar.
+
+Unter Linux stimmen Fensterkennung und Desktop-Launcher überein, damit die Taskleiste den Editor zuordnen und anheften kann. Portable Versionen erzeugen bei Bedarf einen Benutzer-Launcher. Nach dem Update den Editor neu starten und einen alten Taskleisten-Eintrag gegebenenfalls durch den neuen ersetzen. Details stehen in den [Release Notes](RELEASE_NOTES.md).
+
 ## Neu in V1.4.5
 
 Sync-Änderungen verwenden vorhandene Bild- und Textansichten weiter und erhalten die sichtbare Scrollposition. Eine feste Umbruchbreite verhindert vorübergehende Layout-Sprünge bei gemischten Dokumenten. Neue oder entfernte Bilder werden ohne Zwischenansicht übernommen.

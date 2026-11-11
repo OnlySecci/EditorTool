@@ -1,30 +1,36 @@
-# EditorTool V1.4.5
+# EditorTool V1.4.8
 
-## Ruhige Bildanzeige beim Sync
+## Menüs und Tastenkürzel
 
-- Gewöhnliche Sync-Änderungen aktualisieren vorhandene Textblöcke und verwenden vorhandene Bild-Frames und dekodierte Bilddaten weiter. Der gesamte Dokumentbereich wird dafür nicht mehr abgerissen und neu erzeugt.
-- Sichtbarer Bildanker, Scrollposition, Textcursor, Auswahl und Fokus werden beim Übernehmen einer Sync-Version erhalten. Ein notwendiger Neuaufbau, etwa bei neuen oder entfernten Bildern, erhält die Ansicht ebenfalls. Endgültiges Layout und Wiederherstellung erfolgen vor dem nächsten Zeichnen.
-- Gemischte Text-/Bild-Dokumente verwenden eine feste Umbruchbreite für die Messung. Vorübergehende innere Scrollleisten verengen dadurch nicht mehr kurzzeitig den Text und verschieben die Bilder nach unten und wieder zurück. Die vertikale Bewegung übernimmt die äussere Dokument-Scrollleiste.
-- Reine Bild- oder Grössenänderungen markieren das Dokument weiterhin als geändert und werden im Sitzungscache gespeichert. Text-Zoom und native Schriftmetriken aus V1.4.1 bleiben erhalten.
+- Die Menü-Reihenfolge lautet jetzt **Einstellungen → Datei → Bearbeiten → Ansicht → Hilfe**.
+- **Einstellungen → Tastenkürzel** öffnet eine eigene Einstellungsseite als Tab. Befehl auswählen, im Aufnahmefeld eine Kombination drücken, **Zuweisen**, anschliessend **Für alle Fenster übernehmen**.
+- Bestehende Ctrl-/Cmd-Befehle und zusätzliche Aktionen für Vergleich, Zoom und Split View lassen sich belegen. Alt- und Funktionstasten sind ebenfalls möglich. Doppelte Belegungen werden benannt; einzelne Belegungen lassen sich entfernen und die Standardbelegung wiederherstellen.
+- Die Einstellungen werden lokal in `shortcuts.json` neben den übrigen Einstellungen gespeichert. Menü- und Tab-Kontextmenü-Hinweise verwenden die aktuelle Belegung. Nicht mehr zugewiesene frühere Standardkombinationen lösen im Texteditor nicht heimlich die alte Funktion aus.
+- Die allgemeinen Tastenkürzel gelten für Editor-Befehle; Eingabefelder behalten ihre normale Zwischenablage-Bedienung. Systemweit reservierte Kombinationen können vom Betriebssystem abgefangen werden. Das Aufnahmefeld fängt eigene neue Kombinationen ab, ohne dabei den Editor-Befehl auszuführen.
 
-## Sync-Countdown in der Statusleiste
+## Vergleich schliessen und stoppen
 
-- Synchronisierte Dokumente zeigen unten **Sync in 5 s**, dann die verbleibenden Sekunden nach der letzten Eingabe. Jede weitere Änderung beginnt die Schreibpause erneut.
-- Nach Ablauf erscheint der tatsächliche Abgleichstatus: ausstehende Freigabe, Übertragung/Bestätigung ausstehend, Warten auf einen offline Client, pausierter Sync oder Versionskonflikt.
-- **Synchronisiert** wird erst angezeigt, wenn die aktuelle Revision von allen aktiven Teilnehmern durch deren Versionsmeldung beziehungsweise Empfangsbestätigung bestätigt wurde. Zuletzt bestätigte Stände mit inzwischen offline befindlichen Clients werden entsprechend bezeichnet.
-- Der Countdown ist die lokale Schreibpause, keine Garantie für die Ankunft beim Empfänger nach exakt fünf Sekunden. Offline-Geräte, Freigaben und laufende Übertragungen können den anschliessenden Abgleich verzögern.
-- Für den Countdown läuft nur während einer sichtbaren Schreibpause ein gemeinsamer Sekunden-Timer. Versteckte Tabs und der Tray erhalten keinen zusätzlichen dauerhaften Countdown-Timer.
+- Die rechte Vergleichsansicht besitzt eine gestaltete Kopfzeile mit **Datei öffnen**, **Vergleichen**, **Stopp** und einem **X** zum Schliessen.
+- **Stopp** beendet den aktiven Vergleich beziehungsweise entfernt die Vergleichsmarkierungen. Beide Texte bleiben erhalten. Laufende Berechnungsergebnisse werden nach einem Stopp ignoriert; die Hintergrundberechnung prüft Abbruchpunkte und behält das bestehende Zeitlimit von zwei Sekunden für den eigentlichen Diff-Schritt.
+- **X** schliesst die Vergleichsansicht, stoppt den Vergleich und gibt den Platz dem linken Text zurück. Der rechte Text bleibt im Tab und Sitzungscache erhalten und erscheint beim erneuten Öffnen wieder.
+- Späte Ergebnisse eines gestoppten, verschobenen oder erneut gestarteten Vergleichs überschreiben die aktuelle Ansicht nicht.
 
-## Neues Tab-Kontextmenü
+## Split View zusammenführen
 
-- Rechtsklick auf einen Datei-Tab öffnet ein eigenes Menü mit abgerundeten Zeilen, Akzentfarbe, klaren Gruppen und Tastenkürzel-Hinweisen, passend zum übrigen Editor.
-- Dateiaktionen, Senden/Sync und Tab-Aktionen sind gegliedert. Sprache und Split View besitzen eigene übersichtliche Unterseiten.
-- Bedienung per Maus oder Pfeiltasten; Enter wählt, Escape beziehungsweise ein Klick ausserhalb schliesst das Menü. Einstellungs-Tabs zeigen nur die passenden Tab-Aktionen.
+- **Ansicht → Split View → Zusammenführen** und das Tab-Kontextmenü führen die beiden Seiten wieder zu einer Ansicht mit gemeinsamer Tab-Liste zusammen.
+- Dokumente werden mit ihren bestehenden Editor-Widgets verschoben: Inhalte, Bilder, Undo-Zustand, Zoom, Dateipfade und Sync-Zuordnungen bleiben erhalten. Unbenutzte leere Start-Tabs und doppelte Einstellungs-Tabs werden entfernt. Laufende Vergleiche in verschobenen Tabs werden gestoppt.
+- **Als zwei Fenster weiterführen** bleibt als eigene Aktion verfügbar. Damit sind Zusammenführen und Trennen in zwei Fenster ausdrücklich getrennt wählbar.
+
+## Linux / Nobara: Anheften an die Taskleiste
+
+- Fenster verwenden jetzt eine feste EditorTool-Kennung, passend zu `StartupWMClass` und dem Desktop-Dateinamen. RPM, DEB und Flatpak verwenden dieselbe Desktop-Identität für die Zuordnung in der Taskleiste.
+- Portable Linux-Versionen legen beim Start einen Benutzer-Launcher und das Icon im XDG-Datenverzeichnis an, sofern keine passende Paketinstallation vorhanden ist. Ein eigener alter portabler Launcher wird bei Wechsel zur Paketinstallation entfernt. Fremde benutzerdefinierte Launcher werden nicht überschrieben.
+- Nach dem Update alle EditorTool-Fenster beenden, neu starten und den laufenden Editor erneut anheften. Ein alter Eintrag mit der früheren Fensterkennung muss gegebenenfalls einmal entfernt werden. Unter Wayland verwendet die App weiterhin XWayland.
 
 ## Pakete und Hinweise
 
 Windows Setup-EXE und portables ZIP; Linux Flatpak, RPM, DEB und portables TAR.GZ; macOS DMG und App-ZIP. Jeweils **x64 und ARM64**, dazu `SHA256SUMS.txt`.
 
-Die hybride Verschlüsselung aus V1.4.1 bleibt erhalten: TLS 1.3, AES-256-GCM und X25519 + ML-KEM-768 für Senden/Sync, mit klassischen bestätigten Gerätesignaturen. V1.4.5 verwendet das gleiche Freigabe-/Sync-Protokoll wie V1.4.1. Für die neue Anzeige und Bildstabilisierung die betreffenden Geräte aktualisieren.
+Alle Funktionen aus V1.4.5 einschliesslich Sync-Countdown, stabilisierter Bildansichten und hybrider TLS-Verschlüsselung bleiben enthalten.
 
-Auf Wunsch wurden **keine automatisierten, interaktiven oder Installationstests** ausgeführt. Pakete ohne Entwicklerzertifikate; macOS mit Ad-hoc-Signatur ohne Notarisierung. Lizenz: **The Unlicense** für Projektdateien; Drittanbieter behalten ihre Lizenzen.
+Auf Wunsch **keine automatisierten, interaktiven oder Installationstests**. Die Änderungen für Nobara wurden implementiert und für Linux paketiert, aber nicht in einer laufenden Desktop-Sitzung geprüft. Pakete ohne Entwicklerzertifikate; macOS mit Ad-hoc-Signatur ohne Notarisierung. Projektlizenz: **The Unlicense**; Drittanbieter behalten ihre Lizenzen.

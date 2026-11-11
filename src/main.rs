@@ -2,6 +2,8 @@
 mod caret;
 mod chrome;
 mod core;
+#[cfg(target_os = "linux")]
+mod desktop;
 mod ipc;
 mod peer;
 mod preferences;
@@ -10,6 +12,7 @@ mod session;
 mod settings_page;
 mod sharing_runtime;
 mod sharing_ui;
+mod shortcuts;
 mod split;
 mod syntax;
 mod tab_menu;
@@ -20,7 +23,7 @@ use rich::RichEditor;
 use syntax::Language;
 type SyntaxKey = (u64, u64, Language, Language);
 
-use crate::core::{compare, pattern, Comparison, Counts};
+use crate::core::{pattern, Comparison, Counts};
 use fltk::{
     app,
     button::Button,
@@ -97,6 +100,8 @@ enum Action {
     ShowFind(bool),
     ToggleReplace,
     Settings,
+    KeyboardSettings,
+    KeyboardApply(Vec<shortcuts::Binding>),
     Zoom(i32),
     ImageAutoSize(bool),
     TabContext(usize, i32, i32),
@@ -104,6 +109,9 @@ enum Action {
     CloseOtherTabs,
     Split(bool),
     EndSplit,
+    MergeSplit,
+    StopCompare,
+    CloseCompare,
     RelayoutSplit,
     MoveTab(usize),
     Undo,
@@ -115,7 +123,7 @@ enum Action {
     ReplaceAll,
     Compare,
     ToggleCompare,
-    Compared(usize, u64, Comparison),
+    Compared(String, u64, (u64, u64), Comparison),
     SetLanguage(Option<Language>),
     SyntaxRequest(usize),
     SyntaxReady(usize, SyntaxKey, Option<String>, Option<String>),
@@ -157,6 +165,12 @@ struct Document {
     status_key: String,
     report: String,
     comparing: bool,
+    compare_generation: u64,
+    compare_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    compare_open: Button,
+    compare_run: Button,
+    compare_stop: Button,
+    compare_close: Button,
     path: Option<PathBuf>,
     saved_revision: u64,
     comparison_visible: bool,
@@ -229,10 +243,10 @@ impl Document {
     }
     fn title(&self) -> String {
         if self.page != 0 {
-            return if self.page == 1 {
-                "Einstellungen"
-            } else {
-                "Clients und Sync"
+            return match self.page {
+                1 => "Einstellungen",
+                2 => "Clients und Sync",
+                _ => "Tastenkürzel",
             }
             .into();
         }
@@ -254,7 +268,39 @@ impl Document {
             if self.dirty() { " *" } else { "" }
         )
     }
+    fn stop_comparison(&mut self) {
+        if let Some(cancel) = self.compare_cancel.take() {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        self.compare_generation = self.compare_generation.wrapping_add(1);
+        self.comparing = false;
+        self.clear_styles();
+        self.report = "Vergleich beendet".into();
+    }
+    fn rewire_comparison(&mut self, wid: usize, tx: app::Sender<Message>) {
+        self.compare_open.emit(tx, (wid, Action::Open(true)));
+        self.compare_run.emit(tx, (wid, Action::Compare));
+        self.compare_stop.emit(tx, (wid, Action::StopCompare));
+        self.compare_close.emit(tx, (wid, Action::CloseCompare));
+        if self.comparing {
+            self.stop_comparison();
+        }
+    }
     fn refresh(&mut self) {
+        if self.comparing || self.compared.is_some() {
+            self.compare_stop.activate();
+            self.compare_stop.set_label_color(FG);
+        } else {
+            self.compare_stop.deactivate();
+            self.compare_stop.set_label_color(MUTED);
+        }
+        if self.comparing {
+            self.compare_run.deactivate();
+            self.compare_run.set_label("Läuft…");
+        } else {
+            self.compare_run.activate();
+            self.compare_run.set_label("Vergleichen");
+        }
         let rev = (
             self.left_meta.borrow().revision,
             self.right_meta.borrow().revision,
@@ -333,6 +379,7 @@ struct EditorWindow {
     area: Group,
     find: chrome::SearchPanel,
     settings: chrome::SettingsPanel,
+    menu: MenuBar,
     docs: Vec<Document>,
     active: usize,
     next_doc: usize,
@@ -426,6 +473,21 @@ impl EditorWindow {
         menu.set_text_size(13);
         menu.set_text_color(MUTED);
         let entries = [
+            (
+                "&Einstellungen/Allgemein…",
+                Shortcut::Command | ',',
+                Action::Settings,
+            ),
+            (
+                "&Einstellungen/Clients und Sync…",
+                Shortcut::None,
+                Action::SharingSettings,
+            ),
+            (
+                "&Einstellungen/Tastenkürzel…",
+                Shortcut::None,
+                Action::KeyboardSettings,
+            ),
             ("&Datei/Neuer &Tab", Shortcut::Command | 't', Action::NewTab),
             (
                 "&Datei/Neues &Fenster",
@@ -508,16 +570,6 @@ impl EditorWindow {
                 Action::Find,
             ),
             (
-                "&Einstellungen/Allgemein…",
-                Shortcut::Command | ',',
-                Action::Settings,
-            ),
-            (
-                "&Einstellungen/Clients und Sync…",
-                Shortcut::None,
-                Action::SharingSettings,
-            ),
-            (
                 "&Ansicht/Zoom/Vergrössern",
                 Shortcut::Command | '+',
                 Action::Zoom(10),
@@ -548,23 +600,6 @@ impl EditorWindow {
                 Action::Open(true),
             ),
         ];
-        menu.add_emit(
-            "&Hilfe/Nach Updates suchen…",
-            Shortcut::Command | Shortcut::Shift | 'u',
-            MenuFlag::Normal,
-            tx,
-            (wid, Action::CheckUpdates(true)),
-        );
-        for (label, action) in [
-            ("&Ansicht/Split View/Nebeneinander", Action::Split(false)),
-            ("&Ansicht/Split View/Übereinander", Action::Split(true)),
-            (
-                "&Ansicht/Split View/Als zwei Fenster weiterführen",
-                Action::EndSplit,
-            ),
-        ] {
-            menu.add_emit(label, Shortcut::None, MenuFlag::Normal, tx, (wid, action));
-        }
         for (label, shortcut, action) in entries {
             menu.add_emit(label, shortcut, MenuFlag::Normal, tx, (wid, action));
         }
@@ -598,6 +633,27 @@ impl EditorWindow {
                 (wid, Action::SetLanguage(Some(language))),
             );
         }
+        for (label, action) in [
+            ("&Ansicht/Split View/Nebeneinander", Action::Split(false)),
+            ("&Ansicht/Split View/Übereinander", Action::Split(true)),
+            ("&Ansicht/Split View/Zusammenführen", Action::MergeSplit),
+            (
+                "&Ansicht/Split View/Als zwei Fenster weiterführen",
+                Action::EndSplit,
+            ),
+            ("&Ansicht/Vergleich stoppen", Action::StopCompare),
+            ("&Ansicht/Vergleich schliessen", Action::CloseCompare),
+        ] {
+            menu.add_emit(label, Shortcut::None, MenuFlag::Normal, tx, (wid, action));
+        }
+        menu.add_emit(
+            "&Hilfe/Nach Updates suchen…",
+            Shortcut::Command | Shortcut::Shift | 'u',
+            MenuFlag::Normal,
+            tx,
+            (wid, Action::CheckUpdates(true)),
+        );
+        shortcuts::apply_menu(&mut menu);
         for (glyph, tooltip, action) in [
             (
                 theme::Icon::Search,
@@ -701,6 +757,7 @@ impl EditorWindow {
             area,
             find,
             settings,
+            menu,
             docs: vec![],
             active: 0,
             next_doc: 0,
@@ -716,6 +773,7 @@ impl EditorWindow {
         result.layout_tabs(vertical);
         result.add_tab(wid, tx);
         result.wire_root(wid);
+        result.refresh_shortcuts();
         if show {
             result.win.show();
             chrome::dark_title(&result.win);
@@ -723,6 +781,26 @@ impl EditorWindow {
         result
     }
 
+    fn refresh_shortcuts(&mut self) {
+        shortcuts::apply_menu(&mut self.menu);
+        if let Some(row) = self.root.child(0).and_then(|w| w.as_group()) {
+            for i in 0..row.children() {
+                if let Some(mut child) = row.child(i) {
+                    if let Some(hint) = child.tooltip() {
+                        if hint.starts_with("Suchen") {
+                            child.set_tooltip(&format!(
+                                "Suchen ({})",
+                                shortcuts::hint(shortcuts::Command::Find)
+                            ));
+                        } else if hint.starts_with("Vergleich") {
+                            let key = shortcuts::hint(shortcuts::Command::ToggleCompare);
+                            child.set_tooltip(&format!("Vergleich ein/aus ({key})"));
+                        }
+                    }
+                }
+            }
+        }
+    }
     fn layout_tabs(&mut self, vertical: bool) {
         self.vertical = vertical;
         self.settings.set_orientation(vertical);
@@ -785,21 +863,39 @@ impl EditorWindow {
         let mut rightcol = Flex::default().column();
         rightcol.set_color(BG);
         rightcol.set_spacing(12);
-        let mut controls = Flex::default().row();
-        controls.set_spacing(8);
-        controls.set_color(BG);
-        button(
-            "Vergleichstext öffnen",
-            168,
-            &mut controls,
-            Action::Open(true),
-            wid,
-            tx,
-        );
-        button("Vergleichen", 100, &mut controls, Action::Compare, wid, tx);
-        Frame::default();
+        let mut controls = Flex::default().column();
+        controls.set_color(PANEL);
+        controls.set_frame(FrameType::RFlatBox);
+        controls.set_margins(8, 4, 8, 4);
+        controls.set_spacing(4);
+        let mut header = Flex::default().row();
+        header.set_spacing(6);
+        theme::heading("Vergleich", 14);
+        let mut compare_stop = Button::default().with_label("Stopp");
+        theme::button(&mut compare_stop, false, None);
+        compare_stop.emit(tx, (wid, Action::StopCompare));
+        header.fixed(&compare_stop, 64);
+        compare_stop.deactivate();
+        compare_stop.set_label_color(MUTED);
+        let mut compare_close = Button::default();
+        theme::button(&mut compare_close, false, Some(theme::Icon::Close));
+        compare_close.set_tooltip("Vergleich schliessen – Text bleibt erhalten");
+        compare_close.emit(tx, (wid, Action::CloseCompare));
+        header.fixed(&compare_close, 28);
+        header.end();
+        controls.fixed(&header, 30);
+        let mut row = Flex::default().row();
+        row.set_spacing(6);
+        let mut compare_open = Button::default().with_label("Datei öffnen…");
+        theme::button(&mut compare_open, false, None);
+        compare_open.emit(tx, (wid, Action::Open(true)));
+        let mut compare_run = Button::default().with_label("Vergleichen");
+        theme::button(&mut compare_run, true, None);
+        compare_run.emit(tx, (wid, Action::Compare));
+        row.end();
+        controls.fixed(&row, 32);
         controls.end();
-        rightcol.fixed(&controls, 36);
+        rightcol.fixed(&controls, 78);
         let (right, right_buf, right_meta) = editor(target_right.clone(), true);
         rightcol.end();
         rightcol.hide();
@@ -843,6 +939,12 @@ impl EditorWindow {
             status_text: String::new(),
             status_key: String::new(),
             comparing: false,
+            compare_generation: 0,
+            compare_cancel: None,
+            compare_open,
+            compare_run,
+            compare_stop,
+            compare_close,
             report: "UTF-8 · Nur Text".into(),
             path: None,
             saved_revision: 0,
@@ -916,7 +1018,11 @@ impl EditorWindow {
             d.left.reflow();
             d.right.reflow();
             d.refresh();
-            if d.compared.is_none() && !d.syntax_pending && d.syntax_key != Some(d.syntax_key()) {
+            if !d.comparing
+                && d.compared.is_none()
+                && !d.syntax_pending
+                && d.syntax_key != Some(d.syntax_key())
+            {
                 d.syntax_pending = true;
                 let id = d.id;
                 app::add_timeout3(0.25, move |_| tx.send((wid, Action::SyntaxRequest(id))));
@@ -1168,6 +1274,8 @@ impl EditorWindow {
                     | Action::SetLanguage(_)
                     | Action::Compare
                     | Action::ToggleCompare
+                    | Action::StopCompare
+                    | Action::CloseCompare
                     | Action::Open(true)
                     | Action::Zoom(_)
             ) {
@@ -1299,7 +1407,7 @@ impl EditorWindow {
             }
             Action::SyntaxRequest(id) => {
                 if let Some(d) = self.docs.iter_mut().find(|d| d.id == id) {
-                    if d.compared.is_some() {
+                    if d.comparing || d.compared.is_some() {
                         d.syntax_pending = false;
                         return;
                     }
@@ -1334,7 +1442,7 @@ impl EditorWindow {
             Action::SyntaxReady(id, key, left, right) => {
                 if let Some(d) = self.docs.iter_mut().find(|d| d.id == id) {
                     d.syntax_pending = false;
-                    if d.compared.is_some() || key != d.syntax_key() {
+                    if d.comparing || d.compared.is_some() || key != d.syntax_key() {
                         return;
                     }
                     for (ed, meta, text) in [
@@ -1469,35 +1577,44 @@ impl EditorWindow {
                     self.find.feedback.set_label(&self.docs[self.active].report);
                 }
             }
+            Action::StopCompare => self.docs[self.active].stop_comparison(),
+            Action::CloseCompare => self.show_compare(false),
             Action::Compare => {
                 self.show_compare(true);
                 let d = &mut self.docs[self.active];
-                let id = d.id;
                 if d.comparing {
                     return;
                 }
+                d.stop_comparison();
                 d.comparing = true;
-                let revision = d
-                    .left_meta
-                    .borrow()
-                    .revision
-                    .wrapping_mul(1_000_000_007)
-                    .wrapping_add(d.right_meta.borrow().revision);
+                let generation = d.compare_generation;
+                let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                d.compare_cancel = Some(cancel.clone());
+                let key = d.cache_key.clone();
+                let revisions = (
+                    d.left_meta.borrow().revision,
+                    d.right_meta.borrow().revision,
+                );
                 let left = d.left_buf.text();
                 let right = d.right_buf.text();
                 d.report = "Vergleich läuft …".into();
                 std::thread::spawn(move || {
-                    tx.send((wid, Action::Compared(id, revision, compare(&left, &right))));
+                    if let Some(result) = core::compare_interruptible(&left, &right, &cancel) {
+                        tx.send((wid, Action::Compared(key, generation, revisions, result)));
+                    }
                 });
             }
-            Action::Compared(id, revision, result) => {
-                if let Some(d) = self.docs.iter_mut().find(|d| d.id == id) {
+            Action::Compared(key, generation, revisions, result) => {
+                if let Some(d) = self.docs.iter_mut().find(|d| {
+                    d.cache_key == key && d.compare_generation == generation && d.comparing
+                }) {
                     d.comparing = false;
+                    d.compare_cancel = None;
                     let rev = (
                         d.left_meta.borrow().revision,
                         d.right_meta.borrow().revision,
                     );
-                    if rev.0.wrapping_mul(1_000_000_007).wrapping_add(rev.1) != revision {
+                    if rev != revisions {
                         d.report = "Text verändert – bitte erneut vergleichen".into();
                         return;
                     }
@@ -1548,8 +1665,10 @@ impl EditorWindow {
         if show {
             d.rightcol.show();
         } else {
+            d.stop_comparison();
             d.rightcol.hide();
             d.target_right.set(false);
+            d.left.take_focus().ok();
         }
         d.panes.recalc();
         d.group.recalc();
@@ -1661,7 +1780,7 @@ impl EditorWindow {
             let d = &mut self.docs[index];
             d.id = tab.id;
             d.cache_key = tab.key.clone();
-            d.page = tab.page.min(2);
+            d.page = tab.page.min(3);
             if d.page != 0 {
                 d.panes.hide();
                 d.status.hide();
@@ -1781,6 +1900,7 @@ struct Runtime {
     update_release: Option<updater::Release>,
     sharing: Option<peer::Service>,
     clients: sharing_ui::Clients,
+    keyboard: shortcuts::Panel,
     transfer: sharing_ui::Transfer,
     conflicts: sharing_ui::Conflicts,
     share_timers: std::collections::HashMap<String, sharing_runtime::Pending>,
@@ -1865,6 +1985,7 @@ impl Runtime {
                 | Action::MoveTab(_)
                 | Action::Split(_)
                 | Action::EndSplit
+                | Action::MergeSplit
                 | Action::QuitAll
                 | Action::UpdateDownloaded(_)
         ) {
@@ -2150,6 +2271,30 @@ impl Runtime {
             Action::Split(stacked) => self.open_split(wid, stacked),
             Action::MoveTab(index) => self.move_tab(wid, index),
             Action::EndSplit => self.end_split(wid),
+            Action::MergeSplit => self.merge_split(wid),
+            Action::KeyboardSettings => {
+                self.keyboard.reload();
+                self.open_keyboard_tab(wid);
+            }
+            Action::KeyboardApply(values) => match shortcuts::save(&self.config, values) {
+                Ok(()) => {
+                    for w in self.windows.iter_mut().flatten() {
+                        w.refresh_shortcuts();
+                    }
+                    self.keyboard.reload();
+                }
+                Err(e) => {
+                    let owner = self.windows.iter().flatten().next().map(|w| w.win.clone());
+                    chrome::decision(
+                        owner.as_ref(),
+                        "Tastenkürzel nicht gespeichert",
+                        &e,
+                        "",
+                        &["Schliessen"],
+                        0,
+                    );
+                }
+            },
             Action::RelayoutSplit => self.layout_splits(),
             Action::CloseWindow => self.close_editor_window(wid),
             other => {
@@ -2248,10 +2393,18 @@ fn mac_open_file(path: *const std::ffi::c_char) {
 }
 
 fn main() {
+    app::keyboard_screen_scaling(false);
     let _app = app::App::default().with_scheme(app::Scheme::Base);
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let config = settings_path();
     preferences::load(&config);
+    if let Err(e) = shortcuts::load(&config) {
+        dialog::alert_default(&format!("Tastenkürzel konnten nicht geladen werden: {e}"));
+    }
+    #[cfg(target_os = "linux")]
+    if let Err(e) = desktop::integrate() {
+        dialog::alert_default(&format!("Desktop-Integration: {e}"));
+    }
     theme::init();
     let vertical = preferences::get().vertical;
     let (tx, rx) = app::channel::<Message>();
@@ -2329,6 +2482,7 @@ fn main() {
         update_release: None,
         sharing,
         clients: sharing_ui::Clients::new(tx),
+        keyboard: shortcuts::Panel::new(tx),
         transfer: sharing_ui::Transfer::new(tx),
         conflicts: sharing_ui::Conflicts::new(tx),
         share_timers: Default::default(),

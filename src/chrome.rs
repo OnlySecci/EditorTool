@@ -13,6 +13,8 @@ use fltk::{
 use std::{cell::Cell, rc::Rc};
 
 pub fn set_icon(win: &mut Window) {
+    #[cfg(target_os = "linux")]
+    win.set_xclass(crate::desktop::APP_ID);
     if let Ok(icon) = RgbImage::new(
         include_bytes!("../assets/editortool.rgba"),
         64,
@@ -389,11 +391,11 @@ impl SettingsPanel {
     pub fn new(wid: usize, tx: app::Sender<Message>, vertical: bool) -> Self {
         Group::set_current(None::<&Group>);
         let mut win = Window::default()
-            .with_size(560, 760)
+            .with_size(560, 810)
             .with_label("Einstellungen — EditorTool");
         win.set_color(PANEL);
         set_icon(&mut win);
-        let mut root = Flex::new(24, 20, 512, 720, None).column();
+        let mut root = Flex::new(24, 20, 512, 770, None).column();
         root.set_spacing(12);
         let title = theme::heading("Einstellungen", 23);
         root.fixed(&title, 34);
@@ -456,6 +458,10 @@ impl SettingsPanel {
         theme::button(&mut clients, false, None);
         clients.emit(tx, (wid, Action::SharingSettings));
         root.fixed(&clients, 32);
+        let mut keyboard = Button::default().with_label("Tastenkürzel anpassen…");
+        theme::button(&mut keyboard, false, None);
+        keyboard.emit(tx, (wid, Action::KeyboardSettings));
+        root.fixed(&keyboard, 32);
         let mut footer = Frame::default().with_label(concat!(
             "Wird für alle Fenster gespeichert.     ·     ",
             env!("CARGO_PKG_VERSION")
