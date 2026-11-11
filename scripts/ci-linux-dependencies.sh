@@ -47,4 +47,4 @@ apt_options=(
 )
 sudo --preserve-env=http_proxy,https_proxy,no_proxy apt-get "${apt_options[@]}" update
 sudo apt-cache "${apt_options[@]}" policy "$@"
-sudo --preserve-env=http_proxy,https_proxy,no_proxy apt-get "${apt_options[@]}" install -y "$@"
+sudo --preserve-env=http_proxy,https_proxy,no_proxy apt-get "${apt_options[@]}" install --no-install-recommends -y "$@"
