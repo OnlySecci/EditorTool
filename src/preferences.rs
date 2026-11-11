@@ -4,6 +4,7 @@ use std::{cell::Cell, path::Path};
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preferences {
+    pub keep_in_tray: bool,
     pub vertical: bool,
     pub wrap: bool,
     pub design: u8,
@@ -16,6 +17,7 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self {
+            keep_in_tray: false,
             vertical: false,
             wrap: false,
             design: 0,

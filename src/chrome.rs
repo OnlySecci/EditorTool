@@ -289,11 +289,11 @@ impl SettingsPanel {
     pub fn new(wid: usize, tx: app::Sender<Message>, vertical: bool) -> Self {
         Group::set_current(None::<&Group>);
         let mut win = Window::default()
-            .with_size(560, 640)
+            .with_size(560, 680)
             .with_label("Einstellungen — EditorTool");
         win.set_color(PANEL);
         set_icon(&mut win);
-        let mut root = Flex::new(24, 20, 512, 600, None).column();
+        let mut root = Flex::new(24, 20, 512, 640, None).column();
         root.set_spacing(12);
         let title = theme::heading("Einstellungen", 23);
         root.fixed(&title, 34);
@@ -352,6 +352,10 @@ impl SettingsPanel {
         theme::button(&mut check_now, false, None);
         check_now.emit(tx, (wid, Action::CheckUpdates(true)));
         root.fixed(&check_now, 32);
+        let mut clients = Button::default().with_label("Clients, Senden und Sync…");
+        theme::button(&mut clients, false, None);
+        clients.emit(tx, (wid, Action::SharingSettings));
+        root.fixed(&clients, 32);
         let mut footer = Frame::default().with_label(concat!(
             "Wird für alle Fenster gespeichert.     ·     ",
             env!("CARGO_PKG_VERSION")

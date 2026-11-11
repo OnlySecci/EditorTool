@@ -6,6 +6,7 @@ command: editortool
 finish-args:
   - --share=network
   - --talk-name=org.freedesktop.Flatpak
+  - --talk-name=org.kde.StatusNotifierWatcher
   - --socket=x11
   - --share=ipc
   - --device=dri

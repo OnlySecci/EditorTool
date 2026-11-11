@@ -27,6 +27,7 @@ cat > "$bundle/Info.plist" <<PLIST
 <key>CFBundleShortVersionString</key><string>$version</string>
 <key>CFBundleDocumentTypes</key><array><dict><key>CFBundleTypeName</key><string>EditorTool Document</string><key>CFBundleTypeRole</key><string>Editor</string><key>CFBundleTypeExtensions</key><array><string>etdoc</string></array></dict></array>
 <key>NSHighResolutionCapable</key><true/>
+<key>NSLocalNetworkUsageDescription</key><string>EditorTool sends and synchronizes documents with devices you approve on internal networks.</string>
 <key>NSHumanReadableCopyright</key><string>EditorTool contributors</string>
 </dict></plist>
 PLIST

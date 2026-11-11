@@ -1,5 +1,16 @@
 # Changelog
 
+## V1.4 — 2026-11-11
+
+- Opt-in private-network document transfer and multi-peer sync over pinned mutual TLS.
+- Configurable local/client TCP ports, client status and explicit device/document consent.
+- Five-second edit debounce, persistent outbox/inbox and offline reconciliation.
+- Causal device counters, content hashes and manual resolution of divergent versions.
+- Per-document local autosave with external-file change protection.
+- Optional native system tray continuation on Windows, Linux and macOS.
+- Build/package only; no tests run, as requested.
+
+
 ## V1.3 — 2026-11-11
 
 - Proportional image resizing with four draggable corner handles.

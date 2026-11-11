@@ -2,12 +2,16 @@
 mod chrome;
 mod core;
 mod ipc;
+mod peer;
 mod preferences;
 mod rich;
 mod session;
+mod sharing_runtime;
+mod sharing_ui;
 mod split;
 mod syntax;
 mod theme;
+mod tray;
 mod updater;
 use rich::RichEditor;
 use syntax::Language;
@@ -45,6 +49,24 @@ const ADD_TAB_SIZE: i32 = 30;
 
 #[derive(Clone)]
 enum Action {
+    SharingSettings,
+    ApplySharing,
+    KeepTray,
+    AddClient,
+    RemoveClient,
+    ProbeClients,
+    Transfer(bool),
+    SubmitTransfer,
+    StopSync,
+    ShowConflicts,
+    PreviewConflict,
+    ResolveConflict,
+    PeerEvent(peer::Event),
+    PublishDoc(String, u64),
+    InitTray,
+    TrayUnavailable,
+    ShowWindows,
+    QuitAll,
     NewWindow,
     NewTab,
     Select(usize),
@@ -130,6 +152,10 @@ struct Document {
     path: Option<PathBuf>,
     saved_revision: u64,
     comparison_visible: bool,
+    sharing: Option<peer::Binding>,
+    display_name: Option<String>,
+    received_offer: Option<String>,
+    share_revision: u64,
     cache_key: String,
     right_path: Option<PathBuf>,
     left_language: Option<Language>,
@@ -167,6 +193,9 @@ impl Document {
     }
     fn snapshot(&self) -> session::TabState {
         session::TabState {
+            sharing: self.sharing.clone(),
+            display_name: self.display_name.clone(),
+            received_offer: self.received_offer.clone(),
             key: self.cache_key.clone(),
             id: self.id,
             path: self.path.clone(),
@@ -190,6 +219,7 @@ impl Document {
                 .as_ref()
                 .and_then(|p| p.file_name())
                 .map(|s| s.to_string_lossy().into_owned())
+                .or_else(|| self.display_name.clone())
                 .unwrap_or_else(|| {
                     let preview = self.left_meta.borrow().preview.clone();
                     if preview.is_empty() {
@@ -761,6 +791,10 @@ impl EditorWindow {
             path: None,
             saved_revision: 0,
             comparison_visible: false,
+            sharing: None,
+            display_name: None,
+            received_offer: None,
+            share_revision: 0,
             cache_key: session::new_key(),
             right_path: None,
             left_language: None,
@@ -1021,6 +1055,9 @@ impl EditorWindow {
         };
         match std::fs::write(&path, content.as_bytes()) {
             Ok(()) => {
+                if let Some(b) = &mut d.sharing {
+                    b.disk_hash = Some(peer::hash(content.as_bytes()));
+                }
                 d.path = Some(path);
                 d.saved_revision = d.left_meta.borrow().revision;
                 d.report = "Gespeichert · UTF-8".into();
@@ -1051,6 +1088,9 @@ impl EditorWindow {
                     ("Speichern", Action::Save(false)),
                     ("Speichern unter…", Action::Save(true)),
                     ("Dateipfad kopieren", Action::CopyPath),
+                    ("Senden an Client…", Action::Transfer(false)),
+                    ("Synchronisieren…", Action::Transfer(true)),
+                    ("Sync-Versionen / Konflikte…", Action::ShowConflicts),
                     ("Tab schliessen", Action::CloseTab),
                     ("Andere Tabs schliessen", Action::CloseOtherTabs),
                     ("Alle Tabs schliessen", Action::CloseAllTabs),
@@ -1313,6 +1353,8 @@ impl EditorWindow {
                                 dialog::alert_default(&e);
                                 return;
                             }
+                            d.sharing = None;
+                            d.display_name = None;
                             d.path = Some(path);
                             d.left_language = None;
                             d.saved_revision = d.left_meta.borrow().revision;
@@ -1549,6 +1591,9 @@ impl EditorWindow {
             d.id = tab.id;
             d.cache_key = tab.key.clone();
             d.path = tab.path.clone();
+            d.sharing = tab.sharing.clone();
+            d.display_name = tab.display_name.clone();
+            d.received_offer = tab.received_offer.clone();
             d.right_path = tab.right_path.clone();
             d.left_language = tab.left_language;
             d.right_language = tab.right_language;
@@ -1582,6 +1627,15 @@ impl EditorWindow {
                 }
             }
             let revision = d.left_meta.borrow().revision;
+            d.share_revision = if d
+                .sharing
+                .as_ref()
+                .is_some_and(|b| peer::hash(d.left.cache_text().as_bytes()) != b.hash)
+            {
+                revision.wrapping_sub(1)
+            } else {
+                revision
+            };
             d.saved_revision = if tab.dirty {
                 revision.wrapping_sub(1)
             } else {
@@ -1646,6 +1700,14 @@ struct Runtime {
     updates: chrome::UpdatePanel,
     update_busy: bool,
     update_release: Option<updater::Release>,
+    sharing: Option<peer::Service>,
+    clients: sharing_ui::Clients,
+    transfer: sharing_ui::Transfer,
+    conflicts: sharing_ui::Conflicts,
+    share_timers: std::collections::HashMap<String, (u64, app::TimeoutHandle)>,
+    conflict_notified: std::collections::BTreeSet<String>,
+    tray: Option<tray::Native>,
+    quit_requested: bool,
 }
 impl Runtime {
     fn snapshot(&self) -> session::Snapshot {
@@ -1694,10 +1756,13 @@ impl Runtime {
         self.last_fingerprint = self.fingerprint();
     }
     fn update(&mut self) {
+        self.sharing_tick();
         self.layout_splits();
         for (id, w) in self.windows.iter_mut().enumerate() {
             if let Some(w) = w {
-                w.refresh(id, self.tx);
+                if w.win.shown() || w.embedded {
+                    w.refresh(id, self.tx);
+                }
             }
         }
         if self.cache_enabled
@@ -1710,6 +1775,10 @@ impl Runtime {
         }
     }
     fn handle(&mut self, wid: usize, action: Action) {
+        let action = match self.sharing_action(wid, action) {
+            Some(a) => a,
+            None => return,
+        };
         match action {
             Action::OpenExternal(paths) => {
                 let id = if let Some(index) = self.windows.iter().position(Option::is_some) {
@@ -1945,6 +2014,10 @@ impl Runtime {
                 });
                 match result {
                     Ok(()) => {
+                        self.quit_requested = true;
+                        if let Some(s) = &mut self.sharing {
+                            s.stop_listener();
+                        }
                         self.updates.win.hide();
                         for w in self.windows.iter_mut().flatten() {
                             w.find.win.hide();
@@ -2012,6 +2085,9 @@ mod shutdown {
     }
     pub fn hook(window: &Window, state: Weak<RefCell<Runtime>>) {
         let hwnd = window.raw_handle() as *mut c_void;
+        if WINDOWS.with(|w| w.borrow().contains_key(&(hwnd as usize))) {
+            return;
+        }
         let previous = unsafe { SetWindowLongPtrW(hwnd, -4, procedure as *const () as isize) };
         if previous != 0 {
             WINDOWS.with(|w| {
@@ -2076,7 +2152,7 @@ fn mac_open_file(path: *const std::ffi::c_char) {
 }
 
 fn main() {
-    let app = app::App::default().with_scheme(app::Scheme::Base);
+    let _app = app::App::default().with_scheme(app::Scheme::Base);
     let config = settings_path();
     preferences::load(&config);
     theme::init();
@@ -2132,6 +2208,13 @@ fn main() {
     if windows.is_empty() {
         windows.push(Some(EditorWindow::new(0, tx, vertical)));
     }
+    let sharing = match peer::Service::new(config.parent().unwrap().join("sharing"), tx) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            dialog::alert_default(&format!("Senden/Sync ist nicht verfügbar: {e}"));
+            None
+        }
+    };
     let state = Rc::new(RefCell::new(Runtime {
         windows,
         splits: vec![],
@@ -2147,6 +2230,14 @@ fn main() {
         updates: chrome::UpdatePanel::new(tx),
         update_busy: false,
         update_release: None,
+        sharing,
+        clients: sharing_ui::Clients::new(tx),
+        transfer: sharing_ui::Transfer::new(tx),
+        conflicts: sharing_ui::Conflicts::new(tx),
+        share_timers: Default::default(),
+        conflict_notified: Default::default(),
+        tray: None,
+        quit_requested: false,
     }));
     {
         let mut runtime = state.borrow_mut();
@@ -2172,8 +2263,23 @@ fn main() {
     } else if preferences::get().update_check {
         app::add_timeout3(1.2, move |_| tx.send((0, Action::CheckUpdates(false))));
     }
-    // Single-shot timers run only after changes. There is no periodic idle polling.
-    while app.wait() {
+    app::add_timeout3(0.1, move |_| tx.send((0, Action::InitTray)));
+    loop {
+        if state.borrow().quit_requested || app::should_program_quit() {
+            break;
+        }
+        let background = preferences::get().keep_in_tray && state.borrow().tray.is_some();
+        if !background
+            && !state
+                .borrow()
+                .windows
+                .iter()
+                .flatten()
+                .any(|w| !w.embedded && w.win.shown())
+        {
+            break;
+        }
+        let _ = app::wait_for(3600.0);
         while let Some((wid, action)) = rx.recv() {
             state.borrow_mut().handle(wid, action);
         }

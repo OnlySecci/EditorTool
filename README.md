@@ -8,6 +8,16 @@ Ein schlanker nativer Rust-Editor für **Text, Code und Bilder** — für Window
 
 *Hauptansicht aus V1.0 — vom Projektinhaber bereitgestellte Aufnahme.*
 
+## Neu in V1.4: Senden und Sync
+
+Unter **Einstellungen → Clients, Senden und Sync** interne IP-Adresse und Port anderer Geräte hinzufügen. Standard ist **TCP 51473**; der eigene Port und Client-Ports sind änderbar. Erst **Senden und Sync aktivieren** öffnet den Freigabe-Port. Verschlüsseltes gegenseitiges TLS mit beidseitig bestätigten Fingerabdrücken schützt die Verbindung. **Connected / Not connected** zeigt die Erreichbarkeit. Interne geroutete Netze und VPN sind möglich; öffentliche IP-Adressen werden abgelehnt. Firewalls müssen den gewählten TCP-Port erlauben. EditorTool ändert keine Firewall-Regeln.
+
+Über das **Tab-Kontextmenü** eine Datei an genau einen Client senden oder mit mehreren Clients synchronisieren. Jeder Empfänger nimmt die Anfrage selbst an oder lehnt sie ab. Text, Code und Bilder werden zusammen übertragen; lokale Pfade und rechte Vergleichstexte bleiben lokal. Änderungen werden nach **fünf Sekunden Schreibpause** bereitgestellt und im Hintergrund abgeglichen. Bei erneuter Erreichbarkeit werden Versionen nachgeholt. Versionszähler pro Gerät und Inhaltsprüfsummen erkennen konkurrierende Änderungen ohne Abhängigkeit von PC-Uhrzeiten. **Sync-Versionen / Konflikte** bietet Vorschau und manuelle Versionsauswahl; abweichende Inhalte bleiben im lokalen Versionsspeicher erhalten.
+
+**Automatisch in lokale Datei speichern** ist pro Dokument wählbar. Externe Dateiänderungen pausieren das automatische Speichern; bestehende Dateien werden dann nicht überschrieben. **Beim Schliessen im Tray weiterlaufen** ist separat wählbar, standardmässig aus. Ohne Linux-System-Tray bleibt das Fenster geöffnet; GNOME benötigt eventuell eine StatusNotifier-/AppIndicator-Erweiterung. Es gibt keinen installierten Systemdienst und keine Cloud.
+
+Maximal 64 MiB je Dokument und 32 Geräte je Sync-Gruppe. Geänderte Teilnehmerlisten starten eine neue Gruppe mit neuen Freigaben. Im lokalen `sharing`-Ordner liegen Geräteidentität, Anfragen und Inhaltsversionen unverschlüsselt auf der Festplatte; historische Inhalte werden nicht automatisch gelöscht. Details und Einrichtung stehen in den [Release Notes](RELEASE_NOTES.md).
+
 ## Neu in V1.3: Bilder und Split View
 
 Bilder anklicken und an einer Ecke proportional kleiner oder grösser ziehen. Standardmässig werden neu eingefügte Bilder auf höchstens 50 % der Textfeldbreite verkleinert; unter Einstellungen lässt sich dies abschalten. Die Anzeigegrösse wird gespeichert, die Originalbilddaten bleiben erhalten. Per Rechtsklick lassen sich Bilder an das Textfeld anpassen oder entfernen.
@@ -18,7 +28,7 @@ Rechtsklick auf einen Tab öffnet Speichern, Speichern unter, Sprache, Dateipfad
 
 Unter **Hilfe → Nach Updates suchen** werden neue stabile GitHub-Versionen und deren Release Notes angezeigt. **Jetzt aktualisieren** lädt das passende Paket, prüft SHA-256, sichert die Sitzung und startet Installation und App-Neustart. In den Einstellungen: Startprüfung an/aus, automatische Installation an/aus. Standard: Startprüfung an, automatische Installation aus. Die manuelle Prüfung funktioniert unabhängig davon.
 
-V1.2 einmal manuell installieren; danach lassen sich zukünftige Versionen aus der App aktualisieren. Windows unterstützt Setup und portable Installationen, Linux RPM/DEB/Flatpak und portable Programmdateien, macOS das App-Bundle. Systempakete oder geschützte App-Ordner können eine Berechtigungsabfrage des Betriebssystems auslösen. Flatpak erlaubt Netzwerkzugriff und einen Host-Aufruf für die Paketinstallation. Es wird nur beim Start beziehungsweise auf Wunsch geprüft; es gibt keinen ständig laufenden Dienst.
+V1.2 einmal manuell installieren; danach lassen sich zukünftige Versionen aus der App aktualisieren. Windows unterstützt Setup und portable Installationen, Linux RPM/DEB/Flatpak und portable Programmdateien, macOS das App-Bundle. Systempakete oder geschützte App-Ordner können eine Berechtigungsabfrage des Betriebssystems auslösen. Flatpak erlaubt Netzwerkzugriff und einen Host-Aufruf für die Paketinstallation. Es wird nur beim Start beziehungsweise auf Wunsch geprüft; die Update-Suche hat keinen ständig laufenden Dienst. Der optionale Tray-Modus gehört zur internen Dokumentfreigabe.
 
 Update-Pakete und Protokolle liegen unter `updates` im Einstellungsordner. macOS behält eine versteckte Sicherung des bisherigen App-Bundles im gleichen Ordner. Bei einem Fehler wird die bisherige App nach Möglichkeit erneut geöffnet; beim nächsten Start erscheint ein Hinweis. Prüfsummen ersetzen keine Herausgebersignatur.
 
@@ -99,7 +109,7 @@ Suchen, Ersetzen und **Ansicht → Sprache** arbeiten im zuletzt aktiven Textber
 
 ## Selbst bauen
 
-[Rust Stable](https://rustup.rs/) ab Version 1.89 installieren. `Cargo.lock` fixiert die Abhängigkeiten. Erste Builds benötigen Netzwerkzugang. Windows mit MSVC baut FLTK aus Quellen und benötigt zusätzlich CMake, Git und die Visual-C++-Werkzeuge für x64 beziehungsweise ARM64. Dazu `CARGO_BUILD_TARGET` auf `x86_64-pc-windows-msvc` beziehungsweise `aarch64-pc-windows-msvc` setzen.
+[Rust Stable](https://rustup.rs/) ab Version 1.90 installieren. `Cargo.lock` fixiert die Abhängigkeiten. Erste Builds benötigen Netzwerkzugang. Windows mit MSVC baut FLTK aus Quellen und benötigt zusätzlich CMake, Git und die Visual-C++-Werkzeuge für x64 beziehungsweise ARM64. Dazu `CARGO_BUILD_TARGET` auf `x86_64-pc-windows-msvc` beziehungsweise `aarch64-pc-windows-msvc` setzen.
 
 - Windows: `scripts/build-windows.ps1`, danach `scripts/package-windows.ps1 -PortableOnly`. Für lokale Setup-Builds einen vorhandenen NSIS-Compiler über `NSIS_COMPILER` angeben. GitHub erstellt Setup-EXEs mit dem NSIS-Cross-Compiler auf Linux.
 - Linux: C++-, X11-, Pango-, Cairo- und Fontconfig-Entwicklungspakete installieren; `bash scripts/build-linux.sh`, anschließend `package-linux.sh` beziehungsweise `package-flatpak.sh` aus `scripts/` ausführen. Die Paketwerkzeuge müssen vorhanden sein.
