@@ -1,32 +1,27 @@
-# EditorTool V1.4.9
+# EditorTool V1.5.0 – Release-Entwurf
 
-## Fenster und Sitzung
+Noch nicht veröffentlicht. Dieser Entwurf darf erst nach Einrichtung des dauerhaften Signierschlüssels und erfolgreichem Bau aller 16 Plattformpakete als Release veröffentlicht werden.
 
-- Zusätzlich geöffnete und danach geschlossene Fenster werden beim nächsten Start nicht mehr automatisch geöffnet. Das zuletzt geschlossene Hauptfenster bleibt als Startsitzung erhalten. Beim Beenden mit mehreren offenen Fenstern bleibt deren Anordnung erhalten.
-- **Datei → Geschlossenes Fenster wiederherstellen** holt zusätzliche geschlossene Fenster samt Text, Bildern und Tabs aus dem Cache zurück. Bis zu 20 Ansichten bleiben in dieser Liste; zusammengehörende Split-Ansichten werden gemeinsam behandelt.
-- Alte Sitzungscaches unterscheiden offene und geschlossene Fenster noch nicht. Falls beim ersten Start zusätzliche Fenster erscheinen, diese einmal schliessen; danach gilt die neue Wiederherstellung. Im optionalen Tray-Modus versteckt Schliessen weiterhin die laufenden Fenster.
+## Sicherheit
 
-## Flatpak-Updates
+Unabhängig signierte Ed25519-Update-Metadaten binden Version und alle Pakete an den fest eingebauten öffentlichen Schlüssel. Der Updater akzeptiert ausschliesslich neuere Versionen und prüft die Integrität beim Download, vor Übergabe und nochmals im Installationshelfer. Windows-/Apple-Zertifikate sind davon unabhängig weiterhin nicht vorhanden. Nutzer bis V1.4.9 erhalten den neuen Vertrauensschlüssel erst durch ein manuell vertrautes Upgrade; die alte Updateprüfung kann nachträglich nicht verbessert werden.
 
-- Benutzerinstallationen werden mit `--user` aktualisiert. Für systemweite Installationen ruft der Host-Helfer **Polkit (`pkexec`)** auf, damit der Desktop Administratorrechte abfragen kann. Der bisherige Installationsweg konnte mit „system operation installBundle not allowed for user“ abbrechen.
-- Der Neustart verwendet den passenden Benutzer-/Systembereich. Ein Polkit-Authentifizierungsagent auf dem Desktop wird benötigt; EditorTool speichert keine Administratorpasswörter.
-- Quellen: [Flatpak-Befehle](https://docs.flatpak.org/en/latest/flatpak-command-reference.html), [Polkit/pkexec](https://www.freedesktop.org/software/polkit/docs/latest/pkexec.1.html).
+Dateien werden vor dem Einlesen begrenzt, Bilder vor dem Decodieren geprüft. Grenzen: 64 MiB je Dokument, 32 MiB komprimiert je Bild, 40 Megapixel insgesamt, 32768 Pixel je Seite, 64 Bilder. Die Betriebssystem-Zwischenablage liefert möglicherweise bereits decodierte Daten; vor eigenen Kopien wird deren Grösse geprüft.
 
-## Diagnoseprotokoll
+Sitzungen und Instanzdaten sind lokal restriktiv geschützt; Instanz-Tokens sind kryptografisch zufällig. Sync-Verbindungen laufen höchstens 45 Sekunden, mit begrenzter Parallelität und 240 eingehenden Verbindungen je Minute und Gegenstellen-IP. TLS 1.3, AES-256-GCM, hybrider X25519+ML-KEM-768-Schlüsselaustausch und ausdrückliche Freigaben bleiben erhalten.
 
-- **Hilfe → Diagnoseprotokoll exportieren…** speichert eine lokale `.log`-Datei zum manuellen Anhängen an Problemmeldungen. Kein automatischer Upload.
-- Enthalten: Version und Plattform, Fenster-/Sitzungsereignisse, technische Sync-Ereignisse, Verbindungsfehler, Update-Phasen und Fehlerkategorien sowie verfügbare Ausschnitte des Installationsprotokolls.
-- Ereignisse enthalten keine Dokumenttexte, Bilder, Zwischenablage, Dateititel, Clientnamen, IP-Adressen, Schlüssel oder Tokens. Eigene Benutzerverzeichnisse im Installationsprotokoll werden durch `<HOME>` ersetzt. Dieses Protokoll kann technische Paketpfade und Betriebssystemmeldungen enthalten; die Exportdatei kann vor dem Teilen geprüft werden.
-- Lokale Logs im Unterordner `logs` der Einstellungen haben begrenzte Grösse und Anzahl. Keine Protokollierung pro Tastendruck und kein eigener Hintergrundtimer.
+## Speicher und Wiederherstellung
 
-## Dateipfad und Textbearbeitung
+Unter Einstellungen den belegten Speicher ansehen und verwaiste Tabs, ältere Dateistände oder Update-Dateien getrennt bereinigen. Aktuelle und vorige Sitzung, geschlossene Fenster und Sync-/Geräteidentitäten bleiben erhalten. Löschung ist endgültig und verspricht kein physisches Überschreiben.
 
-- Oberhalb gespeicherter Dokumente steht der Pfad einschliesslich Dateiname. Der Tooltip zeigt auch lange Pfade vollständig; die Zeile lässt sich horizontal bewegen.
-- Tab-Kontextmenü: **Dateipfad kopieren** und **Im Dateimanager anzeigen**. Windows/macOS markieren die Datei, Linux öffnet den Ordner.
-- **Bearbeiten → Rückgängig / Wiederholen**: Windows/Linux **Strg+Z / Strg+Y**, macOS **Cmd+Z / Cmd+Shift+Z**. Beide Befehle sind unter **Einstellungen → Tastenkürzel** anpassbar und verwenden den Textverlauf im aktiven Textabschnitt. Dieser Verlauf wird nicht über App-Neustarts gespeichert.
+Vor dem Überschreiben einer lokalen Datei wird ihr vorheriger Inhalt gesichert: zehn Stände bzw. 256 MiB je Dateipfad. Datei → Ältere Dateistände öffnet den gewählten Stand als neuen Tab, ohne den aktuellen Inhalt zu ersetzen. Historie liegt unverschlüsselt im Benutzerprofil und ist gezielt löschbar.
 
-## Pakete und Hinweise
+## Freigaben und Flatpak
 
-Windows Setup-EXE und portables ZIP; Linux Flatpak, RPM, DEB und portables TAR.GZ; macOS DMG und App-ZIP. Jeweils **x64 und ARM64**, dazu `SHA256SUMS.txt`.
+Die Berechtigungsübersicht zeigt Geräte, Fingerabdrücke, aktive Teilnehmer und ausstehende Sendungen. Gerätefreigabe und Dokumentzustimmung bleiben getrennt; beendeter Sync löscht keine fremden Kopien.
 
-Auf Wunsch nur gebaut und paketiert: **keine automatisierten, interaktiven oder Installationstests**. Pakete ohne Entwicklerzertifikate; macOS mit Ad-hoc-Signatur ohne Notarisierung. Projektlizenz: **The Unlicense**, Drittanbieter behalten ihre Lizenzen.
+Flatpak verwendet Dateiauswahl-Portale für Öffnen/Speichern, Bilder und Diagnoseexport; die globale Home-Freigabe entfällt. Alte Dateipfade gegebenenfalls erneut auswählen. Für `.etdoc` muss die Dateiendung bereits im Portal-Speicherdialog stimmen. Host-Zugriff für Flatpak-Updates, Netzwerk, X11 und Tray bleiben erforderlich.
+
+## Validierung und Veröffentlichung
+
+Keine Tests, App-Starts oder Installationstests. Linux-x64-Codeprüfung und Release-Build sowie Packaging werden protokolliert. Die übrigen nativen Builds müssen über GitHub Actions erfolgen. Eine vollständige Veröffentlichung erfordert 16 Pakete, SHA256SUMS.txt und die beiden signierten Metadaten-Dateien.

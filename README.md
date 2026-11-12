@@ -8,6 +8,20 @@ Ein schlanker nativer Rust-Editor für **Text, Code und Bilder** — für Window
 
 *Hauptansicht aus V1.0 — vom Projektinhaber bereitgestellte Aufnahme.*
 
+## V1.5.0 – in Vorbereitung
+
+**Noch nicht veröffentlicht.** Die Signierschlüssel-Einrichtung und die sechs nativen Plattform-Builds stehen aus.
+
+- Updates verwenden unabhängig signierte Ed25519-Metadaten mit einem fest eingebauten öffentlichen Schlüssel. Version, Paketname, Länge und SHA-256 werden geprüft; vor Installation erfolgt eine erneute Integritätsprüfung. Kein Rückfall auf unsignierte Prüfsummen. [Schlüsselverwaltung](docs/update-signing.md).
+- Dateien sind vor dem Einlesen auf 64 MiB begrenzt. Bilder: 32 MiB komprimiert, 40 Megapixel insgesamt je Dokument, 32768 Pixel je Seite und höchstens 64 Bilder. Auch empfangene Dokumente und Bild-Zwischenablagen werden vor weiteren Kopien und Decodierung geprüft. Die vom Betriebssystem bereits bereitgestellte Zwischenablage kann vorher ausserhalb der App decodiert worden sein.
+- Lokale Sitzung, Instanzdaten und Freigabespeicher erhalten restriktive Rechte; Instanz-Tokens stammen aus der kryptografischen Zufallsquelle. Sync-Verbindungen haben ein Gesamtzeitlimit von 45 Sekunden, höchstens zwei eingehende Übertragungen insgesamt und eine je Gegenstelle sowie 240 Verbindungsversuche je Minute und IP.
+- **Einstellungen → Speicher und Bereinigung** zeigt die belegte Grösse und erlaubt getrenntes Entfernen verwaister Tabs, älterer Dateistände und Update-Dateien. Aktuelle und vorige Sitzung, geschlossene Fenster, Geräteidentität und Sync-Versionen bleiben erhalten. Löschen ist endgültig; es ist kein physisches Überschreiben von SSD-/Dateisystemdaten.
+- **Datei → Ältere Dateistände** öffnet eine lokale Sicherung als neuen Tab. Vor jedem manuellen oder automatischen Überschreiben wird der vorige Dateiinhalt gesichert (höchstens zehn Stände bzw. 256 MiB je Dateipfad). Externe Änderungen ohne anschliessendes Speichern und umbenannte/verschobene Dateien haben keinen automatisch durchgehenden Verlauf. Versionen liegen unverschlüsselt im Einstellungsordner unter `history`.
+- **Einstellungen → Freigaben und Berechtigungen** zeigt Geräte, Fingerabdrücke, Sync-Teilnehmer und ausstehende Sendungen. Geräte- und Dokumentzustimmung bleiben getrennt; Sync kann für den aktuellen Tab beendet werden. Entfernte Kopien werden dadurch nicht gelöscht.
+- Flatpak nutzt das Dateiauswahl-Portal für Öffnen, Speichern, Bildeinfügen und Diagnoseexport. Die pauschale Home-Freigabe entfällt. Bereits im Cache gespeicherte Pfade müssen gegebenenfalls erneut über das Portal ausgewählt werden. Der Host-Aufruf bleibt für native Flatpak-Updates erforderlich; Netzwerk, X11 und Tray bleiben wie bisher freigegeben.
+
+Keine automatisierten, interaktiven oder Installationstests; die App wird während der Entwicklung nicht gestartet. Linux x64: Codeprüfung, Release-Build sowie Portable-/DEB-/RPM-Packaging sind erfolgreich. Die übrigen Plattformpakete und Flatpak stehen noch aus. Codeprüfung, Builds und Packaging erfolgen getrennt von einer Veröffentlichung.
+
 ## Neu in V1.4.9
 
 Geschlossene zusätzliche Fenster bleiben beim Neustart geschlossen und können über **Datei → Geschlossenes Fenster wiederherstellen** gezielt zurückgeholt werden. Das letzte Hauptfenster bleibt die Startsitzung. Systemweite Flatpak-Updates fragen Administratorrechte über Polkit ab.
@@ -62,7 +76,7 @@ Unter **Hilfe → Nach Updates suchen** werden neue stabile GitHub-Versionen und
 
 V1.2 einmal manuell installieren; danach lassen sich zukünftige Versionen aus der App aktualisieren. Windows unterstützt Setup und portable Installationen, Linux RPM/DEB/Flatpak und portable Programmdateien, macOS das App-Bundle. Systempakete oder geschützte App-Ordner können eine Berechtigungsabfrage des Betriebssystems auslösen. Flatpak erlaubt Netzwerkzugriff und einen Host-Aufruf für die Paketinstallation. Es wird nur beim Start beziehungsweise auf Wunsch geprüft; die Update-Suche hat keinen ständig laufenden Dienst. Der optionale Tray-Modus gehört zur internen Dokumentfreigabe.
 
-Update-Pakete und Protokolle liegen unter `updates` im Einstellungsordner. macOS behält eine versteckte Sicherung des bisherigen App-Bundles im gleichen Ordner. Bei einem Fehler wird die bisherige App nach Möglichkeit erneut geöffnet; beim nächsten Start erscheint ein Hinweis. Prüfsummen ersetzen keine Herausgebersignatur.
+Update-Pakete und Protokolle liegen unter `updates` im Einstellungsordner. macOS behält eine versteckte Sicherung des bisherigen App-Bundles im gleichen Ordner. Bei einem Fehler wird die bisherige App nach Möglichkeit erneut geöffnet; beim nächsten Start erscheint ein Hinweis. Bis V1.4.9 ersetzen Prüfsummen keine Herausgebersignatur. Ab V1.5.0 werden zusätzliche unabhängig signierte Update-Metadaten verlangt.
 
 ## Neu in V1.1
 

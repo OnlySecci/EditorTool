@@ -5,9 +5,12 @@ mod core;
 #[cfg(target_os = "linux")]
 mod desktop;
 mod diagnostics;
+mod file_dialog;
 mod ipc;
+mod limits;
 mod peer;
 mod preferences;
+mod private_fs;
 mod rich;
 mod session;
 mod settings_page;
@@ -15,6 +18,8 @@ mod sharing_runtime;
 mod sharing_ui;
 mod shortcuts;
 mod split;
+mod storage;
+mod storage_ui;
 mod syntax;
 mod tab_menu;
 mod theme;
@@ -56,6 +61,9 @@ const ADD_TAB_SIZE: i32 = 30;
 
 #[derive(Clone)]
 enum Action {
+    Storage,
+    FileHistory,
+    Permissions,
     SharingSettings,
     ApplySharing,
     KeepTray,
@@ -494,6 +502,21 @@ impl EditorWindow {
         menu.set_text_size(13);
         menu.set_text_color(MUTED);
         let entries = [
+            (
+                "&Einstellungen/Speicher und Bereinigung…",
+                Shortcut::None,
+                Action::Storage,
+            ),
+            (
+                "&Einstellungen/Freigaben und Berechtigungen…",
+                Shortcut::None,
+                Action::Permissions,
+            ),
+            (
+                "&Datei/Ältere Dateistände…",
+                Shortcut::None,
+                Action::FileHistory,
+            ),
             (
                 "&Einstellungen/Allgemein…",
                 Shortcut::Command | ',',
@@ -1255,8 +1278,11 @@ impl EditorWindow {
         let d = &mut self.docs[index];
         let mut path = if save_as || d.path.is_none() {
             let mut chooser =
-                dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseSaveFile);
+                file_dialog::Chooser::new(dialog::NativeFileChooserType::BrowseSaveFile);
             chooser.set_title("UTF-8-Text speichern");
+            if d.left.has_images() {
+                chooser.set_preset_file("Dokument.etdoc");
+            }
             chooser.set_option(dialog::NativeFileChooserOptions::SaveAsConfirm);
             chooser.show();
             let path = chooser.filename();
@@ -1269,6 +1295,10 @@ impl EditorWindow {
         };
         let rich_file = d.left.has_images() || path.extension().is_some_and(|e| e == "etdoc");
         if rich_file && path.extension().is_none_or(|e| e != "etdoc") {
+            if file_dialog::portal_required() {
+                dialog::alert_default("Bitte im Speichern-Dialog einen Namen mit der Endung .etdoc wählen, damit die Dateifreigabe exakt stimmt.");
+                return false;
+            }
             let original_language = d.language(false);
             path.set_extension("etdoc");
             if path.exists()
@@ -1290,7 +1320,14 @@ impl EditorWindow {
         } else {
             d.left.plain_text()
         };
-        match std::fs::write(&path, content.as_bytes()) {
+        if let Err(error) = rich::validate_snapshot(&content) {
+            dialog::alert_default(&error);
+            return false;
+        }
+        let history_root = settings_path().parent().unwrap().to_owned();
+        let saved = storage::preserve(&history_root, &path)
+            .and_then(|_| std::fs::write(&path, content.as_bytes()));
+        match saved {
             Ok(()) => {
                 if let Some(b) = &mut d.sharing {
                     b.disk_hash = Some(peer::hash(content.as_bytes()));
@@ -1394,7 +1431,7 @@ impl EditorWindow {
             }
             Action::InsertImage => {
                 let mut chooser =
-                    dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseFile);
+                    file_dialog::Chooser::new(dialog::NativeFileChooserType::BrowseFile);
                 chooser.set_title("Bild einfügen");
                 chooser.set_filter("Bilder\t*.{png,jpg,jpeg,bmp,gif}");
                 chooser.show();
@@ -1573,14 +1610,14 @@ impl EditorWindow {
                     return;
                 }
                 let mut chooser =
-                    dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseFile);
+                    file_dialog::Chooser::new(dialog::NativeFileChooserType::BrowseFile);
                 chooser.set_title("UTF-8-Text öffnen");
                 chooser.show();
                 let path = chooser.filename();
                 if path.as_os_str().is_empty() {
                     return;
                 }
-                match std::fs::read_to_string(&path) {
+                match limits::read_text(&path) {
                     Ok(text) => {
                         if right {
                             self.show_compare(true);
@@ -2085,7 +2122,7 @@ impl Runtime {
                 };
                 if let Some(Some(w)) = self.windows.get_mut(id) {
                     for path in paths {
-                        match std::fs::read_to_string(&path) {
+                        match limits::read_text(&path) {
                             Ok(text) => {
                                 let active = &w.docs[w.active];
                                 if active.page != 0
@@ -2396,6 +2433,9 @@ impl Runtime {
                     );
                 }
             },
+            Action::Storage => self.storage_dialog(),
+            Action::FileHistory => self.history_dialog(wid),
+            Action::Permissions => self.permissions_dialog(wid),
             Action::RelayoutSplit => self.layout_splits(),
             Action::ExportDiagnostics => {
                 let info = format!(

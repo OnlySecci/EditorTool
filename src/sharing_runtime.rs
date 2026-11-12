@@ -239,7 +239,7 @@ impl Runtime {
                     .into(),
             );
         };
-        let disk = match std::fs::read(path) {
+        let disk = match crate::limits::read(path, crate::limits::DOCUMENT) {
             Ok(data) => Some(peer::hash(&data)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(e) => {
@@ -260,7 +260,10 @@ impl Runtime {
         } else {
             d.left.plain_text()
         };
-        if let Err(e) = session::atomic_write(path, data.as_bytes()) {
+        let root = settings_path().parent().unwrap().to_owned();
+        if let Err(e) = storage::preserve(&root, path)
+            .and_then(|_| session::atomic_write(path, data.as_bytes()))
+        {
             b.autosave = false;
             return Err(format!("Automatisches Speichern pausiert: {e}"));
         }
@@ -418,10 +421,11 @@ impl Runtime {
                 clock: offer.revision.clock,
                 hash: offer.revision.hash,
                 autosave: a.autosave,
-                disk_hash: a
-                    .path
-                    .as_ref()
-                    .and_then(|p| std::fs::read(p).ok().map(|v| peer::hash(&v))),
+                disk_hash: a.path.as_ref().and_then(|p| {
+                    crate::limits::read(p, crate::limits::DOCUMENT)
+                        .ok()
+                        .map(|v| peer::hash(&v))
+                }),
             });
         }
         d.share_revision = d.left_meta.borrow().revision;
@@ -646,10 +650,11 @@ impl Runtime {
                     if same {
                         let b = d.sharing.as_mut().unwrap();
                         b.autosave = autosave;
-                        b.disk_hash = d
-                            .path
-                            .as_ref()
-                            .and_then(|p| std::fs::read(p).ok().map(|v| peer::hash(&v)));
+                        b.disk_hash = d.path.as_ref().and_then(|p| {
+                            crate::limits::read(p, crate::limits::DOCUMENT)
+                                .ok()
+                                .map(|v| peer::hash(&v))
+                        });
                     } else {
                         if sync&&d.sharing.is_some()&&chrome::decision(Some(&w.win),"Neue Sync-Gruppe","Ein geänderter Teilnehmerkreis benötigt neue Freigaben. Die bisherigen Kopien bleiben erhalten.","",&["Abbrechen","Neue Gruppe"],1)!=Some(1){return Ok(());}
                         let (doc, r) = s.begin(
@@ -667,10 +672,11 @@ impl Runtime {
                                 clock: r.clock,
                                 hash: r.hash,
                                 autosave,
-                                disk_hash: d
-                                    .path
-                                    .as_ref()
-                                    .and_then(|p| std::fs::read(p).ok().map(|v| peer::hash(&v))),
+                                disk_hash: d.path.as_ref().and_then(|p| {
+                                    crate::limits::read(p, crate::limits::DOCUMENT)
+                                        .ok()
+                                        .map(|v| peer::hash(&v))
+                                }),
                             });
                             d.share_revision = d.left_meta.borrow().revision;
                         }
@@ -827,7 +833,7 @@ impl Runtime {
                         let accepted = matches!(choice, Some(1 | 2));
                         let mut path = None;
                         if choice == Some(2) {
-                            let mut chooser = dialog::NativeFileChooser::new(
+                            let mut chooser = crate::file_dialog::Chooser::new(
                                 dialog::NativeFileChooserType::BrowseSaveFile,
                             );
                             chooser.set_title("Lokale Datei für empfangenes Dokument");

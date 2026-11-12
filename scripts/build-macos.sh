@@ -5,6 +5,7 @@ export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
 if [[ "${CARGO_BUILD_TARGET:-}" == aarch64-apple-darwin ]]; then
   export MACOSX_DEPLOYMENT_TARGET=11.0
 fi
+source scripts/prepare-fltk.sh
 cargo build --release --locked
 bundle="dist/macos/EditorTool.app/Contents"
 mkdir -p "$bundle/MacOS" "$bundle/Resources"

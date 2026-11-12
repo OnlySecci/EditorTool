@@ -37,7 +37,10 @@ pub fn set(value: Preferences) {
     CURRENT.with(|p| p.set(value));
 }
 pub fn load(path: &Path) {
-    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let text = crate::limits::read(path, 65536)
+        .ok()
+        .and_then(|v| String::from_utf8(v).ok())
+        .unwrap_or_default();
     let mut value = serde_json::from_str::<Preferences>(&text).unwrap_or_else(|_| Preferences {
         vertical: text.trim() == "vertical",
         ..Preferences::default()
@@ -51,5 +54,5 @@ pub fn save(path: &Path) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(path, serde_json::to_vec_pretty(&get())?)
+    crate::session::atomic_write(path, &serde_json::to_vec_pretty(&get())?)
 }

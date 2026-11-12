@@ -6,7 +6,7 @@ use fltk::{
     enums::{ColorDepth, Event, Font, FrameType, Key, Shortcut},
     frame::Frame,
     group::{Group, Scroll, ScrollType},
-    image::{RgbImage, SharedImage},
+    image::RgbImage,
     prelude::*,
     text::{StyleTableEntry, TextBuffer, TextEditor, WrapMode},
 };
@@ -75,6 +75,7 @@ fn encode(image: &RgbImage) -> Result<String, String> {
     if w <= 0 || h <= 0 || w as u64 * h as u64 > 40_000_000 {
         return Err("Bild ist zu groß (maximal 40 Megapixel).".into());
     }
+    crate::limits::pixels(w as u32, h as u32)?;
     let mut bytes = Vec::new();
     {
         let mut encoder = png::Encoder::new(&mut bytes, w as u32, h as u32);
@@ -90,13 +91,84 @@ fn encode(image: &RgbImage) -> Result<String, String> {
             .write_image_data(&image.to_rgb_data())
             .map_err(|e| e.to_string())?;
     }
+    if bytes.len() as u64 > crate::limits::IMAGE_BYTES {
+        return Err("Kodiertes Bild ist zu gross (32 MiB).".into());
+    }
     Ok(STANDARD.encode(bytes))
 }
+fn image_reader(bytes: &[u8]) -> Result<image::ImageReader<std::io::Cursor<&[u8]>>, String> {
+    if bytes.len() as u64 > crate::limits::IMAGE_BYTES {
+        return Err("Bilddatei ist zu gross (32 MiB).".into());
+    }
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(32768);
+    limits.max_image_height = Some(32768);
+    limits.max_alloc = Some(192 * 1024 * 1024);
+    reader.limits(limits);
+    Ok(reader)
+}
+fn image_pixels(bytes: &[u8]) -> Result<u64, String> {
+    let (w, h) = image_reader(bytes)?
+        .into_dimensions()
+        .map_err(|e| e.to_string())?;
+    crate::limits::pixels(w, h)
+}
+fn decode_bytes(bytes: &[u8]) -> Result<RgbImage, String> {
+    image_pixels(bytes)?;
+    let image = image_reader(bytes)?
+        .decode()
+        .map_err(|e| e.to_string())?
+        .into_rgba8();
+    RgbImage::new(
+        image.as_raw(),
+        image.width() as i32,
+        image.height() as i32,
+        ColorDepth::Rgba8,
+    )
+    .map_err(|e| e.to_string())
+}
+fn asset_bytes(data: &str) -> Result<Vec<u8>, String> {
+    if data.len() as u64 > crate::limits::IMAGE_BYTES.div_ceil(3) * 4 {
+        return Err("Kodiertes Bild ist zu gross.".into());
+    }
+    STANDARD.decode(data).map_err(|e| e.to_string())
+}
 fn decode(data: &str) -> Result<RgbImage, String> {
-    let bytes = STANDARD.decode(data).map_err(|e| e.to_string())?;
-    fltk::image::PngImage::from_data(&bytes)
-        .and_then(|i| i.to_rgb())
-        .map_err(|e| e.to_string())
+    decode_bytes(&asset_bytes(data)?)
+}
+pub fn validate_snapshot(text: &str) -> Result<(), String> {
+    if text.len() as u64 > crate::limits::DOCUMENT {
+        return Err("Dokument ist zu gross (64 MiB).".into());
+    }
+    if let Ok(doc) = serde_json::from_str::<FileDocument>(text) {
+        if doc.format == MAGIC {
+            if doc.images.len() > crate::limits::IMAGES {
+                return Err("Zu viele Bilder (maximal 64).".into());
+            }
+            let mut pixels = 0u64;
+            let mut previous = None;
+            for asset in &doc.images {
+                if !doc.text.is_char_boundary(asset.position)
+                    || !doc.text[asset.position..].starts_with(IMAGE_MARKER)
+                    || previous.is_some_and(|p| p >= asset.position)
+                {
+                    return Err("Ungültige Bildposition.".into());
+                }
+                previous = Some(asset.position);
+                pixels += image_pixels(&asset_bytes(&asset.png)?)?;
+                if pixels > crate::limits::PIXELS {
+                    return Err("Bilder überschreiten zusammen 40 Megapixel.".into());
+                }
+            }
+            if doc.text.matches(IMAGE_MARKER).count() != doc.images.len() {
+                return Err("Ungültige Bildreferenzen.".into());
+            }
+        }
+    }
+    Ok(())
 }
 
 impl RichEditor {
@@ -213,6 +285,7 @@ impl RichEditor {
         self.load_snapshot(text, true)
     }
     fn load_snapshot(&mut self, text: &str, preserve_view: bool) -> Result<(), String> {
+        validate_snapshot(text)?;
         let mut document = if text.starts_with('{') {
             serde_json::from_str::<FileDocument>(text)
                 .ok()
@@ -351,9 +424,9 @@ impl RichEditor {
         Ok(())
     }
     pub fn load_image(&mut self, path: &Path) -> Result<(), String> {
-        let image = SharedImage::load(path)
-            .and_then(|image| image.to_rgb())
-            .map_err(|e| e.to_string())?;
+        let bytes =
+            crate::limits::read(path, crate::limits::IMAGE_BYTES).map_err(|e| e.to_string())?;
+        let image = decode_bytes(&bytes)?;
         let png = encode(&image)?;
         insert_image(&self.state, png, image.data_w());
         Ok(())
@@ -488,6 +561,26 @@ fn paste_into(editor: &TextEditor) {
 }
 
 fn insert_image(state: &Rc<RefCell<State>>, png: String, original_width: i32) {
+    let check = (|| -> Result<(), String> {
+        let s = state.borrow();
+        if s.assets.len() >= crate::limits::IMAGES {
+            return Err("Zu viele Bilder (maximal 64).".into());
+        }
+        let mut pixels = image_pixels(&asset_bytes(&png)?)?;
+        let mut encoded = png.len() as u64 + s.buffer.length() as u64;
+        for a in &s.assets {
+            encoded += a.png.len() as u64;
+            pixels += image_pixels(&asset_bytes(&a.png)?)?;
+        }
+        if pixels > crate::limits::PIXELS || encoded > crate::limits::DOCUMENT - 65536 {
+            return Err("Dokumentgrenze für Bilder oder Speicher erreicht.".into());
+        }
+        Ok(())
+    })();
+    if let Err(e) = check {
+        dialog::alert_default(&e);
+        return;
+    }
     let position = {
         let s = state.borrow();
         match s.parts.get(s.current) {
@@ -763,7 +856,25 @@ fn rebuild(state: &Rc<RefCell<State>>) {
                     queue_clipboard(weak.clone(), image);
                     return true;
                 }
-                let value = plain_text(&app::event_text()).replace(IMAGE_MARKER, "");
+                let input = app::event_text();
+                let current = weak
+                    .upgrade()
+                    .map(|s| {
+                        s.borrow().buffer.length().max(0) as u64
+                            + s.borrow()
+                                .assets
+                                .iter()
+                                .map(|a| a.png.len() as u64)
+                                .sum::<u64>()
+                    })
+                    .unwrap_or(0);
+                if input.len() as u64 + current > crate::limits::DOCUMENT - 65536 {
+                    dialog::alert_default(
+                        "Einfügen würde die Dokumentgrenze von 64 MiB überschreiten.",
+                    );
+                    return true;
+                }
+                let value = plain_text(&input).replace(IMAGE_MARKER, "");
                 if let Some(mut buffer) = editor.buffer() {
                     let (a, b) = buffer
                         .selection_position()
