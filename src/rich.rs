@@ -411,6 +411,14 @@ impl RichEditor {
             ed.undo();
         }
     }
+    pub fn redo(&self) {
+        let s = self.state.borrow();
+        if let Some(Part::Text(t)) = s.parts.get(s.current) {
+            let ed = t.editor.clone();
+            drop(s);
+            ed.redo();
+        }
+    }
     pub fn paste(&mut self) {
         let s = self.state.borrow();
         if let Some(Part::Text(t)) = s.parts.get(s.current) {

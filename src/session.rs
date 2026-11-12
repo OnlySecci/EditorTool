@@ -56,6 +56,8 @@ pub struct WindowState {
 pub struct Snapshot {
     pub version: u32,
     pub windows: Vec<WindowState>,
+    #[serde(default)]
+    pub closed: Vec<WindowState>,
 }
 fn default_zoom() -> i32 {
     100
@@ -157,6 +159,10 @@ impl Store {
                         match result {
                             Ok(()) => last_error = None,
                             Err(e) => {
+                                crate::diagnostics::event(
+                                    "session",
+                                    &format!("save_failed kind={:?}", e.kind()),
+                                );
                                 let message = e.to_string();
                                 if last_error.as_ref() != Some(&message) {
                                     errors.send((0, crate::Action::CacheError(message.clone())));
@@ -190,6 +196,7 @@ impl Store {
                         && snapshot
                             .windows
                             .iter()
+                            .chain(snapshot.closed.iter())
                             .flat_map(|w| &w.tabs)
                             .all(|t| valid_key(&t.key))
                     {

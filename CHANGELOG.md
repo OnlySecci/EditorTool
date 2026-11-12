@@ -1,5 +1,15 @@
 # Changelog
 
+## V1.4.9 — 2026-11-12
+
+- Separate closed-window recovery history from the automatically restored session.
+- Preserve the last native window on exit and offer explicit recovery of additional closed windows.
+- Use a host Polkit prompt for system Flatpak bundle updates and restart in the correct installation scope.
+- Add bounded local diagnostics and a user-triggered log export without document contents or credentials.
+- Show the saved document path and offer copying the path or opening its file location.
+- Add native text Redo with configurable Ctrl+Y / Cmd+Shift+Z shortcuts.
+- Build/package only; no tests run, as requested.
+
 ## V1.4.8 — 2026-11-11
 
 - Requested Settings/File/Edit/View/Help menu order.

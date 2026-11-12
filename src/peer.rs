@@ -282,6 +282,20 @@ impl Inner {
         }
     }
     fn event(&self, event: Event) {
+        let label = match &event {
+            Event::Changed => None,
+            Event::Trust(_) => Some("trust_request"),
+            Event::Offer(_) => Some("file_offer"),
+            Event::Received(_, _) => Some("file_received"),
+            Event::Updated(_) => Some("revision_received"),
+            Event::Conflict(_) => Some("version_conflict"),
+            Event::Left(_, _, _) => Some("sync_left"),
+            Event::Notice(_) => Some("notice"),
+            Event::Fatal(_) => Some("storage_failure_service_disabled"),
+        };
+        if let Some(label) = label {
+            crate::diagnostics::event("sharing", label);
+        }
         self.tx.send((0, Action::PeerEvent(event)));
     }
     fn save(&self, s: &State) -> Result<(), String> {
@@ -628,7 +642,9 @@ impl Service {
                     }
                     let inner = inner.clone();
                     thread::spawn(move || {
-                        let _ = serve(&inner, stream, remote);
+                        if let Err(error) = serve(&inner, stream, remote) {
+                            crate::diagnostics::failure("sharing", "incoming_failed", &error);
+                        }
                         inner.transfers.fetch_sub(1, Ordering::Relaxed);
                     });
                 }
@@ -1713,6 +1729,17 @@ fn sweep(inner: &Arc<Inner>) {
         let changed = statuses.insert(key, result.is_ok()) != Some(result.is_ok());
         drop(statuses);
         if changed {
+            if let Err(error) = &result {
+                crate::diagnostics::failure("sharing", "outgoing_failed", error);
+            }
+            crate::diagnostics::event(
+                "sharing",
+                if result.is_ok() {
+                    "peer_connected"
+                } else {
+                    "peer_disconnected_or_transfer_failed"
+                },
+            );
             inner.event(Event::Changed);
         }
     }

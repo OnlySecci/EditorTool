@@ -442,6 +442,58 @@ impl Runtime {
             }
         }
     }
+    pub fn restore_closed(&mut self) {
+        let Some(state) = self.closed.last().cloned() else {
+            return;
+        };
+        let mut states = vec![state.clone()];
+        if let Some(key) = &state.split_key {
+            if let Some(other) = self
+                .closed
+                .iter()
+                .rev()
+                .skip(1)
+                .find(|s| s.split_key.as_ref() == Some(key))
+            {
+                states.insert(0, other.clone());
+            }
+        }
+        let mut ids = Vec::new();
+        let start = self.windows.len();
+        for state in &states {
+            let id = self.windows.len();
+            let mut w = EditorWindow::build(id, self.tx, self.vertical, false);
+            if !w.restore(state, &self.store, id, self.tx) {
+                Window::delete(w.find.win);
+                Window::delete(w.settings.win);
+                Window::delete(w.win);
+                for w in self.windows.drain(start..).flatten() {
+                    Window::delete(w.find.win);
+                    Window::delete(w.settings.win);
+                    Window::delete(w.win);
+                }
+                return;
+            }
+            ids.push(id);
+            self.windows.push(Some(w));
+        }
+        for _ in &states {
+            self.closed.pop();
+        }
+        if ids.len() == 2 {
+            self.join_panes(ids[0], ids[1], state.split_stacked, state.split_ratio);
+        }
+        for id in ids {
+            let w = self.windows[id].as_mut().unwrap();
+            if !w.embedded {
+                w.win.show();
+                chrome::dark_title(&w.win);
+                shutdown::hook(&w.win, self.weak_self.clone());
+            }
+        }
+        diagnostics::event("window", "restore_closed");
+        self.persist();
+    }
     pub fn close_editor_window(&mut self, wid: usize) {
         if self.windows.get(wid).is_none_or(Option::is_none) {
             return;
@@ -494,9 +546,29 @@ impl Runtime {
             return;
         }
         let win = self.windows[wid].as_ref().unwrap().win.clone();
+        let last = self
+            .windows
+            .iter()
+            .enumerate()
+            .all(|(id, w)| w.is_none() || ids.contains(&id));
+        let states: Vec<_> = ids
+            .iter()
+            .filter_map(|&id| self.windows[id].as_ref().map(EditorWindow::snapshot))
+            .collect();
+        if last {
+            self.last_closed = states;
+        } else {
+            self.closed.extend(states);
+            while self.closed.len() > 20 {
+                let removed = self.closed.remove(0);
+                if let Some(key) = removed.split_key {
+                    self.closed.retain(|w| w.split_key.as_ref() != Some(&key));
+                }
+            }
+        }
+        diagnostics::event("window", if last { "close_last" } else { "close_extra" });
         for id in ids {
             if let Some(w) = self.windows[id].take() {
-                self.closed.push(w.snapshot());
                 Window::delete(w.find.win);
                 Window::delete(w.settings.win);
             }
@@ -526,7 +598,7 @@ pub fn wire_window(win: &mut Window, route: Rc<Cell<usize>>, tx: app::Sender<Mes
                     || fltk::output::Output::from_dyn_widget(&w).is_some()
             }) {
                 let key = app::event_key();
-                if ['a', 'c', 'v', 'x', 'z']
+                if ['a', 'c', 'v', 'x', 'y', 'z']
                     .iter()
                     .any(|c| key == fltk::enums::Key::from_char(*c))
                     && app::event_state().contains(Shortcut::Command)

@@ -4,6 +4,7 @@ mod chrome;
 mod core;
 #[cfg(target_os = "linux")]
 mod desktop;
+mod diagnostics;
 mod ipc;
 mod peer;
 mod preferences;
@@ -106,6 +107,9 @@ enum Action {
     ImageAutoSize(bool),
     TabContext(usize, i32, i32),
     CopyPath,
+    RevealFile,
+    ExportDiagnostics,
+    RestoreClosed,
     CloseOtherTabs,
     Split(bool),
     EndSplit,
@@ -115,6 +119,7 @@ enum Action {
     RelayoutSplit,
     MoveTab(usize),
     Undo,
+    Redo,
     Cut,
     SelectAll,
     NextTab(bool),
@@ -148,6 +153,7 @@ struct Document {
     group: Flex,
     panes: Flex,
     rightcol: Flex,
+    path_bar: fltk::output::Output,
     left: RichEditor,
     right: RichEditor,
     target_right: Rc<Cell<bool>>,
@@ -287,6 +293,21 @@ impl Document {
         }
     }
     fn refresh(&mut self) {
+        let path = self
+            .path
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if self.path_bar.value() != path {
+            self.path_bar.set_value(&path);
+            self.path_bar.set_tooltip(&path);
+            if path.is_empty() {
+                self.path_bar.hide();
+            } else {
+                self.path_bar.show();
+            }
+            self.panes.recalc();
+        }
         if self.comparing || self.compared.is_some() {
             self.compare_stop.activate();
             self.compare_stop.set_label_color(FG);
@@ -653,6 +674,27 @@ impl EditorWindow {
             tx,
             (wid, Action::CheckUpdates(true)),
         );
+        menu.add_emit(
+            "&Datei/Geschlossenes Fenster wiederherstellen",
+            Shortcut::None,
+            MenuFlag::Normal,
+            tx,
+            (wid, Action::RestoreClosed),
+        );
+        menu.add_emit(
+            "&Bearbeiten/Wiederholen",
+            Shortcut::None,
+            MenuFlag::Normal,
+            tx,
+            (wid, Action::Redo),
+        );
+        menu.add_emit(
+            "&Hilfe/Diagnoseprotokoll exportieren…",
+            Shortcut::None,
+            MenuFlag::Normal,
+            tx,
+            (wid, Action::ExportDiagnostics),
+        );
         shortcuts::apply_menu(&mut menu);
         for (glyph, tooltip, action) in [
             (
@@ -857,6 +899,13 @@ impl EditorWindow {
         panes.set_color(BG);
         let mut leftcol = Flex::default().column();
         leftcol.set_color(BG);
+        let mut path_bar = fltk::output::Output::default();
+        path_bar.set_frame(FrameType::FlatBox);
+        path_bar.set_color(BG);
+        path_bar.set_text_color(MUTED);
+        path_bar.set_text_size(11);
+        leftcol.fixed(&path_bar, 24);
+        path_bar.hide();
         let target_right = Rc::new(Cell::new(false));
         let (left, left_buf, left_meta) = editor(target_right.clone(), false);
         leftcol.end();
@@ -923,6 +972,7 @@ impl EditorWindow {
             group,
             panes,
             rightcol,
+            path_bar,
             target_right,
             left,
             right,
@@ -1269,6 +1319,7 @@ impl EditorWindow {
                     | Action::ShowFind(_)
                     | Action::InsertImage
                     | Action::Undo
+                    | Action::Redo
                     | Action::Cut
                     | Action::SelectAll
                     | Action::SetLanguage(_)
@@ -1292,6 +1343,20 @@ impl EditorWindow {
                     tab_menu::popup(&self.win, index, self.docs[index].page != 0, x, y)
                 {
                     tx.send((wid, action));
+                }
+            }
+            Action::RevealFile => {
+                if let Some(path) = &self.docs[self.active].path {
+                    if diagnostics::reveal(path).is_err() {
+                        chrome::decision(
+                            Some(&self.win),
+                            "Ordner nicht geöffnet",
+                            "Der Dateimanager konnte nicht gestartet werden.",
+                            "",
+                            &["Schliessen"],
+                            0,
+                        );
+                    }
                 }
             }
             Action::CopyPath => {
@@ -1376,7 +1441,7 @@ impl EditorWindow {
                 let next = (self.active + if backwards { count - 1 } else { 1 }) % count;
                 self.action(Action::Select(next), wid, tx);
             }
-            Action::Undo | Action::Cut | Action::SelectAll => {
+            Action::Undo | Action::Redo | Action::Cut | Action::SelectAll => {
                 let d = &mut self.docs[self.active];
                 let (ed, buf) = if d.target_right.get() {
                     (&mut d.right, &mut d.right_buf)
@@ -1385,6 +1450,7 @@ impl EditorWindow {
                 };
                 match action {
                     Action::Undo => ed.undo(),
+                    Action::Redo => ed.redo(),
                     Action::Cut => {
                         if let Some((start, end)) = buf.selection_position() {
                             app::copy(&buf.selection_text().replace(rich::IMAGE_MARKER, ""));
@@ -1887,6 +1953,7 @@ struct Runtime {
     windows: Vec<Option<EditorWindow>>,
     splits: Vec<split::Host>,
     closed: Vec<session::WindowState>,
+    last_closed: Vec<session::WindowState>,
     store: session::Store,
     tx: app::Sender<Message>,
     config: PathBuf,
@@ -1911,11 +1978,19 @@ struct Runtime {
 }
 impl Runtime {
     fn snapshot(&self) -> session::Snapshot {
-        let mut windows = self.closed.clone();
-        windows.extend(self.windows.iter().flatten().map(EditorWindow::snapshot));
+        let mut windows: Vec<_> = self
+            .windows
+            .iter()
+            .flatten()
+            .map(EditorWindow::snapshot)
+            .collect();
+        if windows.is_empty() {
+            windows = self.last_closed.clone();
+        }
         session::Snapshot {
             version: 1,
             windows,
+            closed: self.closed.clone(),
         }
     }
     fn fingerprint(&self) -> String {
@@ -2046,6 +2121,7 @@ impl Runtime {
                 self.persist();
             }
             Action::CacheError(error) => {
+                diagnostics::event("session", "cache_error");
                 self.store.revisions.clear();
                 self.last_fingerprint.clear();
                 dialog::alert_default(&format!(
@@ -2053,6 +2129,7 @@ impl Runtime {
                 ));
             }
             Action::NewWindow => {
+                diagnostics::event("window", "new_window");
                 let id = self.windows.len();
                 self.windows
                     .push(Some(EditorWindow::new(id, self.tx, self.vertical)));
@@ -2145,6 +2222,17 @@ impl Runtime {
                 });
             }
             Action::UpdateChecked(result, manual) => {
+                if let Err(error) = &result {
+                    diagnostics::failure("updater", "check_failed", error);
+                }
+                diagnostics::event(
+                    "updater",
+                    if result.is_ok() {
+                        "check_completed"
+                    } else {
+                        "check_failed"
+                    },
+                );
                 self.update_busy = false;
                 if self.windows.iter().all(Option::is_none) {
                     return;
@@ -2224,6 +2312,17 @@ impl Runtime {
             }
             Action::UpdateProgress(percent) => self.updates.progress(percent),
             Action::UpdateDownloaded(result) => {
+                if let Err(error) = &result {
+                    diagnostics::failure("updater", "download_failed", error);
+                }
+                diagnostics::event(
+                    "updater",
+                    if result.is_ok() {
+                        "download_verified"
+                    } else {
+                        "download_failed"
+                    },
+                );
                 let result = result.and_then(|download| {
                     self.persist();
                     self.store.flush()?;
@@ -2245,6 +2344,8 @@ impl Runtime {
                     }
                     Err(error) => {
                         self.update_busy = false;
+                        diagnostics::event("updater", "install_handoff_failed");
+                        diagnostics::failure("updater", "install_handoff_failed", &error);
                         self.updates.state(
                             "Aktualisierung fehlgeschlagen",
                             "Die App bleibt geöffnet. Es wurden keine Dokumente geschlossen.",
@@ -2296,6 +2397,29 @@ impl Runtime {
                 }
             },
             Action::RelayoutSplit => self.layout_splits(),
+            Action::ExportDiagnostics => {
+                let info = format!(
+                    "windows={} documents={} cache={} sharing={} closed_models={}",
+                    self.windows
+                        .iter()
+                        .flatten()
+                        .filter(|w| !w.embedded)
+                        .count(),
+                    self.windows
+                        .iter()
+                        .flatten()
+                        .map(|w| w.docs.len())
+                        .sum::<usize>(),
+                    self.cache_enabled,
+                    self.sharing.is_some(),
+                    self.closed.len()
+                );
+                let owner = self.windows.iter().flatten().next().map(|w| w.win.clone());
+                if let Err(_) = diagnostics::export(self.config.parent().unwrap(), &info) {
+                    chrome::decision(owner.as_ref(), "Diagnoseexport fehlgeschlagen", "Das Protokoll konnte nicht gespeichert werden. Bitte einen beschreibbaren Speicherort wählen.", "", &["Schliessen"], 0);
+                }
+            }
+            Action::RestoreClosed => self.restore_closed(),
             Action::CloseWindow => self.close_editor_window(wid),
             other => {
                 if let Some(Some(w)) = self.windows.get_mut(wid) {
@@ -2397,6 +2521,7 @@ fn main() {
     let _app = app::App::default().with_scheme(app::Scheme::Base);
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let config = settings_path();
+    diagnostics::init(config.parent().unwrap());
     preferences::load(&config);
     if let Err(e) = shortcuts::load(&config) {
         dialog::alert_default(&format!("Tastenkürzel konnten nicht geladen werden: {e}"));
@@ -2443,6 +2568,15 @@ fn main() {
             session::Snapshot::default()
         }
     };
+    diagnostics::event(
+        "session",
+        &format!(
+            "loaded windows={} closed_models={} cache={}",
+            saved.windows.len(),
+            saved.closed.len(),
+            cache_enabled
+        ),
+    );
     let mut windows = Vec::new();
     for state in &saved.windows {
         if state.tabs.is_empty() {
@@ -2468,7 +2602,8 @@ fn main() {
     let state = Rc::new(RefCell::new(Runtime {
         windows,
         splits: vec![],
-        closed: vec![],
+        closed: saved.closed,
+        last_closed: vec![],
         store,
         tx,
         config,
@@ -2538,6 +2673,7 @@ fn main() {
         state.borrow_mut().update();
     }
     let mut runtime = state.borrow_mut();
+    diagnostics::event("app", "shutdown");
     runtime.persist();
     if let Err(error) = runtime.store.flush() {
         dialog::alert_default(&format!("Sitzungssicherung fehlgeschlagen: {error}"));

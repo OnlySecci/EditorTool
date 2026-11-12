@@ -1,36 +1,32 @@
-# EditorTool V1.4.8
+# EditorTool V1.4.9
 
-## Menüs und Tastenkürzel
+## Fenster und Sitzung
 
-- Die Menü-Reihenfolge lautet jetzt **Einstellungen → Datei → Bearbeiten → Ansicht → Hilfe**.
-- **Einstellungen → Tastenkürzel** öffnet eine eigene Einstellungsseite als Tab. Befehl auswählen, im Aufnahmefeld eine Kombination drücken, **Zuweisen**, anschliessend **Für alle Fenster übernehmen**.
-- Bestehende Ctrl-/Cmd-Befehle und zusätzliche Aktionen für Vergleich, Zoom und Split View lassen sich belegen. Alt- und Funktionstasten sind ebenfalls möglich. Doppelte Belegungen werden benannt; einzelne Belegungen lassen sich entfernen und die Standardbelegung wiederherstellen.
-- Die Einstellungen werden lokal in `shortcuts.json` neben den übrigen Einstellungen gespeichert. Menü- und Tab-Kontextmenü-Hinweise verwenden die aktuelle Belegung. Nicht mehr zugewiesene frühere Standardkombinationen lösen im Texteditor nicht heimlich die alte Funktion aus.
-- Die allgemeinen Tastenkürzel gelten für Editor-Befehle; Eingabefelder behalten ihre normale Zwischenablage-Bedienung. Systemweit reservierte Kombinationen können vom Betriebssystem abgefangen werden. Das Aufnahmefeld fängt eigene neue Kombinationen ab, ohne dabei den Editor-Befehl auszuführen.
+- Zusätzlich geöffnete und danach geschlossene Fenster werden beim nächsten Start nicht mehr automatisch geöffnet. Das zuletzt geschlossene Hauptfenster bleibt als Startsitzung erhalten. Beim Beenden mit mehreren offenen Fenstern bleibt deren Anordnung erhalten.
+- **Datei → Geschlossenes Fenster wiederherstellen** holt zusätzliche geschlossene Fenster samt Text, Bildern und Tabs aus dem Cache zurück. Bis zu 20 Ansichten bleiben in dieser Liste; zusammengehörende Split-Ansichten werden gemeinsam behandelt.
+- Alte Sitzungscaches unterscheiden offene und geschlossene Fenster noch nicht. Falls beim ersten Start zusätzliche Fenster erscheinen, diese einmal schliessen; danach gilt die neue Wiederherstellung. Im optionalen Tray-Modus versteckt Schliessen weiterhin die laufenden Fenster.
 
-## Vergleich schliessen und stoppen
+## Flatpak-Updates
 
-- Die rechte Vergleichsansicht besitzt eine gestaltete Kopfzeile mit **Datei öffnen**, **Vergleichen**, **Stopp** und einem **X** zum Schliessen.
-- **Stopp** beendet den aktiven Vergleich beziehungsweise entfernt die Vergleichsmarkierungen. Beide Texte bleiben erhalten. Laufende Berechnungsergebnisse werden nach einem Stopp ignoriert; die Hintergrundberechnung prüft Abbruchpunkte und behält das bestehende Zeitlimit von zwei Sekunden für den eigentlichen Diff-Schritt.
-- **X** schliesst die Vergleichsansicht, stoppt den Vergleich und gibt den Platz dem linken Text zurück. Der rechte Text bleibt im Tab und Sitzungscache erhalten und erscheint beim erneuten Öffnen wieder.
-- Späte Ergebnisse eines gestoppten, verschobenen oder erneut gestarteten Vergleichs überschreiben die aktuelle Ansicht nicht.
+- Benutzerinstallationen werden mit `--user` aktualisiert. Für systemweite Installationen ruft der Host-Helfer **Polkit (`pkexec`)** auf, damit der Desktop Administratorrechte abfragen kann. Der bisherige Installationsweg konnte mit „system operation installBundle not allowed for user“ abbrechen.
+- Der Neustart verwendet den passenden Benutzer-/Systembereich. Ein Polkit-Authentifizierungsagent auf dem Desktop wird benötigt; EditorTool speichert keine Administratorpasswörter.
+- Quellen: [Flatpak-Befehle](https://docs.flatpak.org/en/latest/flatpak-command-reference.html), [Polkit/pkexec](https://www.freedesktop.org/software/polkit/docs/latest/pkexec.1.html).
 
-## Split View zusammenführen
+## Diagnoseprotokoll
 
-- **Ansicht → Split View → Zusammenführen** und das Tab-Kontextmenü führen die beiden Seiten wieder zu einer Ansicht mit gemeinsamer Tab-Liste zusammen.
-- Dokumente werden mit ihren bestehenden Editor-Widgets verschoben: Inhalte, Bilder, Undo-Zustand, Zoom, Dateipfade und Sync-Zuordnungen bleiben erhalten. Unbenutzte leere Start-Tabs und doppelte Einstellungs-Tabs werden entfernt. Laufende Vergleiche in verschobenen Tabs werden gestoppt.
-- **Als zwei Fenster weiterführen** bleibt als eigene Aktion verfügbar. Damit sind Zusammenführen und Trennen in zwei Fenster ausdrücklich getrennt wählbar.
+- **Hilfe → Diagnoseprotokoll exportieren…** speichert eine lokale `.log`-Datei zum manuellen Anhängen an Problemmeldungen. Kein automatischer Upload.
+- Enthalten: Version und Plattform, Fenster-/Sitzungsereignisse, technische Sync-Ereignisse, Verbindungsfehler, Update-Phasen und Fehlerkategorien sowie verfügbare Ausschnitte des Installationsprotokolls.
+- Ereignisse enthalten keine Dokumenttexte, Bilder, Zwischenablage, Dateititel, Clientnamen, IP-Adressen, Schlüssel oder Tokens. Eigene Benutzerverzeichnisse im Installationsprotokoll werden durch `<HOME>` ersetzt. Dieses Protokoll kann technische Paketpfade und Betriebssystemmeldungen enthalten; die Exportdatei kann vor dem Teilen geprüft werden.
+- Lokale Logs im Unterordner `logs` der Einstellungen haben begrenzte Grösse und Anzahl. Keine Protokollierung pro Tastendruck und kein eigener Hintergrundtimer.
 
-## Linux / Nobara: Anheften an die Taskleiste
+## Dateipfad und Textbearbeitung
 
-- Fenster verwenden jetzt eine feste EditorTool-Kennung, passend zu `StartupWMClass` und dem Desktop-Dateinamen. RPM, DEB und Flatpak verwenden dieselbe Desktop-Identität für die Zuordnung in der Taskleiste.
-- Portable Linux-Versionen legen beim Start einen Benutzer-Launcher und das Icon im XDG-Datenverzeichnis an, sofern keine passende Paketinstallation vorhanden ist. Ein eigener alter portabler Launcher wird bei Wechsel zur Paketinstallation entfernt. Fremde benutzerdefinierte Launcher werden nicht überschrieben.
-- Nach dem Update alle EditorTool-Fenster beenden, neu starten und den laufenden Editor erneut anheften. Ein alter Eintrag mit der früheren Fensterkennung muss gegebenenfalls einmal entfernt werden. Unter Wayland verwendet die App weiterhin XWayland.
+- Oberhalb gespeicherter Dokumente steht der Pfad einschliesslich Dateiname. Der Tooltip zeigt auch lange Pfade vollständig; die Zeile lässt sich horizontal bewegen.
+- Tab-Kontextmenü: **Dateipfad kopieren** und **Im Dateimanager anzeigen**. Windows/macOS markieren die Datei, Linux öffnet den Ordner.
+- **Bearbeiten → Rückgängig / Wiederholen**: Windows/Linux **Strg+Z / Strg+Y**, macOS **Cmd+Z / Cmd+Shift+Z**. Beide Befehle sind unter **Einstellungen → Tastenkürzel** anpassbar und verwenden den Textverlauf im aktiven Textabschnitt. Dieser Verlauf wird nicht über App-Neustarts gespeichert.
 
 ## Pakete und Hinweise
 
 Windows Setup-EXE und portables ZIP; Linux Flatpak, RPM, DEB und portables TAR.GZ; macOS DMG und App-ZIP. Jeweils **x64 und ARM64**, dazu `SHA256SUMS.txt`.
 
-Alle Funktionen aus V1.4.5 einschliesslich Sync-Countdown, stabilisierter Bildansichten und hybrider TLS-Verschlüsselung bleiben enthalten.
-
-Auf Wunsch **keine automatisierten, interaktiven oder Installationstests**. Die Änderungen für Nobara wurden implementiert und für Linux paketiert, aber nicht in einer laufenden Desktop-Sitzung geprüft. Pakete ohne Entwicklerzertifikate; macOS mit Ad-hoc-Signatur ohne Notarisierung. Projektlizenz: **The Unlicense**; Drittanbieter behalten ihre Lizenzen.
+Auf Wunsch nur gebaut und paketiert: **keine automatisierten, interaktiven oder Installationstests**. Pakete ohne Entwicklerzertifikate; macOS mit Ad-hoc-Signatur ohne Notarisierung. Projektlizenz: **The Unlicense**, Drittanbieter behalten ihre Lizenzen.

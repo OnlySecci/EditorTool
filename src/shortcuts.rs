@@ -11,6 +11,7 @@ pub enum Command {
     Save,
     SaveAs,
     Undo,
+    Redo,
     Cut,
     Copy,
     Paste,
@@ -43,6 +44,7 @@ pub const ALL: &[Command] = &[
     Command::Save,
     Command::SaveAs,
     Command::Undo,
+    Command::Redo,
     Command::Cut,
     Command::Copy,
     Command::Paste,
@@ -95,6 +97,7 @@ impl Command {
             Save => "Speichern",
             SaveAs => "Speichern unter",
             Undo => "Rückgängig",
+            Redo => "Wiederholen",
             Cut => "Ausschneiden",
             Copy => "Kopieren",
             Paste => "Einfügen",
@@ -130,6 +133,7 @@ impl Command {
             Save => Action::Save(false),
             SaveAs => Action::Save(true),
             Undo => Action::Undo,
+            Redo => Action::Redo,
             Cut => Action::Cut,
             Copy => Action::Copy,
             Paste => Action::Paste,
@@ -167,6 +171,13 @@ impl Command {
             Save => ('s' as i32, p),
             SaveAs => ('s' as i32, shift),
             Undo => ('z' as i32, p),
+            Redo => {
+                if cfg!(target_os = "macos") {
+                    ('z' as i32, shift)
+                } else {
+                    ('y' as i32, p)
+                }
+            }
             Cut => ('x' as i32, p),
             Copy => ('c' as i32, p),
             Paste => ('v' as i32, p),
@@ -200,6 +211,7 @@ impl Command {
             Save => "&Datei/Speichern",
             SaveAs => "&Datei/Speichern unter…",
             Undo => "&Bearbeiten/Rückgängig",
+            Redo => "&Bearbeiten/Wiederholen",
             Cut => "&Bearbeiten/Ausschneiden",
             Copy => "&Bearbeiten/Kopieren (Auswahl oder alles)",
             Paste => "&Bearbeiten/Einfügen",
@@ -370,12 +382,25 @@ pub fn load(config: &std::path::Path) -> Result<(), String> {
         serde_json::from_slice(&std::fs::read(file).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
     let mut values = defaults();
-    for b in saved
+    let saved: Vec<Binding> = saved
         .into_iter()
         .filter_map(|v| serde_json::from_value::<Binding>(v).ok())
-    {
+        .collect();
+    for b in &saved {
         if let Some(v) = values.iter_mut().find(|v| v.command == b.command) {
-            *v = b;
+            *v = b.clone();
+        }
+    }
+    // New commands must not invalidate an existing user's assigned combination.
+    for index in 0..values.len() {
+        if !saved.iter().any(|b| b.command == values[index].command)
+            && values[index].chord.key != 0
+            && values
+                .iter()
+                .enumerate()
+                .any(|(i, b)| i != index && b.chord == values[index].chord)
+        {
+            values[index].chord = Chord::default();
         }
     }
     validate(&values)?;
