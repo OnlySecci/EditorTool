@@ -61,6 +61,7 @@ fn items(page: u8, settings: bool, index: usize) -> Vec<Item> {
             Action("Speichern", "Strg/Cmd+S", crate::Action::Save(false)),
             Action("Speichern unter…", "", crate::Action::Save(true)),
             Action("Dateipfad kopieren", "", crate::Action::CopyPath),
+            Action("Im Dateimanager anzeigen", "", crate::Action::RevealFile),
             Page("Sprache", 1),
             Section("SENDEN UND SYNC"),
             Action("Senden an Client…", "", crate::Action::Transfer(false)),

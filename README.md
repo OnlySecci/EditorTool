@@ -8,6 +8,14 @@ Ein schlanker nativer Rust-Editor für **Text, Code und Bilder** — für Window
 
 *Hauptansicht aus V1.0 — vom Projektinhaber bereitgestellte Aufnahme.*
 
+## Neu in V1.4.9
+
+Geschlossene zusätzliche Fenster bleiben beim Neustart geschlossen und können über **Datei → Geschlossenes Fenster wiederherstellen** gezielt zurückgeholt werden. Das letzte Hauptfenster bleibt die Startsitzung. Systemweite Flatpak-Updates fragen Administratorrechte über Polkit ab.
+
+**Hilfe → Diagnoseprotokoll exportieren** erstellt eine lokale Log-Datei für Problemmeldungen ohne automatischen Upload. Technische Ereignisse enthalten keine Dokumentinhalte, Zwischenablage oder Schlüssel. Logs liegen grössenbegrenzt im Einstellungsordner unter `logs`.
+
+Gespeicherte Dateien zeigen ihren Pfad oberhalb des Textfelds. Das Tab-Menü bietet **Dateipfad kopieren** und **Im Dateimanager anzeigen**. **Rückgängig / Wiederholen** sind unter Bearbeiten und als anpassbare Tastenkürzel verfügbar: Windows/Linux **Strg+Z / Strg+Y**, macOS **Cmd+Z / Cmd+Shift+Z**.
+
 ## Neu in V1.4.8
 
 Die Menüleiste ist jetzt **Einstellungen, Datei, Bearbeiten, Ansicht, Hilfe**. Unter **Einstellungen → Tastenkürzel** lassen sich Befehle aufnehmen, zuweisen, entfernen und auf Standard zurücksetzen. Doppelte Kombinationen werden angezeigt. **Für alle Fenster übernehmen** speichert die Belegung lokal in `shortcuts.json` und aktualisiert die Menüs.
@@ -102,7 +110,7 @@ Die Pakete sind **ohne Windows-/Apple-Entwicklerzertifikat** veröffentlicht. ma
 
 ## Sitzung und Dokumente
 
-Änderungen gehen nach etwa 400 ms in einen Hintergrundschreibvorgang. Beim Schließen eines Fensters wird auf die Sicherung gewartet. Das Fenster wird beim nächsten Start wiederhergestellt; ausdrücklich geschlossene Tabs werden nicht wieder geöffnet. Unter Windows lösen normales Herunterfahren und Abmelden zusätzlich eine Sicherung aus.
+Änderungen gehen nach etwa 400 ms in einen Hintergrundschreibvorgang. Beim Schliessen eines Fensters wird auf die Sicherung gewartet. Noch offene Fenster beziehungsweise das zuletzt geschlossene Hauptfenster werden beim nächsten Start wiederhergestellt. Geschlossene zusätzliche Fenster stehen nur unter **Datei → Geschlossenes Fenster wiederherstellen** bereit (bis zu 20 Ansichten); ausdrücklich geschlossene Tabs werden nicht wieder geöffnet. Alte Caches können zusätzliche Fenster beim ersten Start noch einmal öffnen. Unter Windows lösen normales Herunterfahren und Abmelden zusätzlich eine Sicherung aus.
 
 Der automatische Cache überschreibt keine Originaldateien. „Speichern“ schreibt den linken Text beziehungsweise sein Text-/Bild-Dokument in die gewählte Datei. Vergleichstexte bleiben im Cache erhalten. Bei einem erzwungenen Abbruch kann nur der zuletzt abgeschlossene Stand wiederhergestellt werden. Undo-Verläufe werden nicht gespeichert.
 
@@ -128,6 +136,8 @@ Windows/Linux: **Strg**, macOS: **Cmd**.
 | Strg/Cmd+Tab / +Umschalt+Tab | Nächster / vorheriger Tab |
 | Strg/Cmd+Umschalt+I | Bild einfügen |
 | Strg/Cmd+, | Einstellungen |
+| Strg/Cmd+Z | Rückgängig |
+| Strg+Y (Windows/Linux), Cmd+Umschalt+Z (macOS) | Wiederholen |
 
 Suchen, Ersetzen und **Ansicht → Sprache** arbeiten im zuletzt aktiven Textbereich. Bildaktionen zum Entfernen sind per Rechtsklick erreichbar. Textabschnitte vor und nach Bildern besitzen eigene Undo-Verläufe.
 

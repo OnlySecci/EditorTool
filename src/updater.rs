@@ -128,6 +128,7 @@ fn target() -> Result<(Kind, String), String> {
     Ok((kind, architecture.into()))
 }
 pub fn check() -> Result<Option<Release>, String> {
+    crate::diagnostics::event("updater", "check_started");
     let response = request(&agent(), API)?;
     let data: Response = serde_json::from_reader(response.into_reader().take(4 * 1024 * 1024))
         .map_err(|e| e.to_string())?;
@@ -190,6 +191,10 @@ pub fn download(
     directory: PathBuf,
     mut progress: impl FnMut(u8),
 ) -> Result<Download, String> {
+    crate::diagnostics::event(
+        "updater",
+        &format!("download_started kind={:?}", release.kind),
+    );
     let agent = agent();
     let mut manifest = String::new();
     request(&agent, &release.checksums.browser_download_url)?
@@ -267,6 +272,10 @@ fn quote(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
 }
 pub fn install(download: &Download, directory: &Path) -> Result<(), String> {
+    crate::diagnostics::event(
+        "updater",
+        &format!("install_handoff kind={:?}", download.kind),
+    );
     fs::create_dir_all(directory).map_err(|e| e.to_string())?;
     let result = directory.join("last-result.txt");
     fs::write(&result, "pending").map_err(|e| e.to_string())?;
@@ -387,7 +396,8 @@ exec >>"$result.log" 2>&1
 failed() {
   printf "error: Installation fehlgeschlagen; siehe Update-Protokoll.\n" > "$result"
   case "$mode" in
-    flatpak-user|flatpak-system) /usr/bin/flatpak run com.github.OnlySecci.EditorTool >/dev/null 2>&1 & ;;
+    flatpak-user) /usr/bin/flatpak run --user com.github.OnlySecci.EditorTool >/dev/null 2>&1 & ;;
+    flatpak-system) /usr/bin/flatpak run --system com.github.OnlySecci.EditorTool >/dev/null 2>&1 & ;;
     *) "$destination" >/dev/null 2>&1 & ;;
   esac
 }
@@ -395,8 +405,11 @@ trap failed EXIT
 case "$mode" in
  flatpak-user|flatpak-system)
    while /usr/bin/flatpak ps --columns=application | grep -Fxq com.github.OnlySecci.EditorTool; do sleep 1; done
-   scope=--user; [ "$mode" != flatpak-system ] || scope=--system
-   /usr/bin/flatpak install "$scope" --noninteractive -y --bundle "$payload"
+   if [ "$mode" = flatpak-system ]; then
+     pkexec /usr/bin/flatpak install --system --noninteractive -y --bundle "$payload"
+   else
+     /usr/bin/flatpak install --user --noninteractive -y --bundle "$payload"
+   fi
    ;;
  *)
    while kill -0 "$editor_pid" 2>/dev/null; do sleep 1; done
@@ -421,7 +434,8 @@ esac
 printf 'ok\n' > "$result"
 trap - EXIT
 case "$mode" in
- flatpak-user|flatpak-system) /usr/bin/flatpak run com.github.OnlySecci.EditorTool >/dev/null 2>&1 & ;;
+ flatpak-user) /usr/bin/flatpak run --user com.github.OnlySecci.EditorTool >/dev/null 2>&1 & ;;
+    flatpak-system) /usr/bin/flatpak run --system com.github.OnlySecci.EditorTool >/dev/null 2>&1 & ;;
  *) "$destination" >/dev/null 2>&1 & ;;
 esac
 "#).map_err(|e|e.to_string())?;
