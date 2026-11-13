@@ -16,7 +16,25 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 jobs:
+  configuration:
+    name: Release configuration
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Require durable signing configuration for releases
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+        env:
+          HAS_UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY_B64 != '' }}
+        run: |
+          python3 - <<'PY'
+          import base64, os
+          from pathlib import Path
+          key = base64.b64decode(Path('assets/update-public-key.base64').read_text().strip(), validate=True)
+          if len(key) != 32 or os.environ['HAS_UPDATE_SIGNING_KEY'] != 'true':
+              raise SystemExit('Pinned public key and durable Actions signing secret are required before release builds')
+          PY
   package:
+    needs: configuration
     name: Package ${{ matrix.platform }}
     strategy:
       fail-fast: false
@@ -132,6 +150,11 @@ jobs:
           pattern: packages-*
           merge-multiple: true
           path: packages
+      - name: Sign complete package metadata
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+          UPDATE_SIGNING_KEY_B64: ${{ secrets.UPDATE_SIGNING_KEY_B64 }}
+        run: python3 scripts/release-metadata.py
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -140,5 +163,4 @@ jobs:
           SOURCE_COMMIT: ${{ github.sha }}
         run: |
           cd packages
-          sha256sum * > SHA256SUMS.txt
           gh release create "$RELEASE_TAG" --target "$SOURCE_COMMIT" --title "EditorTool $RELEASE_TAG" --notes-file ../RELEASE_NOTES.md ./*

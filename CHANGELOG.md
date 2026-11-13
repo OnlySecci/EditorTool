@@ -1,5 +1,15 @@
 # Changelog
 
+## V1.5.0 — 2026-11-13
+
+- Unabhängige Ed25519-Update-Metadaten mit fester Vertrauensbasis, Versionsbindung und erneuter Paketprüfung vor Installation. Release verlangt alle 16 Pakete und einen dauerhaft gespeicherten passenden Actions-Signierschlüssel.
+- Begrenztes Einlesen, begrenzte Bilddecoder und Gesamtpixel-/Bildanzahlgrenzen auch für Import, Zwischenablage und empfangene Dokumente.
+- Restriktive lokale Rechte und kryptografische Instanz-Tokens; feste Sync-Gesamtzeitlimits, Parallelitäts- und IP-Ratenlimits.
+- Speicherübersicht und getrennte Bereinigung; begrenzte lokale Dateihistorie und Wiederherstellen als neuer Tab; Übersicht über Geräte- und Dokumentberechtigungen.
+- Flatpak-Dateiauswahl-Portale statt pauschaler Home-Freigabe. Bestehende Host-Update-Möglichkeit bleibt erhalten.
+- Ergänzende Codeprüfung: native Dateirechte beim Speichern erhalten, Portal-Dateien ohne nicht freigegebene temporäre Nachbardateien schreiben, abgelaufene oder bereits überholte signierte Updates ablehnen. Speicher- und Berechtigungsübersicht als Tabs.
+- Release-Builds und Paketierung über die Plattformmatrix; keine Tests oder App-Starts.
+
 ## V1.4.9 — 2026-11-12
 
 - Separate closed-window recovery history from the automatically restored session.

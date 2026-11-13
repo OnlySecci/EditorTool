@@ -1,4 +1,5 @@
 //! On-demand GitHub release checks and verified, platform-native update handoff.
+use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
@@ -12,6 +13,139 @@ use std::{
 const API: &str = "https://api.github.com/repos/OnlySecci/EditorTool/releases/latest";
 const DOWNLOADS: &str = "https://github.com/OnlySecci/EditorTool/releases/download/";
 const LIMIT: u64 = 256 * 1024 * 1024;
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SignedMetadata {
+    schema: u32,
+    issued_at: u64,
+    expires_at: u64,
+    version: String,
+    tag: String,
+    assets: Vec<SignedAsset>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SignedAsset {
+    name: String,
+    size: u64,
+    sha256: String,
+}
+fn fetch_small(url: &str, limit: u64) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    request(&agent(), url)?
+        .into_reader()
+        .take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() as u64 > limit {
+        return Err("Update-Metadaten sind zu gross.".into());
+    }
+    Ok(bytes)
+}
+fn verify_metadata(bytes: &[u8], signature: &[u8]) -> Result<SignedMetadata, String> {
+    let key = STANDARD
+        .decode(include_str!("../assets/update-public-key.base64").trim())
+        .map_err(|_| "Ungültiger Update-Vertrauensschlüssel.")?;
+    if key.len() != 32 {
+        return Err("Update-Vertrauensschlüssel ist noch nicht eingerichtet.".into());
+    }
+    let signature = STANDARD
+        .decode(
+            signature
+                .iter()
+                .copied()
+                .filter(|b| !b.is_ascii_whitespace())
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|_| "Ungültige Update-Signatur.")?;
+    ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, key)
+        .verify(bytes, &signature)
+        .map_err(|_| "Update-Signatur stimmt nicht. Installation gesperrt.")?;
+    let signed: SignedMetadata = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    let latest = version(&signed.version).ok_or("Ungültige signierte Version.")?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "Systemzeit ungültig.")?
+        .as_secs();
+    if signed.issued_at > now.saturating_add(300)
+        || signed.expires_at <= now
+        || signed.expires_at <= signed.issued_at
+        || signed.expires_at - signed.issued_at > 366 * 86400
+    {
+        return Err(
+            "Signierte Update-Metadaten sind abgelaufen oder die Systemzeit stimmt nicht.".into(),
+        );
+    }
+    if signed.version != format!("{}.{}.{}", latest.0, latest.1, latest.2)
+        || signed.schema != 1
+        || signed.tag != format!("V{}", signed.version)
+        || latest <= version(env!("CARGO_PKG_VERSION")).unwrap()
+        || signed.assets.len() != 16
+    {
+        return Err("Signierte Update-Version ist ungültig oder nicht neuer.".into());
+    }
+    let highwater = crate::settings_path()
+        .parent()
+        .unwrap()
+        .join("update-highest.txt");
+    if highwater.exists() {
+        let saved = crate::limits::read(&highwater, 128).map_err(|e| e.to_string())?;
+        let text =
+            std::str::from_utf8(&saved).map_err(|_| "Ungültiger Update-Versionsspeicher.")?;
+        if version(text).ok_or("Ungültiger Update-Versionsspeicher.")? > latest {
+            return Err(
+                "Älteres signiertes Update abgelehnt; eine höhere Version ist bereits bekannt."
+                    .into(),
+            );
+        }
+    }
+    let mut names = std::collections::BTreeSet::new();
+    for a in &signed.assets {
+        if !names.insert(&a.name)
+            || a.name.is_empty()
+            || a.name.len() > 160
+            || !a
+                .name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+            || a.size == 0
+            || a.size > LIMIT
+            || a.sha256.len() != 64
+            || !a
+                .sha256
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        {
+            return Err("Ungültiger signierter Paketeintrag.".into());
+        }
+    }
+    Ok(signed)
+}
+fn verify_payload(path: &Path, entry: &SignedAsset) -> Result<(), String> {
+    let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
+    let metadata = file.metadata().map_err(|e| e.to_string())?;
+    if !metadata.is_file() || metadata.len() != entry.size || metadata.len() > LIMIT {
+        return Err("Update-Paketgrösse wurde verändert.".into());
+    }
+    let mut hash = Sha256::new();
+    let mut bytes = [0u8; 65536];
+    let mut total = 0;
+    loop {
+        let n = file.read(&mut bytes).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        total += n as u64;
+        if total > entry.size {
+            return Err("Update-Paket wurde verändert.".into());
+        }
+        hash.update(&bytes[..n]);
+    }
+    if total != entry.size || format!("{:x}", hash.finalize()) != entry.sha256 {
+        return Err("Erneute Update-Integritätsprüfung fehlgeschlagen.".into());
+    }
+    Ok(())
+}
 #[derive(Clone, Debug)]
 pub enum Kind {
     WindowsSetup,
@@ -44,13 +178,18 @@ pub struct Release {
     pub title: String,
     pub notes: String,
     pub asset: Asset,
-    pub checksums: Asset,
+    pub metadata: Vec<u8>,
+    pub signature: Vec<u8>,
+    pub expected: String,
     pub kind: Kind,
 }
 #[derive(Clone, Debug)]
 pub struct Download {
     pub payload: PathBuf,
     pub kind: Kind,
+    metadata: Vec<u8>,
+    signature: Vec<u8>,
+    name: String,
 }
 fn version(text: &str) -> Option<(u64, u64, u64)> {
     let mut parts = text.trim_start_matches(['v', 'V']).split('.');
@@ -166,23 +305,64 @@ pub fn check() -> Result<Option<Release>, String> {
         .find(|a| a.name == name)
         .cloned()
         .ok_or("Für diese Installation fehlt das Update-Paket im Release.")?;
-    let checksums = data
+    let metadata_asset = data
         .assets
         .iter()
-        .find(|a| a.name == "SHA256SUMS.txt")
-        .cloned()
-        .ok_or("Prüfsummen fehlen im Release.")?;
-    for item in [&asset, &checksums] {
-        if !item.browser_download_url.starts_with(DOWNLOADS) {
+        .find(|a| a.name == "update-metadata.json")
+        .ok_or("Signierte Update-Metadaten fehlen.")?;
+    let signature_asset = data
+        .assets
+        .iter()
+        .find(|a| a.name == "update-metadata.sig")
+        .ok_or("Update-Signatur fehlt.")?;
+    for item in [&asset, metadata_asset, signature_asset] {
+        let expected_url = format!("{DOWNLOADS}{}/{}", data.tag_name, item.name);
+        if item.browser_download_url != expected_url {
             return Err("Unerwartete Download-Adresse im Release.".into());
         }
     }
+    let metadata = fetch_small(&metadata_asset.browser_download_url, 65536)?;
+    let signature = fetch_small(&signature_asset.browser_download_url, 256)?;
+    let signed = verify_metadata(&metadata, &signature)?;
+    if signed.tag != data.tag_name || version(&signed.version) != Some(latest) {
+        return Err("Signierte Version und Release stimmen nicht überein.".into());
+    }
+    let entry = signed
+        .assets
+        .iter()
+        .find(|a| a.name == name)
+        .ok_or("Paket fehlt in signierten Metadaten.")?;
+    if entry.size != asset.size {
+        return Err("Signierte Paketgrösse stimmt nicht überein.".into());
+    }
+    let expected = entry.sha256.clone();
+    // Remember authenticated observations, so an older release cannot replace
+    // a newer update already offered to this installation.
+    let highwater = crate::settings_path()
+        .parent()
+        .unwrap()
+        .join("update-highest.txt");
+    if highwater.exists() {
+        let saved = crate::limits::read(&highwater, 128).map_err(|e| e.to_string())?;
+        let saved =
+            std::str::from_utf8(&saved).map_err(|_| "Ungültiger Update-Versionsspeicher.")?;
+        if version(saved).ok_or("Ungültiger Update-Versionsspeicher.")? > latest {
+            return Err(
+                "Ein neueres signiertes Update wurde bereits gesehen. Älteres Angebot abgelehnt."
+                    .into(),
+            );
+        }
+    }
+    crate::session::atomic_write(&highwater, signed.version.as_bytes())
+        .map_err(|e| e.to_string())?;
     Ok(Some(Release {
         tag: data.tag_name,
         title: data.name.unwrap_or_else(|| name.clone()),
         notes: data.body.unwrap_or_default(),
         asset,
-        checksums,
+        metadata,
+        signature,
+        expected,
         kind,
     }))
 }
@@ -196,31 +376,19 @@ pub fn download(
         &format!("download_started kind={:?}", release.kind),
     );
     let agent = agent();
-    let mut manifest = String::new();
-    request(&agent, &release.checksums.browser_download_url)?
-        .into_reader()
-        .take(65537)
-        .read_to_string(&mut manifest)
-        .map_err(|e| e.to_string())?;
-    if manifest.len() > 65536 {
-        return Err("Prüfsummendatei ist zu gross.".into());
+    let signed = verify_metadata(&release.metadata, &release.signature)?;
+    let entry = signed
+        .assets
+        .iter()
+        .find(|a| a.name == release.asset.name)
+        .ok_or("Signiertes Paket fehlt.")?;
+    if signed.tag != release.tag
+        || entry.size != release.asset.size
+        || entry.sha256 != release.expected
+    {
+        return Err("Update-Metadaten wurden verändert.".into());
     }
-    let expected = manifest
-        .lines()
-        .find_map(|line| {
-            let mut fields = line.split_whitespace();
-            let hash = fields.next()?;
-            let name = fields.next()?.trim_start_matches('*');
-            if name == release.asset.name
-                && hash.len() == 64
-                && hash.bytes().all(|b| b.is_ascii_hexdigit())
-            {
-                Some(hash.to_ascii_lowercase())
-            } else {
-                None
-            }
-        })
-        .ok_or("Prüfsumme für das ausgewählte Paket fehlt.")?;
+    let expected = &entry.sha256;
     if release.asset.size == 0 || release.asset.size > LIMIT {
         return Err("Update-Paket hat eine unerwartete Grösse.".into());
     }
@@ -228,14 +396,14 @@ pub fn download(
         .duration_since(UNIX_EPOCH)
         .map_err(|e| e.to_string())?
         .as_nanos();
-    let directory = directory.join(format!("update-{nonce}"));
-    fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+    crate::private_fs::directory(&directory).map_err(|e| e.to_string())?;
+    let directory = directory.join(format!(
+        "update-{nonce}-{}",
+        crate::private_fs::random_token().map_err(|e| e.to_string())?
+    ));
+    crate::private_fs::directory(&directory).map_err(|e| e.to_string())?;
     let payload = directory.join(&release.asset.name);
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&payload)
-        .map_err(|e| e.to_string())?;
+    let mut file = crate::private_fs::create(&payload).map_err(|e| e.to_string())?;
     let mut reader = request(&agent, &release.asset.browser_download_url)?.into_reader();
     let mut hash = Sha256::new();
     let mut buffer = [0u8; 65536];
@@ -259,12 +427,15 @@ pub fn download(
         }
     }
     file.sync_all().map_err(|e| e.to_string())?;
-    if count != release.asset.size || format!("{:x}", hash.finalize()) != expected {
+    if count != release.asset.size || format!("{:x}", hash.finalize()) != *expected {
         return Err("Update-Prüfsumme stimmt nicht. Das Paket wird nicht installiert.".into());
     }
     Ok(Download {
         payload,
         kind: release.kind,
+        metadata: release.metadata,
+        signature: release.signature,
+        name: release.asset.name,
     })
 }
 #[cfg(target_os = "macos")]
@@ -272,23 +443,32 @@ fn quote(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
 }
 pub fn install(download: &Download, directory: &Path) -> Result<(), String> {
+    let signed = verify_metadata(&download.metadata, &download.signature)?;
+    let entry = signed
+        .assets
+        .iter()
+        .find(|a| a.name == download.name)
+        .ok_or("Signiertes Paket fehlt.")?;
+    verify_payload(&download.payload, entry)?;
+    let expected = &entry.sha256;
     crate::diagnostics::event(
         "updater",
         &format!("install_handoff kind={:?}", download.kind),
     );
-    fs::create_dir_all(directory).map_err(|e| e.to_string())?;
+    crate::private_fs::directory(directory).map_err(|e| e.to_string())?;
     let result = directory.join("last-result.txt");
-    fs::write(&result, "pending").map_err(|e| e.to_string())?;
+    crate::session::atomic_write(&result, b"pending").map_err(|e| e.to_string())?;
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let pid = std::process::id().to_string();
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         let helper = download.payload.parent().unwrap().join("install.ps1");
-        fs::write(&helper,r#"param([string]$payload,[string]$destination,[int]$editorProcessId,[string]$mode,[string]$result)
+        fs::write(&helper,r#"param([string]$payload,[string]$destination,[int]$editorProcessId,[string]$mode,[string]$result,[string]$expected)
 $ErrorActionPreference='Stop'
 Wait-Process -Id $editorProcessId -ErrorAction SilentlyContinue
 try {
+  if((Get-FileHash -LiteralPath $payload -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected){throw 'Update integrity check failed'}
   if($mode -eq 'setup') {
     $installer=Start-Process -FilePath $payload -ArgumentList '/S' -WindowStyle Hidden -Wait -PassThru
     if($installer.ExitCode -ne 0){throw "Installer exit code: $($installer.ExitCode)"}
@@ -323,6 +503,7 @@ try {
                 "portable"
             })
             .arg(result)
+            .arg(expected)
             .creation_flags(0x08000000)
             .spawn()
             .map_err(|e| e.to_string())?;
@@ -364,10 +545,12 @@ try {
         );
         let helper = work.join("install.sh");
         fs::write(&helper,r#"set -eu
-payload=$1; destination=$2; editor_pid=$3; result=$4; mount=$5; install_command=$6
+payload=$1; destination=$2; editor_pid=$3; result=$4; mount=$5; install_command=$6; expected=$7
 exec >>"$result.log" 2>&1
 trap 'printf "error: Installation fehlgeschlagen; siehe Update-Protokoll.\n" > "$result"; /usr/bin/hdiutil detach "$mount" >/dev/null 2>&1 || true; /usr/bin/open "$destination" || true' EXIT
 while kill -0 "$editor_pid" 2>/dev/null; do sleep 1; done
+actual=$(/usr/bin/shasum -a 256 "$payload"); actual=${actual%% *}
+[ "$actual" = "$expected" ] || exit 1
 /usr/bin/hdiutil attach "$payload" -nobrowse -readonly -mountpoint "$mount"
 if [ -w "$(dirname "$destination")" ]; then /bin/sh -c "$install_command"
 else /usr/bin/osascript -e 'on run argv' -e 'do shell script (item 1 of argv) with administrator privileges' -e 'end run' "$install_command"; fi
@@ -384,6 +567,7 @@ trap - EXIT
             .arg(result)
             .arg(mount)
             .arg(command)
+            .arg(expected)
             .spawn()
             .map_err(|e| e.to_string())?;
     }
@@ -391,7 +575,7 @@ trap - EXIT
     {
         let helper = download.payload.parent().unwrap().join("install.sh");
         fs::write(&helper,r#"set -eu
-payload=$1; destination=$2; editor_pid=$3; mode=$4; result=$5
+payload=$1; destination=$2; editor_pid=$3; mode=$4; result=$5; expected=$6
 exec >>"$result.log" 2>&1
 failed() {
   printf "error: Installation fehlgeschlagen; siehe Update-Protokoll.\n" > "$result"
@@ -402,9 +586,14 @@ failed() {
   esac
 }
 trap failed EXIT
+verify_payload() {
+  actual=$(sha256sum "$payload"); actual=${actual%% *}
+  [ "$actual" = "$expected" ]
+}
 case "$mode" in
  flatpak-user|flatpak-system)
    while /usr/bin/flatpak ps --columns=application | grep -Fxq com.github.OnlySecci.EditorTool; do sleep 1; done
+   verify_payload
    if [ "$mode" = flatpak-system ]; then
      pkexec /usr/bin/flatpak install --system --noninteractive -y --bundle "$payload"
    else
@@ -413,6 +602,7 @@ case "$mode" in
    ;;
  *)
    while kill -0 "$editor_pid" 2>/dev/null; do sleep 1; done
+   verify_payload
    case "$mode" in
     deb) pkexec /usr/bin/dpkg -i "$payload" ;;
     rpm) pkexec /usr/bin/rpm -U --replacepkgs "$payload" ;;
@@ -466,7 +656,8 @@ esac
             .arg(exe)
             .arg(pid)
             .arg(mode)
-            .arg(result);
+            .arg(result)
+            .arg(expected);
         if flatpak {
             if !command.status().map_err(|e| e.to_string())?.success() {
                 return Err("Der Flatpak-Host konnte die Aktualisierung nicht starten.".into());

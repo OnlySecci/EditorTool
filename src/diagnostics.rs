@@ -22,7 +22,8 @@ fn millis() -> u128 {
 pub fn init(root: &Path) {
     let result = (|| -> io::Result<Log> {
         let dir = root.join("logs");
-        fs::create_dir_all(&dir)?;
+        crate::private_fs::directory(root)?;
+        crate::private_fs::directory(&dir)?;
         let mut old: Vec<_> = fs::read_dir(&dir)?
             .filter_map(Result::ok)
             .filter(|e| {
@@ -40,10 +41,7 @@ pub fn init(root: &Path) {
             millis(),
             std::process::id()
         ));
-        let file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&path)?;
+        let file = crate::private_fs::create(&path)?;
         Ok(Log { path, file })
     })();
     if let Ok(log) = result {
@@ -140,7 +138,8 @@ fn redact(mut text: String) -> String {
     text
 }
 pub fn export(root: &Path, runtime: &str) -> io::Result<()> {
-    let mut chooser = dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseSaveFile);
+    let mut chooser =
+        crate::file_dialog::Chooser::new(dialog::NativeFileChooserType::BrowseSaveFile);
     chooser.set_title("Diagnoseprotokoll exportieren");
     chooser.set_filter("Protokoll\t*.log");
     chooser.set_preset_file(&format!("EditorTool-Diagnose-{}.log", millis()));

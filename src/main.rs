@@ -5,9 +5,12 @@ mod core;
 #[cfg(target_os = "linux")]
 mod desktop;
 mod diagnostics;
+mod file_dialog;
 mod ipc;
+mod limits;
 mod peer;
 mod preferences;
+mod private_fs;
 mod rich;
 mod session;
 mod settings_page;
@@ -15,6 +18,8 @@ mod sharing_runtime;
 mod sharing_ui;
 mod shortcuts;
 mod split;
+mod storage;
+mod storage_ui;
 mod syntax;
 mod tab_menu;
 mod theme;
@@ -56,6 +61,10 @@ const ADD_TAB_SIZE: i32 = 30;
 
 #[derive(Clone)]
 enum Action {
+    Storage,
+    StorageClean,
+    FileHistory,
+    Permissions,
     SharingSettings,
     ApplySharing,
     KeepTray,
@@ -252,7 +261,9 @@ impl Document {
             return match self.page {
                 1 => "Einstellungen",
                 2 => "Clients und Sync",
-                _ => "Tastenkürzel",
+                3 => "Tastenkürzel",
+                4 => "Speicher und Dateistände",
+                _ => "Freigaben und Berechtigungen",
             }
             .into();
         }
@@ -494,6 +505,21 @@ impl EditorWindow {
         menu.set_text_size(13);
         menu.set_text_color(MUTED);
         let entries = [
+            (
+                "&Einstellungen/Speicher und Bereinigung…",
+                Shortcut::None,
+                Action::Storage,
+            ),
+            (
+                "&Einstellungen/Freigaben und Berechtigungen…",
+                Shortcut::None,
+                Action::Permissions,
+            ),
+            (
+                "&Datei/Ältere Dateistände…",
+                Shortcut::None,
+                Action::FileHistory,
+            ),
             (
                 "&Einstellungen/Allgemein…",
                 Shortcut::Command | ',',
@@ -1255,8 +1281,11 @@ impl EditorWindow {
         let d = &mut self.docs[index];
         let mut path = if save_as || d.path.is_none() {
             let mut chooser =
-                dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseSaveFile);
+                file_dialog::Chooser::new(dialog::NativeFileChooserType::BrowseSaveFile);
             chooser.set_title("UTF-8-Text speichern");
+            if d.left.has_images() {
+                chooser.set_preset_file("Dokument.etdoc");
+            }
             chooser.set_option(dialog::NativeFileChooserOptions::SaveAsConfirm);
             chooser.show();
             let path = chooser.filename();
@@ -1269,6 +1298,10 @@ impl EditorWindow {
         };
         let rich_file = d.left.has_images() || path.extension().is_some_and(|e| e == "etdoc");
         if rich_file && path.extension().is_none_or(|e| e != "etdoc") {
+            if file_dialog::portal_required() {
+                dialog::alert_default("Bitte im Speichern-Dialog einen Namen mit der Endung .etdoc wählen, damit die Dateifreigabe exakt stimmt.");
+                return false;
+            }
             let original_language = d.language(false);
             path.set_extension("etdoc");
             if path.exists()
@@ -1290,7 +1323,14 @@ impl EditorWindow {
         } else {
             d.left.plain_text()
         };
-        match std::fs::write(&path, content.as_bytes()) {
+        if let Err(error) = rich::validate_snapshot(&content) {
+            dialog::alert_default(&error);
+            return false;
+        }
+        let history_root = settings_path().parent().unwrap().to_owned();
+        let saved = storage::preserve(&history_root, &path)
+            .and_then(|_| storage::write_document(&path, content.as_bytes()));
+        match saved {
             Ok(()) => {
                 if let Some(b) = &mut d.sharing {
                     b.disk_hash = Some(peer::hash(content.as_bytes()));
@@ -1394,7 +1434,7 @@ impl EditorWindow {
             }
             Action::InsertImage => {
                 let mut chooser =
-                    dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseFile);
+                    file_dialog::Chooser::new(dialog::NativeFileChooserType::BrowseFile);
                 chooser.set_title("Bild einfügen");
                 chooser.set_filter("Bilder\t*.{png,jpg,jpeg,bmp,gif}");
                 chooser.show();
@@ -1573,14 +1613,14 @@ impl EditorWindow {
                     return;
                 }
                 let mut chooser =
-                    dialog::NativeFileChooser::new(dialog::NativeFileChooserType::BrowseFile);
+                    file_dialog::Chooser::new(dialog::NativeFileChooserType::BrowseFile);
                 chooser.set_title("UTF-8-Text öffnen");
                 chooser.show();
                 let path = chooser.filename();
                 if path.as_os_str().is_empty() {
                     return;
                 }
-                match std::fs::read_to_string(&path) {
+                match limits::read_text(&path) {
                     Ok(text) => {
                         if right {
                             self.show_compare(true);
@@ -1846,7 +1886,7 @@ impl EditorWindow {
             let d = &mut self.docs[index];
             d.id = tab.id;
             d.cache_key = tab.key.clone();
-            d.page = tab.page.min(3);
+            d.page = tab.page.min(5);
             if d.page != 0 {
                 d.panes.hide();
                 d.status.hide();
@@ -1968,6 +2008,8 @@ struct Runtime {
     sharing: Option<peer::Service>,
     clients: sharing_ui::Clients,
     keyboard: shortcuts::Panel,
+    storage_panel: storage_ui::Panel,
+    permissions_panel: storage_ui::Panel,
     transfer: sharing_ui::Transfer,
     conflicts: sharing_ui::Conflicts,
     share_timers: std::collections::HashMap<String, sharing_runtime::Pending>,
@@ -2085,7 +2127,7 @@ impl Runtime {
                 };
                 if let Some(Some(w)) = self.windows.get_mut(id) {
                     for path in paths {
-                        match std::fs::read_to_string(&path) {
+                        match limits::read_text(&path) {
                             Ok(text) => {
                                 let active = &w.docs[w.active];
                                 if active.page != 0
@@ -2396,6 +2438,13 @@ impl Runtime {
                     );
                 }
             },
+            Action::Storage => self.open_management_tab(wid, 4),
+            Action::StorageClean => {
+                self.storage_dialog();
+                self.open_management_tab(wid, 4);
+            }
+            Action::FileHistory => self.history_dialog(wid),
+            Action::Permissions => self.open_management_tab(wid, 5),
             Action::RelayoutSplit => self.layout_splits(),
             Action::ExportDiagnostics => {
                 let info = format!(
@@ -2521,6 +2570,20 @@ fn main() {
     let _app = app::App::default().with_scheme(app::Scheme::Base);
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let config = settings_path();
+    if let Err(e) = private_fs::directory(config.parent().unwrap()).and_then(|_| {
+        for name in ["settings.txt", "shortcuts.json", "update-highest.txt"] {
+            let path = config.parent().unwrap().join(name);
+            if path.exists() {
+                private_fs::restrict(&path, false)?;
+            }
+        }
+        Ok(())
+    }) {
+        dialog::alert_default(&format!(
+            "Privater Speicher konnte nicht geschützt werden: {e}"
+        ));
+        return;
+    }
     diagnostics::init(config.parent().unwrap());
     preferences::load(&config);
     if let Err(e) = shortcuts::load(&config) {
@@ -2618,6 +2681,8 @@ fn main() {
         sharing,
         clients: sharing_ui::Clients::new(tx),
         keyboard: shortcuts::Panel::new(tx),
+        storage_panel: storage_ui::Panel::new(tx, false),
+        permissions_panel: storage_ui::Panel::new(tx, true),
         transfer: sharing_ui::Transfer::new(tx),
         conflicts: sharing_ui::Conflicts::new(tx),
         share_timers: Default::default(),
@@ -2630,6 +2695,15 @@ fn main() {
         let mut runtime = state.borrow_mut();
         runtime.weak_self = Rc::downgrade(&state);
         runtime.restore_splits();
+        for page in [4, 5] {
+            if let Some(wid) = runtime
+                .windows
+                .iter()
+                .position(|w| w.as_ref().is_some_and(|w| w.docs[w.active].page == page))
+            {
+                runtime.open_management_tab(wid, page);
+            }
+        }
         for w in runtime.windows.iter_mut().flatten().filter(|w| !w.embedded) {
             w.win.show();
             chrome::dark_title(&w.win);

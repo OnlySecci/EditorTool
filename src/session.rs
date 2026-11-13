@@ -98,9 +98,16 @@ fn valid_key(key: &str) -> bool {
 }
 
 pub(crate) fn atomic_write(path: &Path, data: &[u8]) -> io::Result<()> {
-    let tmp = path.with_extension("pending");
+    let tmp = path.with_extension(format!("{}.pending", crate::private_fs::random_token()?));
+    struct Pending(PathBuf);
+    impl Drop for Pending {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
+    let _cleanup = Pending(tmp.clone());
     {
-        let mut file = File::create(&tmp)?;
+        let mut file = crate::private_fs::create(&tmp)?;
         file.write_all(data)?;
         file.sync_all()?;
     }
@@ -128,8 +135,64 @@ pub(crate) fn atomic_write(path: &Path, data: &[u8]) -> io::Result<()> {
 }
 
 impl Store {
+    pub fn orphan_files(&self, current: &Snapshot) -> io::Result<Vec<PathBuf>> {
+        self.flush().map_err(io::Error::other)?;
+        let mut keep = std::collections::BTreeSet::new();
+        let mut remember = |snapshot: &Snapshot| {
+            for tab in snapshot
+                .windows
+                .iter()
+                .chain(&snapshot.closed)
+                .flat_map(|w| &w.tabs)
+            {
+                keep.insert(format!("{}.left.txt", tab.key));
+                keep.insert(format!("{}.right.txt", tab.key));
+            }
+        };
+        remember(current);
+        for name in ["session.json", "session.previous.json"] {
+            let path = self.root.join(name);
+            if path.exists() {
+                let snapshot: Snapshot =
+                    serde_json::from_slice(&crate::limits::read(&path, 4 * 1024 * 1024)?)?;
+                if snapshot.version != 1 {
+                    return Err(io::Error::other(
+                        "Unbekannte Sitzungsversion; Bereinigung gesperrt.",
+                    ));
+                }
+                remember(&snapshot);
+            }
+        }
+        let mut files = Vec::new();
+        for entry in fs::read_dir(&self.root)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let key = name
+                .strip_suffix(".left.txt")
+                .or_else(|| name.strip_suffix(".right.txt"));
+            if key.is_some_and(valid_key)
+                && !keep.contains(name.as_ref())
+                && entry.file_type()?.is_file()
+            {
+                files.push(entry.path());
+            }
+        }
+        Ok(files)
+    }
     pub fn new(root: PathBuf, errors: fltk::app::Sender<crate::Message>) -> Result<Self, String> {
-        fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+        crate::private_fs::directory(&root).map_err(|e| e.to_string())?;
+        for entry in fs::read_dir(&root).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            if crate::private_fs::is_link(
+                &fs::symlink_metadata(entry.path()).map_err(|e| e.to_string())?,
+            ) {
+                return Err("Verknüpfung im Sitzungscache abgelehnt.".into());
+            }
+            if entry.file_type().map_err(|e| e.to_string())?.is_file() {
+                crate::private_fs::restrict(&entry.path(), false).map_err(|e| e.to_string())?;
+            }
+        }
         let lock = OpenOptions::new()
             .read(true)
             .write(true)
@@ -138,6 +201,8 @@ impl Store {
             .open(root.join("session.lock"))
             .map_err(|e| e.to_string())?;
         lock.try_lock().map_err(|_|"Der Sitzungscache ist bereits geöffnet. Weitere Fenster öffnest du in EditorTool über Datei → Neues Fenster (Strg/Cmd+N).".to_owned())?;
+        crate::private_fs::restrict(&root.join("session.lock"), false)
+            .map_err(|e| e.to_string())?;
         let (tx, rx) = mpsc::channel();
         let directory = root.clone();
         thread::spawn(move || {
@@ -151,7 +216,7 @@ impl Store {
                                 atomic_write(&directory.join(name), text.as_bytes())?;
                             }
                             let manifest = directory.join("session.json");
-                            if let Ok(previous) = fs::read(&manifest) {
+                            if let Ok(previous) = crate::limits::read(&manifest, 4 * 1024 * 1024) {
                                 atomic_write(&directory.join("session.previous.json"), &previous)?;
                             }
                             atomic_write(&manifest, &serde_json::to_vec(&snapshot)?)
@@ -190,7 +255,7 @@ impl Store {
             return Ok(Snapshot::default());
         }
         for file in [primary, self.root.join("session.previous.json")] {
-            if let Ok(bytes) = fs::read(file) {
+            if let Ok(bytes) = crate::limits::read(&file, 4 * 1024 * 1024) {
                 if let Ok(snapshot) = serde_json::from_slice::<Snapshot>(&bytes) {
                     if snapshot.version == 1
                         && snapshot
@@ -217,7 +282,7 @@ impl Store {
                 "Ungültiger Cache-Schlüssel",
             ));
         }
-        fs::read_to_string(self.root.join(format!(
+        crate::limits::read_text(&self.root.join(format!(
             "{key}.{}.txt",
             if right { "right" } else { "left" }
         )))

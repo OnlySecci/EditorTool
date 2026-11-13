@@ -378,9 +378,10 @@ pub fn load(config: &std::path::Path) -> Result<(), String> {
     if !file.exists() {
         return Ok(());
     }
-    let saved: Vec<serde_json::Value> =
-        serde_json::from_slice(&std::fs::read(file).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
+    let saved: Vec<serde_json::Value> = serde_json::from_slice(
+        &crate::limits::read(&file, 1024 * 1024).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
     let mut values = defaults();
     let saved: Vec<Binding> = saved
         .into_iter()

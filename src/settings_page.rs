@@ -104,11 +104,32 @@ impl Runtime {
     pub fn park_settings_pages(&mut self) {
         self.clients.page.park(&mut self.clients.win);
         self.keyboard.page.park(&mut self.keyboard.win);
+        self.storage_panel.page.park(&mut self.storage_panel.win);
+        self.permissions_panel
+            .page
+            .park(&mut self.permissions_panel.win);
         for w in self.windows.iter_mut().flatten() {
             w.settings.page.park(&mut w.settings.win);
         }
     }
     pub fn mount_settings_pages(&mut self) {
+        for page in [4, 5] {
+            let panel = if page == 4 {
+                &mut self.storage_panel
+            } else {
+                &mut self.permissions_panel
+            };
+            if let Some(w) = self
+                .windows
+                .iter_mut()
+                .flatten()
+                .find(|w| w.docs[w.active].page == page)
+            {
+                panel.page.mount(&mut w.docs[w.active].group);
+            } else {
+                panel.page.park(&mut panel.win);
+            }
+        }
         for w in self.windows.iter_mut().flatten() {
             if w.docs[w.active].page == 1 {
                 w.settings.page.mount(&mut w.docs[w.active].group);

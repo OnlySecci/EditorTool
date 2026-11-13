@@ -25,6 +25,72 @@ pub fn set_icon(win: &mut Window) {
     }
 }
 
+pub fn select_version(labels: &[String]) -> Option<usize> {
+    Group::set_current(None::<&Group>);
+    let selected = Rc::new(Cell::new(None));
+    let mut win = Window::default()
+        .with_size(600, 410)
+        .with_label("Ältere Dateistände")
+        .center_screen();
+    win.set_color(PANEL);
+    win.make_modal(true);
+    set_icon(&mut win);
+    let mut root = Flex::new(20, 20, 560, 370, None).column();
+    root.set_spacing(12);
+    let mut hint = Frame::default().with_label(
+        "Stand auswählen und als neuen Tab öffnen. Die aktuelle Datei bleibt erhalten.",
+    );
+    hint.set_label_color(MUTED);
+    hint.set_label_size(13);
+    root.fixed(&hint, 36);
+    let mut list = fltk::browser::HoldBrowser::default();
+    list.set_color(BG);
+    list.set_label_color(theme::TEXT);
+    list.set_text_size(14);
+    list.set_format_char('\0');
+    for label in labels {
+        list.add(label);
+    }
+    let mut row = Flex::default().row();
+    row.set_spacing(12);
+    let mut cancel = Button::default().with_label("Abbrechen");
+    theme::button(&mut cancel, false, None);
+    let mut owner = win.clone();
+    cancel.set_callback(move |_| owner.hide());
+    let mut open = Button::default().with_label("Als neuen Tab öffnen");
+    theme::button(&mut open, true, None);
+    let result = selected.clone();
+    let mut owner = win.clone();
+    open.set_callback(move |_| {
+        let n = list.value();
+        if n > 0 {
+            result.set(Some(n as usize - 1));
+            owner.hide();
+        }
+    });
+    row.end();
+    root.fixed(&row, 40);
+    root.end();
+    win.end();
+    win.set_callback(|w| w.hide());
+    win.handle(|w, e| {
+        if e == Event::KeyDown && app::event_key() == Key::Escape {
+            w.hide();
+            true
+        } else {
+            false
+        }
+    });
+    win.show();
+    dark_title(&win);
+    while win.shown() {
+        app::wait();
+    }
+    let result = selected.get();
+    Window::delete(win);
+    result
+}
+
 pub fn dark_title(win: &Window) {
     #[cfg(target_os = "windows")]
     unsafe {

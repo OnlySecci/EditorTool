@@ -1,0 +1,38 @@
+name: Renew signed update metadata
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag (for example V1.5.0)
+        required: true
+        type: string
+permissions:
+  contents: write
+concurrency:
+  group: renew-metadata-${{ inputs.tag }}
+  cancel-in-progress: false
+jobs:
+  renew:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+      - name: Download existing release packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: gh release download "$RELEASE_TAG" --dir packages
+      - name: Renew metadata expiry and signature
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          UPDATE_SIGNING_KEY_B64: ${{ secrets.UPDATE_SIGNING_KEY_B64 }}
+        run: python3 scripts/release-metadata.py
+      - name: Replace metadata only
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: gh release upload "$RELEASE_TAG" packages/update-metadata.json packages/update-metadata.sig --clobber

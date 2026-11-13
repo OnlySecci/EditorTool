@@ -21,11 +21,72 @@ use std::{
         mpsc, Arc, Mutex,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 pub const PORT: u16 = 51473;
 const MAX: u64 = 64 * 1024 * 1024;
 const HEADER: usize = 512 * 1024;
+// Includes handshake, headers and body. A trickle cannot reset the deadline.
+struct DeadlineSocket {
+    socket: TcpStream,
+    started: Instant,
+}
+impl DeadlineSocket {
+    fn new(socket: TcpStream) -> Self {
+        Self {
+            socket,
+            started: Instant::now(),
+        }
+    }
+    fn remaining(&self) -> std::io::Result<Duration> {
+        Duration::from_secs(45)
+            .checked_sub(self.started.elapsed())
+            .filter(|d| !d.is_zero())
+            .map(|d| d.min(Duration::from_secs(10)))
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "Sync-Gesamtzeitlimit erreicht.",
+                )
+            })
+    }
+}
+impl std::ops::Deref for DeadlineSocket {
+    type Target = TcpStream;
+    fn deref(&self) -> &TcpStream {
+        &self.socket
+    }
+}
+impl Read for DeadlineSocket {
+    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+        self.socket.set_read_timeout(Some(self.remaining()?))?;
+        self.socket.read(bytes)
+    }
+}
+impl Write for DeadlineSocket {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.socket.set_write_timeout(Some(self.remaining()?))?;
+        self.socket.write(bytes)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.remaining()?;
+        self.socket.flush()
+    }
+}
+struct TransferPermit {
+    inner: Arc<Inner>,
+    ip: IpAddr,
+}
+impl Drop for TransferPermit {
+    fn drop(&mut self) {
+        self.inner.transfers.fetch_sub(1, Ordering::Relaxed);
+        if let Ok(mut entries) = self.inner.admissions.lock() {
+            if let Some(entry) = entries.get_mut(&self.ip) {
+                entry.0 = entry.0.saturating_sub(1);
+            }
+        }
+    }
+}
 pub type Clock = BTreeMap<String, u64>;
 pub fn hash(data: &[u8]) -> String {
     format!("{:x}", Sha256::digest(data))
@@ -248,6 +309,7 @@ struct Inner {
     stop: AtomicBool,
     transfers: AtomicUsize,
     seen: Mutex<BTreeSet<String>>,
+    admissions: Mutex<BTreeMap<IpAddr, (usize, u8, Instant)>>,
     statuses: Mutex<BTreeMap<String, bool>>,
     acknowledgements: Mutex<BTreeMap<(String, String), String>>,
     wake: mpsc::Sender<()>,
@@ -330,6 +392,7 @@ impl Inner {
         if data.len() as u64 > MAX {
             return Err("Dokument überschreitet 64 MiB.".into());
         }
+        crate::rich::validate_snapshot(data)?;
         let key = hash(data.as_bytes());
         let path = self.content_path(&key)?;
         if !path.exists() {
@@ -459,11 +522,23 @@ fn peer_valid(p: &Peer) -> bool {
 }
 impl Service {
     pub fn new(root: PathBuf, tx: fltk::app::Sender<Message>) -> Result<Self, String> {
-        fs::create_dir_all(root.join("content")).map_err(err)?;
+        crate::private_fs::directory(&root).map_err(err)?;
+        crate::private_fs::directory(&root.join("content")).map_err(err)?;
+        for dir in [&root, &root.join("content")] {
+            for entry in fs::read_dir(dir).map_err(err)? {
+                let entry = entry.map_err(err)?;
+                if crate::private_fs::is_link(&fs::symlink_metadata(entry.path()).map_err(err)?) {
+                    return Err("Verknüpfung im Freigabespeicher abgelehnt.".into());
+                }
+                if entry.file_type().map_err(err)?.is_file() {
+                    crate::private_fs::restrict(&entry.path(), false).map_err(err)?;
+                }
+            }
+        }
         let (cert, key) = if root.join("identity.der").exists() {
             (
-                fs::read(root.join("identity.der")).map_err(err)?,
-                fs::read(root.join("identity.key")).map_err(err)?,
+                crate::limits::read(&root.join("identity.der"), 16384).map_err(err)?,
+                crate::limits::read(&root.join("identity.key"), 16384).map_err(err)?,
             )
         } else {
             let identity =
@@ -471,22 +546,17 @@ impl Service {
             let cert = identity.cert.der().to_vec();
             let key = identity.key_pair.serialize_der();
             for (name, data) in [("identity.der", &cert), ("identity.key", &key)] {
-                let mut options = fs::OpenOptions::new();
-                options.write(true).create_new(true);
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::OpenOptionsExt;
-                    options.mode(0o600);
-                }
-                let mut file = options.open(root.join(name)).map_err(err)?;
+                let mut file = crate::private_fs::create(&root.join(name)).map_err(err)?;
                 file.write_all(data).map_err(err)?;
                 file.sync_all().map_err(err)?;
             }
             (cert, key)
         };
         let state = if root.join("sharing.json").exists() {
-            serde_json::from_slice(&fs::read(root.join("sharing.json")).map_err(err)?)
-                .map_err(err)?
+            serde_json::from_slice(
+                &crate::limits::read(&root.join("sharing.json"), 8 * 1024 * 1024).map_err(err)?,
+            )
+            .map_err(err)?
         } else {
             State::default()
         };
@@ -502,6 +572,7 @@ impl Service {
             stop: AtomicBool::new(false),
             transfers: AtomicUsize::new(0),
             seen: Mutex::new(BTreeSet::new()),
+            admissions: Mutex::new(BTreeMap::new()),
             statuses: Mutex::new(BTreeMap::new()),
             acknowledgements: Mutex::new(BTreeMap::new()),
             wake: wake.clone(),
@@ -557,6 +628,45 @@ impl Service {
     }
     pub fn identity(&self) -> String {
         self.inner.id.clone()
+    }
+    pub fn permissions(&self) -> String {
+        let state = self.inner.state.lock().unwrap();
+        let mut text = format!(
+            "Senden/Sync: {} · Port {}\nGerätefreigaben: {} · Ausstehende Sendungen: {}\n",
+            if state.config.enabled { "aktiv" } else { "aus" },
+            state.config.port,
+            state.config.clients.len(),
+            state.outbox.len()
+        );
+        for peer in &state.config.clients {
+            text.push_str(&format!(
+                "\nGerät: {} · {}:{}\nFingerabdruck: {}\n",
+                peer.name, peer.host, peer.port, peer.id
+            ));
+        }
+        for doc in state.docs.values() {
+            text.push_str(&format!(
+                "\nDokument: {} · {}\n",
+                doc.title,
+                if doc.active {
+                    "Sync aktiv"
+                } else {
+                    "Sync beendet"
+                }
+            ));
+            for member in &doc.members {
+                text.push_str(&format!(
+                    "  {}: {}\n",
+                    member.name,
+                    if doc.departed.contains(&member.id) {
+                        "abgemeldet"
+                    } else {
+                        "Teilnehmer – darf Änderungen abgleichen"
+                    }
+                ));
+            }
+        }
+        text
     }
     pub fn status(&self, p: &Peer) -> bool {
         self.inner
@@ -640,12 +750,37 @@ impl Service {
                         inner.transfers.fetch_sub(1, Ordering::Relaxed);
                         continue;
                     }
+                    let ip = remote.ip().to_canonical();
+                    {
+                        let mut admissions = inner.admissions.lock().unwrap();
+                        admissions.retain(|_, (active, _, since)| {
+                            *active > 0 || since.elapsed() < Duration::from_secs(60)
+                        });
+                        if !admissions.contains_key(&ip) && admissions.len() >= 128 {
+                            inner.transfers.fetch_sub(1, Ordering::Relaxed);
+                            continue;
+                        }
+                        let entry = admissions.entry(ip).or_insert((0, 0, Instant::now()));
+                        if entry.2.elapsed() >= Duration::from_secs(60) {
+                            entry.1 = 0;
+                            entry.2 = Instant::now();
+                        }
+                        if entry.0 > 0 || entry.1 >= 240 {
+                            inner.transfers.fetch_sub(1, Ordering::Relaxed);
+                            continue;
+                        }
+                        entry.0 += 1;
+                        entry.1 += 1;
+                    }
                     let inner = inner.clone();
                     thread::spawn(move || {
+                        let _permit = TransferPermit {
+                            inner: inner.clone(),
+                            ip,
+                        };
                         if let Err(error) = serve(&inner, stream, remote) {
                             crate::diagnostics::failure("sharing", "incoming_failed", &error);
                         }
-                        inner.transfers.fetch_sub(1, Ordering::Relaxed);
                     });
                 }
             });
@@ -753,7 +888,7 @@ impl Service {
         self.configure(c)
     }
     pub fn body(&self, hash: &str) -> Result<String, String> {
-        fs::read_to_string(self.inner.content_path(hash)?).map_err(err)
+        crate::limits::read_text(&self.inner.content_path(hash)?).map_err(err)
     }
     pub fn document(&self, id: &str) -> Option<Document> {
         self.inner.state.lock().unwrap().docs.get(id).cloned()
@@ -1195,11 +1330,7 @@ fn read_body(
         .root
         .join("content")
         .join(format!("{}.pending", session::new_key()));
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temp)
-        .map_err(err)?;
+    let mut file = crate::private_fs::create(&temp).map_err(err)?;
     let mut hash = Sha256::new();
     let mut left = len;
     let mut buffer = [0u8; 65536];
@@ -1220,6 +1351,9 @@ fn read_body(
         }
         file.sync_all().map_err(err)?;
         drop(file);
+        let content = crate::limits::read_text(&temp).map_err(err)?;
+        crate::rich::validate_snapshot(&content)?;
+        drop(content);
         if format!("{:x}", hash.finalize()) != revision.hash {
             return Err("Inhaltsprüfsumme stimmt nicht.".into());
         }
@@ -1235,7 +1369,8 @@ fn read_body(
     }
     result
 }
-fn serve(inner: &Arc<Inner>, mut socket: TcpStream, remote: SocketAddr) -> Result<(), String> {
+fn serve(inner: &Arc<Inner>, socket: TcpStream, remote: SocketAddr) -> Result<(), String> {
+    let mut socket = DeadlineSocket::new(socket);
     socket
         .set_read_timeout(Some(Duration::from_secs(15)))
         .map_err(err)?;
@@ -1504,10 +1639,17 @@ fn serve(inner: &Arc<Inner>, mut socket: TcpStream, remote: SocketAddr) -> Resul
 fn connect(
     inner: &Arc<Inner>,
     peer: &Peer,
-) -> Result<rustls::StreamOwned<rustls::ClientConnection, TcpStream>, String> {
-    let socket =
-        TcpStream::connect_timeout(&address(&peer.host, peer.port)?, Duration::from_secs(3))
-            .map_err(err)?;
+    started: Instant,
+) -> Result<rustls::StreamOwned<rustls::ClientConnection, DeadlineSocket>, String> {
+    let remaining = Duration::from_secs(45)
+        .checked_sub(started.elapsed())
+        .filter(|d| !d.is_zero())
+        .ok_or("Sync-Gesamtzeitlimit je Gegenstelle erreicht.")?;
+    let socket = TcpStream::connect_timeout(
+        &address(&peer.host, peer.port)?,
+        remaining.min(Duration::from_secs(3)),
+    )
+    .map_err(err)?;
     socket
         .set_read_timeout(Some(Duration::from_secs(15)))
         .map_err(err)?;
@@ -1533,7 +1675,10 @@ fn connect(
         ServerName::try_from("editortool.local").unwrap(),
     )
     .map_err(err)?;
-    Ok(rustls::StreamOwned::new(connection, socket))
+    Ok(rustls::StreamOwned::new(
+        connection,
+        DeadlineSocket { socket, started },
+    ))
 }
 fn sweep(inner: &Arc<Inner>) {
     let clients = inner.state.lock().unwrap().config.clients.clone();
@@ -1541,8 +1686,9 @@ fn sweep(inner: &Arc<Inner>) {
         if !inner.enabled.load(Ordering::Relaxed) || inner.stop.load(Ordering::Relaxed) {
             break;
         }
+        let started = Instant::now();
         let result = (|| -> Result<(), String> {
-            let mut stream = connect(inner, &peer)?;
+            let mut stream = connect(inner, &peer, started)?;
             let mut info = inner.own();
             info.host = stream
                 .sock
@@ -1571,7 +1717,7 @@ fn sweep(inner: &Arc<Inner>) {
                 .cloned()
                 .collect::<Vec<_>>();
             for (doc, target) in leaves {
-                let mut stream = connect(inner, &peer)?;
+                let mut stream = connect(inner, &peer, started)?;
                 write_header(&mut stream, &Request::Leave { doc: doc.clone() })?;
                 if matches!(read_header(&mut stream)?, Reply::Done) {
                     let mut s = inner.state.lock().unwrap();
@@ -1601,7 +1747,7 @@ fn sweep(inner: &Arc<Inner>) {
                     }) {
                         continue;
                     }
-                    let mut stream = connect(inner, &peer)?;
+                    let mut stream = connect(inner, &peer, started)?;
                     write_header(
                         &mut stream,
                         &Request::Get {
@@ -1634,7 +1780,7 @@ fn sweep(inner: &Arc<Inner>) {
                     {
                         continue;
                     }
-                    let mut stream = connect(inner, &peer)?;
+                    let mut stream = connect(inner, &peer, started)?;
                     let len = fs::metadata(inner.content_path(&local.hash)?)
                         .map_err(err)?
                         .len();
@@ -1667,7 +1813,7 @@ fn sweep(inner: &Arc<Inner>) {
                     .collect::<Vec<_>>()
             };
             for item in outbox {
-                let mut stream = connect(inner, &peer)?;
+                let mut stream = connect(inner, &peer, started)?;
                 let mut offer = item.offer.clone();
                 let host = stream
                     .sock
@@ -1686,7 +1832,7 @@ fn sweep(inner: &Arc<Inner>) {
                 let finished = match reply {
                     Reply::Done => true,
                     Reply::Accepted => {
-                        let mut stream = connect(inner, &peer)?;
+                        let mut stream = connect(inner, &peer, started)?;
                         write_header(
                             &mut stream,
                             &Request::Put {
