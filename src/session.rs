@@ -99,15 +99,16 @@ fn valid_key(key: &str) -> bool {
 
 pub(crate) fn atomic_write(path: &Path, data: &[u8]) -> io::Result<()> {
     let tmp = path.with_extension(format!("{}.pending", crate::private_fs::random_token()?));
+    struct Pending(PathBuf);
+    impl Drop for Pending {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
+    let _cleanup = Pending(tmp.clone());
     {
         let mut file = crate::private_fs::create(&tmp)?;
         file.write_all(data)?;
-        #[cfg(unix)]
-        if let Ok(existing) = fs::symlink_metadata(path) {
-            if existing.is_file() {
-                file.set_permissions(existing.permissions())?;
-            }
-        }
         file.sync_all()?;
     }
     #[cfg(windows)]
@@ -183,7 +184,9 @@ impl Store {
         crate::private_fs::directory(&root).map_err(|e| e.to_string())?;
         for entry in fs::read_dir(&root).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
-            if entry.file_type().map_err(|e| e.to_string())?.is_symlink() {
+            if crate::private_fs::is_link(
+                &fs::symlink_metadata(entry.path()).map_err(|e| e.to_string())?,
+            ) {
                 return Err("Verknüpfung im Sitzungscache abgelehnt.".into());
             }
             if entry.file_type().map_err(|e| e.to_string())?.is_file() {

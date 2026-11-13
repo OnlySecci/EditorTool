@@ -14,7 +14,7 @@ pub fn files(root: &Path) -> io::Result<Vec<PathBuf>> {
             Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
             Err(e) => return Err(e),
         };
-        if metadata.file_type().is_symlink() {
+        if crate::private_fs::is_link(&metadata) {
             continue;
         }
         for entry in fs::read_dir(&dir)? {
@@ -26,6 +26,9 @@ pub fn files(root: &Path) -> io::Result<Vec<PathBuf>> {
                 ));
             }
             let kind = entry.file_type()?;
+            if crate::private_fs::is_link(&fs::symlink_metadata(entry.path())?) {
+                continue;
+            }
             if kind.is_dir() {
                 pending.push(entry.path());
             } else if kind.is_file() {
@@ -41,7 +44,18 @@ pub fn size(root: &Path) -> io::Result<u64> {
     })
 }
 fn directory(root: &Path, path: &Path) -> io::Result<PathBuf> {
-    let canonical = path.canonicalize()?;
+    let canonical = match path.canonicalize() {
+        Ok(path) => path,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .canonicalize()?
+            .join(
+                path.file_name()
+                    .ok_or_else(|| io::Error::other("Dateiname fehlt"))?,
+            ),
+        Err(e) => return Err(e),
+    };
     Ok(root
         .join("history")
         .join(crate::peer::hash(canonical.as_os_str().as_encoded_bytes())))
@@ -126,7 +140,7 @@ pub fn remove_files(root: &Path, selected: &[PathBuf]) -> io::Result<usize> {
                 return Err(io::Error::other("Ungültiger Bereinigungspfad."));
             }
             component.push(part);
-            if fs::symlink_metadata(&component)?.file_type().is_symlink() {
+            if crate::private_fs::is_link(&fs::symlink_metadata(&component)?) {
                 return Err(io::Error::other(
                     "Verknüpfung bei der Bereinigung abgelehnt.",
                 ));
@@ -134,7 +148,7 @@ pub fn remove_files(root: &Path, selected: &[PathBuf]) -> io::Result<usize> {
         }
         let meta = fs::symlink_metadata(path)?;
         if !meta.is_file()
-            || meta.file_type().is_symlink()
+            || crate::private_fs::is_link(&meta)
             || !path.canonicalize()?.starts_with(&canonical)
         {
             return Err(io::Error::new(
@@ -146,4 +160,112 @@ pub fn remove_files(root: &Path, selected: &[PathBuf]) -> io::Result<usize> {
         count += 1;
     }
     Ok(count)
+}
+/// User documents retain their ACL/mode. Portal grants cover only the selected
+/// file, so a sibling temporary file is not available in that sandbox.
+pub fn write_document(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    if bytes.len() as u64 > crate::limits::DOCUMENT {
+        return Err(io::Error::other("Dokument ist zu gross (64 MiB)."));
+    }
+    let existing = match fs::metadata(path) {
+        Ok(m) => Some(m),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e),
+    };
+    if existing
+        .as_ref()
+        .is_some_and(|m| !m.is_file() || m.permissions().readonly())
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Datei ist schreibgeschützt oder keine reguläre Datei.",
+        ));
+    }
+    if crate::file_dialog::portal_required() {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)?;
+        file.write_all(bytes)?;
+        return file.sync_all();
+    }
+    // Follow a user-selected symlink to its file; never change that link itself.
+    let target = if existing.is_some() {
+        path.canonicalize()?
+    } else {
+        path.to_owned()
+    };
+    let tmp = target.with_extension(format!("{}.pending", crate::private_fs::random_token()?));
+    let result = (|| -> io::Result<()> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        #[cfg(unix)]
+        if let Some(m) = &existing {
+            file.set_permissions(m.permissions())?;
+        }
+        #[cfg(target_os = "macos")]
+        if existing.is_some() {
+            use std::{ffi::c_void, os::fd::AsRawFd, ptr};
+            unsafe extern "C" {
+                fn fcopyfile(from: i32, to: i32, state: *mut c_void, flags: u32) -> i32;
+            }
+            let source = fs::File::open(&target)?;
+            // COPYFILE_ACL | COPYFILE_XATTR; file bytes are written below.
+            if unsafe { fcopyfile(source.as_raw_fd(), file.as_raw_fd(), ptr::null_mut(), 5) } != 0 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        #[cfg(windows)]
+        {
+            use std::{ffi::c_void, os::windows::ffi::OsStrExt, ptr};
+            #[link(name = "kernel32")]
+            unsafe extern "system" {
+                fn ReplaceFileW(
+                    old: *const u16,
+                    new: *const u16,
+                    backup: *const u16,
+                    flags: u32,
+                    exclude: *mut c_void,
+                    reserved: *mut c_void,
+                ) -> i32;
+                fn MoveFileExW(old: *const u16, new: *const u16, flags: u32) -> i32;
+            }
+            let to: Vec<u16> = target.as_os_str().encode_wide().chain(Some(0)).collect();
+            let from: Vec<u16> = tmp.as_os_str().encode_wide().chain(Some(0)).collect();
+            let ok = unsafe {
+                if existing.is_some() {
+                    ReplaceFileW(
+                        to.as_ptr(),
+                        from.as_ptr(),
+                        ptr::null(),
+                        0,
+                        ptr::null_mut(),
+                        ptr::null_mut(),
+                    )
+                } else {
+                    MoveFileExW(from.as_ptr(), to.as_ptr(), 8)
+                }
+            };
+            if ok == 0 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            fs::rename(&tmp, &target)?;
+            fs::File::open(target.parent().unwrap_or(Path::new(".")))?.sync_all()?;
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
 }

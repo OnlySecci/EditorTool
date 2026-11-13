@@ -6,6 +6,7 @@ pub fn portal_required() -> bool {
 }
 pub struct Chooser {
     native: dialog::NativeFileChooser,
+    #[cfg(target_os = "linux")]
     save: bool,
     title: String,
     preset: String,
@@ -15,6 +16,7 @@ impl Chooser {
     pub fn new(kind: dialog::NativeFileChooserType) -> Self {
         Self {
             native: dialog::NativeFileChooser::new(kind),
+            #[cfg(target_os = "linux")]
             save: matches!(kind, dialog::NativeFileChooserType::BrowseSaveFile),
             title: String::new(),
             preset: String::new(),

@@ -262,7 +262,7 @@ impl Runtime {
         };
         let root = settings_path().parent().unwrap().to_owned();
         if let Err(e) = storage::preserve(&root, path)
-            .and_then(|_| session::atomic_write(path, data.as_bytes()))
+            .and_then(|_| storage::write_document(path, data.as_bytes()))
         {
             b.autosave = false;
             return Err(format!("Automatisches Speichern pausiert: {e}"));

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -34,7 +35,8 @@ for name in sorted(expected):
         digest = hashlib.file_digest(stream, "sha256").hexdigest()
     assets.append({"name": name, "size": path.stat().st_size, "sha256": digest})
 metadata = PACKAGES / "update-metadata.json"
-metadata.write_bytes(json.dumps({"schema": 1, "version": VERSION, "tag": TAG, "assets": assets}, sort_keys=True, separators=(",", ":")).encode())
+issued = int(time.time())
+metadata.write_bytes(json.dumps({"schema": 1, "issued_at": issued, "expires_at": issued + 180 * 86400, "version": VERSION, "tag": TAG, "assets": assets}, sort_keys=True, separators=(",", ":")).encode())
 (PACKAGES / "SHA256SUMS.txt").write_text("".join(f"{a['sha256']}  {a['name']}\n" for a in assets))
 public = base64.b64decode((ROOT / "assets/update-public-key.base64").read_text().strip(), validate=True)
 if len(public) != 32:

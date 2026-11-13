@@ -17,6 +17,8 @@ const LIMIT: u64 = 256 * 1024 * 1024;
 #[serde(deny_unknown_fields)]
 struct SignedMetadata {
     schema: u32,
+    issued_at: u64,
+    expires_at: u64,
     version: String,
     tag: String,
     assets: Vec<SignedAsset>,
@@ -61,6 +63,19 @@ fn verify_metadata(bytes: &[u8], signature: &[u8]) -> Result<SignedMetadata, Str
         .map_err(|_| "Update-Signatur stimmt nicht. Installation gesperrt.")?;
     let signed: SignedMetadata = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
     let latest = version(&signed.version).ok_or("Ungültige signierte Version.")?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "Systemzeit ungültig.")?
+        .as_secs();
+    if signed.issued_at > now.saturating_add(300)
+        || signed.expires_at <= now
+        || signed.expires_at <= signed.issued_at
+        || signed.expires_at - signed.issued_at > 366 * 86400
+    {
+        return Err(
+            "Signierte Update-Metadaten sind abgelaufen oder die Systemzeit stimmt nicht.".into(),
+        );
+    }
     if signed.version != format!("{}.{}.{}", latest.0, latest.1, latest.2)
         || signed.schema != 1
         || signed.tag != format!("V{}", signed.version)
@@ -68,6 +83,21 @@ fn verify_metadata(bytes: &[u8], signature: &[u8]) -> Result<SignedMetadata, Str
         || signed.assets.len() != 16
     {
         return Err("Signierte Update-Version ist ungültig oder nicht neuer.".into());
+    }
+    let highwater = crate::settings_path()
+        .parent()
+        .unwrap()
+        .join("update-highest.txt");
+    if highwater.exists() {
+        let saved = crate::limits::read(&highwater, 128).map_err(|e| e.to_string())?;
+        let text =
+            std::str::from_utf8(&saved).map_err(|_| "Ungültiger Update-Versionsspeicher.")?;
+        if version(text).ok_or("Ungültiger Update-Versionsspeicher.")? > latest {
+            return Err(
+                "Älteres signiertes Update abgelehnt; eine höhere Version ist bereits bekannt."
+                    .into(),
+            );
+        }
     }
     let mut names = std::collections::BTreeSet::new();
     for a in &signed.assets {
@@ -306,6 +336,25 @@ pub fn check() -> Result<Option<Release>, String> {
         return Err("Signierte Paketgrösse stimmt nicht überein.".into());
     }
     let expected = entry.sha256.clone();
+    // Remember authenticated observations, so an older release cannot replace
+    // a newer update already offered to this installation.
+    let highwater = crate::settings_path()
+        .parent()
+        .unwrap()
+        .join("update-highest.txt");
+    if highwater.exists() {
+        let saved = crate::limits::read(&highwater, 128).map_err(|e| e.to_string())?;
+        let saved =
+            std::str::from_utf8(&saved).map_err(|_| "Ungültiger Update-Versionsspeicher.")?;
+        if version(saved).ok_or("Ungültiger Update-Versionsspeicher.")? > latest {
+            return Err(
+                "Ein neueres signiertes Update wurde bereits gesehen. Älteres Angebot abgelehnt."
+                    .into(),
+            );
+        }
+    }
+    crate::session::atomic_write(&highwater, signed.version.as_bytes())
+        .map_err(|e| e.to_string())?;
     Ok(Some(Release {
         tag: data.tag_name,
         title: data.name.unwrap_or_else(|| name.clone()),

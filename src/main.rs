@@ -62,6 +62,7 @@ const ADD_TAB_SIZE: i32 = 30;
 #[derive(Clone)]
 enum Action {
     Storage,
+    StorageClean,
     FileHistory,
     Permissions,
     SharingSettings,
@@ -260,7 +261,9 @@ impl Document {
             return match self.page {
                 1 => "Einstellungen",
                 2 => "Clients und Sync",
-                _ => "Tastenkürzel",
+                3 => "Tastenkürzel",
+                4 => "Speicher und Dateistände",
+                _ => "Freigaben und Berechtigungen",
             }
             .into();
         }
@@ -1326,7 +1329,7 @@ impl EditorWindow {
         }
         let history_root = settings_path().parent().unwrap().to_owned();
         let saved = storage::preserve(&history_root, &path)
-            .and_then(|_| std::fs::write(&path, content.as_bytes()));
+            .and_then(|_| storage::write_document(&path, content.as_bytes()));
         match saved {
             Ok(()) => {
                 if let Some(b) = &mut d.sharing {
@@ -1883,7 +1886,7 @@ impl EditorWindow {
             let d = &mut self.docs[index];
             d.id = tab.id;
             d.cache_key = tab.key.clone();
-            d.page = tab.page.min(3);
+            d.page = tab.page.min(5);
             if d.page != 0 {
                 d.panes.hide();
                 d.status.hide();
@@ -2005,6 +2008,8 @@ struct Runtime {
     sharing: Option<peer::Service>,
     clients: sharing_ui::Clients,
     keyboard: shortcuts::Panel,
+    storage_panel: storage_ui::Panel,
+    permissions_panel: storage_ui::Panel,
     transfer: sharing_ui::Transfer,
     conflicts: sharing_ui::Conflicts,
     share_timers: std::collections::HashMap<String, sharing_runtime::Pending>,
@@ -2433,9 +2438,13 @@ impl Runtime {
                     );
                 }
             },
-            Action::Storage => self.storage_dialog(),
+            Action::Storage => self.open_management_tab(wid, 4),
+            Action::StorageClean => {
+                self.storage_dialog();
+                self.open_management_tab(wid, 4);
+            }
             Action::FileHistory => self.history_dialog(wid),
-            Action::Permissions => self.permissions_dialog(wid),
+            Action::Permissions => self.open_management_tab(wid, 5),
             Action::RelayoutSplit => self.layout_splits(),
             Action::ExportDiagnostics => {
                 let info = format!(
@@ -2561,6 +2570,20 @@ fn main() {
     let _app = app::App::default().with_scheme(app::Scheme::Base);
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let config = settings_path();
+    if let Err(e) = private_fs::directory(config.parent().unwrap()).and_then(|_| {
+        for name in ["settings.txt", "shortcuts.json", "update-highest.txt"] {
+            let path = config.parent().unwrap().join(name);
+            if path.exists() {
+                private_fs::restrict(&path, false)?;
+            }
+        }
+        Ok(())
+    }) {
+        dialog::alert_default(&format!(
+            "Privater Speicher konnte nicht geschützt werden: {e}"
+        ));
+        return;
+    }
     diagnostics::init(config.parent().unwrap());
     preferences::load(&config);
     if let Err(e) = shortcuts::load(&config) {
@@ -2658,6 +2681,8 @@ fn main() {
         sharing,
         clients: sharing_ui::Clients::new(tx),
         keyboard: shortcuts::Panel::new(tx),
+        storage_panel: storage_ui::Panel::new(tx, false),
+        permissions_panel: storage_ui::Panel::new(tx, true),
         transfer: sharing_ui::Transfer::new(tx),
         conflicts: sharing_ui::Conflicts::new(tx),
         share_timers: Default::default(),
@@ -2670,6 +2695,15 @@ fn main() {
         let mut runtime = state.borrow_mut();
         runtime.weak_self = Rc::downgrade(&state);
         runtime.restore_splits();
+        for page in [4, 5] {
+            if let Some(wid) = runtime
+                .windows
+                .iter()
+                .position(|w| w.as_ref().is_some_and(|w| w.docs[w.active].page == page))
+            {
+                runtime.open_management_tab(wid, page);
+            }
+        }
         for w in runtime.windows.iter_mut().flatten().filter(|w| !w.embedded) {
             w.win.show();
             chrome::dark_title(&w.win);

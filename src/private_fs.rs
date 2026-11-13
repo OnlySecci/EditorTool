@@ -1,7 +1,21 @@
 //! Private application state; never use these permission changes on user documents.
 use std::{fs, io, path::Path};
+pub fn is_link(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if metadata.file_attributes() & 0x400 != 0 {
+            return true;
+        }
+    }
+    metadata.file_type().is_symlink()
+}
 pub fn restrict(path: &Path, directory: bool) -> io::Result<()> {
-    if fs::symlink_metadata(path)?.file_type().is_symlink() {
+    let metadata = fs::symlink_metadata(path)?;
+    if is_link(&metadata)
+        || (directory && !metadata.is_dir())
+        || (!directory && !metadata.is_file())
+    {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "Verknüpfung im privaten Speicher abgelehnt.",

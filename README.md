@@ -8,19 +8,17 @@ Ein schlanker nativer Rust-Editor für **Text, Code und Bilder** — für Window
 
 *Hauptansicht aus V1.0 — vom Projektinhaber bereitgestellte Aufnahme.*
 
-## V1.5.0 – in Vorbereitung
+## Neu in V1.5.0
 
-**Noch nicht veröffentlicht.** Die Signierschlüssel-Einrichtung und die sechs nativen Plattform-Builds stehen aus.
-
-- Updates verwenden unabhängig signierte Ed25519-Metadaten mit einem fest eingebauten öffentlichen Schlüssel. Version, Paketname, Länge und SHA-256 werden geprüft; vor Installation erfolgt eine erneute Integritätsprüfung. Kein Rückfall auf unsignierte Prüfsummen. [Schlüsselverwaltung](docs/update-signing.md).
+- Updates verwenden Ed25519-signierte Metadaten mit einem fest eingebauten öffentlichen Schlüssel. Version, Paketname, Länge, SHA-256 und Ablaufdatum (180 Tage) werden geprüft; vor Installation erfolgt eine erneute Integritätsprüfung. Bereits bekannte höhere Versionen sperren ältere Angebote. Kein Rückfall auf unsignierte Prüfsummen. Der private Schlüssel liegt im Repository-Actions-Secret; die Workflows gehören deshalb zur Vertrauensgrenze. [Schlüsselverwaltung](docs/update-signing.md).
 - Dateien sind vor dem Einlesen auf 64 MiB begrenzt. Bilder: 32 MiB komprimiert, 40 Megapixel insgesamt je Dokument, 32768 Pixel je Seite und höchstens 64 Bilder. Auch empfangene Dokumente und Bild-Zwischenablagen werden vor weiteren Kopien und Decodierung geprüft. Die vom Betriebssystem bereits bereitgestellte Zwischenablage kann vorher ausserhalb der App decodiert worden sein.
 - Lokale Sitzung, Instanzdaten und Freigabespeicher erhalten restriktive Rechte; Instanz-Tokens stammen aus der kryptografischen Zufallsquelle. Sync-Verbindungen haben ein Gesamtzeitlimit von 45 Sekunden, höchstens zwei eingehende Übertragungen insgesamt und eine je Gegenstelle sowie 240 Verbindungsversuche je Minute und IP.
-- **Einstellungen → Speicher und Bereinigung** zeigt die belegte Grösse und erlaubt getrenntes Entfernen verwaister Tabs, älterer Dateistände und Update-Dateien. Aktuelle und vorige Sitzung, geschlossene Fenster, Geräteidentität und Sync-Versionen bleiben erhalten. Löschen ist endgültig; es ist kein physisches Überschreiben von SSD-/Dateisystemdaten.
+- **Einstellungen → Speicher und Bereinigung** öffnet eine Einstellungsseite als Tab, zeigt die belegte Grösse und erlaubt getrenntes Entfernen verwaister Tabs, älterer Dateistände und Update-Dateien. Aktuelle und vorige Sitzung, geschlossene Fenster, Geräteidentität und Sync-Versionen bleiben erhalten. Löschen ist endgültig; es ist kein physisches Überschreiben von SSD-/Dateisystemdaten.
 - **Datei → Ältere Dateistände** öffnet eine lokale Sicherung als neuen Tab. Vor jedem manuellen oder automatischen Überschreiben wird der vorige Dateiinhalt gesichert (höchstens zehn Stände bzw. 256 MiB je Dateipfad). Externe Änderungen ohne anschliessendes Speichern und umbenannte/verschobene Dateien haben keinen automatisch durchgehenden Verlauf. Versionen liegen unverschlüsselt im Einstellungsordner unter `history`.
-- **Einstellungen → Freigaben und Berechtigungen** zeigt Geräte, Fingerabdrücke, Sync-Teilnehmer und ausstehende Sendungen. Geräte- und Dokumentzustimmung bleiben getrennt; Sync kann für den aktuellen Tab beendet werden. Entfernte Kopien werden dadurch nicht gelöscht.
+- **Einstellungen → Freigaben und Berechtigungen** zeigt als Tab den Verbindungsschutz, lokale Datenrechte, Geräte, Fingerabdrücke, Sync-Teilnehmer und ausstehende Sendungen. Geräte- und Dokumentzustimmung bleiben getrennt; zum Beenden eines Syncs den Dokument-Tab auswählen. Entfernte Kopien werden dadurch nicht gelöscht.
 - Flatpak nutzt das Dateiauswahl-Portal für Öffnen, Speichern, Bildeinfügen und Diagnoseexport. Die pauschale Home-Freigabe entfällt. Bereits im Cache gespeicherte Pfade müssen gegebenenfalls erneut über das Portal ausgewählt werden. Der Host-Aufruf bleibt für native Flatpak-Updates erforderlich; Netzwerk, X11 und Tray bleiben wie bisher freigegeben.
 
-Keine automatisierten, interaktiven oder Installationstests; die App wird während der Entwicklung nicht gestartet. Linux x64: Codeprüfung, Release-Build sowie Portable-/DEB-/RPM-Packaging sind erfolgreich. Die übrigen Plattformpakete und Flatpak stehen noch aus. Codeprüfung, Builds und Packaging erfolgen getrennt von einer Veröffentlichung.
+Auf Wunsch ausschliesslich Codeprüfung, Release-Builds und Packaging, ohne automatisierte, interaktive oder Installationstests und ohne App-Start. GitHub Actions erstellt alle sechs Plattform-/Architektur-Kombinationen. Signierte Update-Metadaten ersetzen keine Windows-/Apple-Entwicklerzertifikate.
 
 ## Neu in V1.4.9
 

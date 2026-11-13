@@ -527,7 +527,7 @@ impl Service {
         for dir in [&root, &root.join("content")] {
             for entry in fs::read_dir(dir).map_err(err)? {
                 let entry = entry.map_err(err)?;
-                if entry.file_type().map_err(err)?.is_symlink() {
+                if crate::private_fs::is_link(&fs::symlink_metadata(entry.path()).map_err(err)?) {
                     return Err("Verknüpfung im Freigabespeicher abgelehnt.".into());
                 }
                 if entry.file_type().map_err(err)?.is_file() {
@@ -546,14 +546,7 @@ impl Service {
             let cert = identity.cert.der().to_vec();
             let key = identity.key_pair.serialize_der();
             for (name, data) in [("identity.der", &cert), ("identity.key", &key)] {
-                let mut options = fs::OpenOptions::new();
-                options.write(true).create_new(true);
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::OpenOptionsExt;
-                    options.mode(0o600);
-                }
-                let mut file = options.open(root.join(name)).map_err(err)?;
+                let mut file = crate::private_fs::create(&root.join(name)).map_err(err)?;
                 file.write_all(data).map_err(err)?;
                 file.sync_all().map_err(err)?;
             }

@@ -1,10 +1,8 @@
-# EditorTool V1.5.0 – Release-Entwurf
-
-Noch nicht veröffentlicht. Dieser Entwurf darf erst nach Einrichtung des dauerhaften Signierschlüssels und erfolgreichem Bau aller 16 Plattformpakete als Release veröffentlicht werden.
+# EditorTool V1.5.0
 
 ## Sicherheit
 
-Unabhängig signierte Ed25519-Update-Metadaten binden Version und alle Pakete an den fest eingebauten öffentlichen Schlüssel. Der Updater akzeptiert ausschliesslich neuere Versionen und prüft die Integrität beim Download, vor Übergabe und nochmals im Installationshelfer. Windows-/Apple-Zertifikate sind davon unabhängig weiterhin nicht vorhanden. Nutzer bis V1.4.9 erhalten den neuen Vertrauensschlüssel erst durch ein manuell vertrautes Upgrade; die alte Updateprüfung kann nachträglich nicht verbessert werden.
+Unabhängig signierte Ed25519-Update-Metadaten binden Version und alle Pakete an den fest eingebauten öffentlichen Schlüssel. Die Metadaten gelten 180 Tage; eine falsche Systemzeit kann die Aktualisierung sperren. Bereits angebotene höhere Versionen bleiben als Untergrenze gespeichert. Der Updater akzeptiert ausschliesslich neuere Versionen und prüft die Integrität beim Download, vor Übergabe und nochmals im Installationshelfer. Windows-/Apple-Zertifikate sind davon unabhängig weiterhin nicht vorhanden. Nutzer bis V1.4.9 erhalten den neuen Vertrauensschlüssel erst durch ein manuell vertrautes Upgrade; die alte Updateprüfung kann nachträglich nicht verbessert werden.
 
 Dateien werden vor dem Einlesen begrenzt, Bilder vor dem Decodieren geprüft. Grenzen: 64 MiB je Dokument, 32 MiB komprimiert je Bild, 40 Megapixel insgesamt, 32768 Pixel je Seite, 64 Bilder. Die Betriebssystem-Zwischenablage liefert möglicherweise bereits decodierte Daten; vor eigenen Kopien wird deren Grösse geprüft.
 
@@ -12,16 +10,16 @@ Sitzungen und Instanzdaten sind lokal restriktiv geschützt; Instanz-Tokens sind
 
 ## Speicher und Wiederherstellung
 
-Unter Einstellungen den belegten Speicher ansehen und verwaiste Tabs, ältere Dateistände oder Update-Dateien getrennt bereinigen. Aktuelle und vorige Sitzung, geschlossene Fenster und Sync-/Geräteidentitäten bleiben erhalten. Löschung ist endgültig und verspricht kein physisches Überschreiben.
+Unter Einstellungen → Speicher und Bereinigung den belegten Speicher als Tab ansehen und verwaiste Tabs, ältere Dateistände oder Update-Dateien getrennt bereinigen. Aktuelle und vorige Sitzung, geschlossene Fenster und Sync-/Geräteidentitäten bleiben erhalten. Löschung ist endgültig und verspricht kein physisches Überschreiben.
 
 Vor dem Überschreiben einer lokalen Datei wird ihr vorheriger Inhalt gesichert: zehn Stände bzw. 256 MiB je Dateipfad. Datei → Ältere Dateistände öffnet den gewählten Stand als neuen Tab, ohne den aktuellen Inhalt zu ersetzen. Historie liegt unverschlüsselt im Benutzerprofil und ist gezielt löschbar.
 
 ## Freigaben und Flatpak
 
-Die Berechtigungsübersicht zeigt Geräte, Fingerabdrücke, aktive Teilnehmer und ausstehende Sendungen. Gerätefreigabe und Dokumentzustimmung bleiben getrennt; beendeter Sync löscht keine fremden Kopien.
+Die Berechtigungsübersicht öffnet sich ebenfalls als Einstellungs-Tab und zeigt Geräte, Fingerabdrücke, aktive Teilnehmer und ausstehende Sendungen. Gerätefreigabe und Dokumentzustimmung bleiben getrennt; beendeter Sync löscht keine fremden Kopien.
 
 Flatpak verwendet Dateiauswahl-Portale für Öffnen/Speichern, Bilder und Diagnoseexport; die globale Home-Freigabe entfällt. Alte Dateipfade gegebenenfalls erneut auswählen. Für `.etdoc` muss die Dateiendung bereits im Portal-Speicherdialog stimmen. Host-Zugriff für Flatpak-Updates, Netzwerk, X11 und Tray bleiben erforderlich.
 
 ## Validierung und Veröffentlichung
 
-Keine Tests, App-Starts oder Installationstests. Linux-x64-Codeprüfung und Release-Build sowie Packaging werden protokolliert. Die übrigen nativen Builds müssen über GitHub Actions erfolgen. Eine vollständige Veröffentlichung erfordert 16 Pakete, SHA256SUMS.txt und die beiden signierten Metadaten-Dateien.
+Auf Wunsch nur Codeprüfung, Release-Builds und Packaging: keine automatisierten, interaktiven oder Installationstests und kein App-Start. GitHub Actions baut Windows, Linux und macOS jeweils für x64 und ARM64. Die Veröffentlichung enthält 16 Pakete, SHA256SUMS.txt, update-metadata.json und update-metadata.sig. Windows-/Apple-Entwicklerzertifikate bleiben unabhängig davon nicht vorhanden; macOS ist ad-hoc signiert, ohne Notarisierung. The Unlicense für eigenen Code; Drittanbieter behalten ihre Lizenzen.
