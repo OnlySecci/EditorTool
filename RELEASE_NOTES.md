@@ -1,25 +1,33 @@
-# EditorTool V1.5.0
+# EditorTool V1.5.1
 
-## Sicherheit
+## Windows: lange Pfade und Speicherdiagnose
 
-Unabhängig signierte Ed25519-Update-Metadaten binden Version und alle Pakete an den fest eingebauten öffentlichen Schlüssel. Die Metadaten gelten 180 Tage; eine falsche Systemzeit kann die Aktualisierung sperren. Bereits angebotene höhere Versionen bleiben als Untergrenze gespeichert. Der Updater akzeptiert ausschliesslich neuere Versionen und prüft die Integrität beim Download, vor Übergabe und nochmals im Installationshelfer. Windows-/Apple-Zertifikate sind davon unabhängig weiterhin nicht vorhanden. Nutzer bis V1.4.9 erhalten den neuen Vertrauensschlüssel erst durch ein manuell vertrautes Upgrade; die alte Updateprüfung kann nachträglich nicht verbessert werden.
+- Windows-Aufrufe für Zugriffsrechte und atomare Dateiersetzung verwenden normalisierte absolute Langpfade. Temporäre Dateien haben kurze, vom Dokumentnamen unabhängige Namen. Damit scheitert die Dateihistorie nicht mehr an einem intern erzeugten Pfad über der klassischen Windows-Pfadgrenze (Fehler 123).
+- Diagnosemeldungen unterscheiden das Lesen der Datei, das Sichern der Historie, das Schreiben des Dokuments und das Setzen privater Zugriffsrechte. Logs enthalten Arbeitsschritt, Fehlerkategorie, Betriebssystem-Fehlernummer und Pfadlänge, keine Dokumentinhalte oder vollständigen privaten Dateipfade.
+- Falls automatisches Speichern in V1.5.0 wegen des Fehlers pausiert wurde: nach dem Update beim betroffenen Dokument im Sync-Dialog „Sync-Änderungen in meine lokale Datei speichern“ wieder aktivieren. Bereits bewusst deaktiviertes Autosave wird nicht ungefragt eingeschaltet.
 
-Dateien werden vor dem Einlesen begrenzt, Bilder vor dem Decodieren geprüft. Grenzen: 64 MiB je Dokument, 32 MiB komprimiert je Bild, 40 Megapixel insgesamt, 32768 Pixel je Seite, 64 Bilder. Die Betriebssystem-Zwischenablage liefert möglicherweise bereits decodierte Daten; vor eigenen Kopien wird deren Grösse geprüft.
+## Netzwerkadapter für Senden und Sync
 
-Sitzungen und Instanzdaten sind lokal restriktiv geschützt; Instanz-Tokens sind kryptografisch zufällig. Sync-Verbindungen laufen höchstens 45 Sekunden, mit begrenzter Parallelität und 240 eingehenden Verbindungen je Minute und Gegenstellen-IP. TLS 1.3, AES-256-GCM, hybrider X25519+ML-KEM-768-Schlüsselaustausch und ausdrückliche Freigaben bleiben erhalten.
+- Unter **Einstellungen → Clients und Sync** die automatische Auswahl ausschalten und gewünschte lokale IPs anhaken. LAN, WireGuard und andere vom Betriebssystem bereitgestellte VPN-Adapter erscheinen mit Namen, IP und verfügbarer MAC-Adresse; virtuelle Adapter besitzen nicht immer eine MAC.
+- Mehrere IPs sind wählbar. Empfangs-Ports binden nur an die gewählten Adressen; ausgehende Verbindungen werden an gewählte Quell-IP und Schnittstelle gebunden. Bei nicht verfügbarer Auswahl erfolgt kein stiller Rückfall auf andere Adapter. Die Funktion erstellt weder VPN-Tunnel noch Firewall-Regeln; das Betriebssystem muss eine passende Route besitzen.
+- Bei nicht verfügbarem VPN bleibt die Konfiguration erreichbar und Senden/Sync pausiert. Adapter lassen sich manuell neu einlesen. Im Modus „Automatisch“ gelten wie bisher das Betriebssystem-Routing und die privaten Netzbeschränkungen.
 
-## Speicher und Wiederherstellung
+## Clients, Status und Hinweise
 
-Unter Einstellungen → Speicher und Bereinigung den belegten Speicher als Tab ansehen und verwaiste Tabs, ältere Dateistände oder Update-Dateien getrennt bereinigen. Aktuelle und vorige Sitzung, geschlossene Fenster und Sync-/Geräteidentitäten bleiben erhalten. Löschung ist endgültig und verspricht kein physisches Überschreiben.
+- Einen Client auswählen, Name/IP/Port bearbeiten und **Änderungen speichern** wählen. Zertifikat, Fingerabdruck und bestehende Freigabe bleiben erhalten. Ein Gerät mit anderem Schlüssel muss weiterhin ausdrücklich freigegeben werden. Manuell gepflegte Namen und Endpunkte werden nicht von empfangenen Hello-Nachrichten überschrieben; automatisch entdeckte Geräte können ihren tatsächlichen Port weiterhin mitteilen.
+- Beidseitige Gerätefreigabe bleibt erforderlich: Jede Seite entscheidet, welchem Gerät sie vertraut. Dokumentanfragen bleiben eine zusätzliche Zustimmung.
+- **Connected** wird grün, **Not connected** rot dargestellt, auch bei der Auswahl von Send-/Sync-Empfängern.
+- Nach einer Prüfrunde folgen normalerweise 10 Sekunden Pause, bei ausstehenden Sendungen 1 Sekunde. Verbindungsversuche und Übertragungen verlängern die Runde; dies ist kein garantiertes Zehn-Sekunden-Erkennungsintervall. Die letzte Prüfung wird angezeigt. **Verbindung prüfen** startet manuell eine Runde und prüft ausstehende Freigaben erneut.
+- Beim Wechsel eines zuvor verbundenen Geräts zu nicht verbunden erscheint unten rechts im Editor ein nicht blockierender Hinweis. Mit **X** quittieren; Hinweise bleiben bis dahin sichtbar. Keine System-Popups und kein Fokuswechsel. Der Status beschreibt den letzten vollständigen Abgleich, keine dauerhaft offene TCP-Verbindung.
 
-Vor dem Überschreiben einer lokalen Datei wird ihr vorheriger Inhalt gesichert: zehn Stände bzw. 256 MiB je Dateipfad. Datei → Ältere Dateistände öffnet den gewählten Stand als neuen Tab, ohne den aktuellen Inhalt zu ersetzen. Historie liegt unverschlüsselt im Benutzerprofil und ist gezielt löschbar.
+## Kommunikationsprotokoll
 
-## Freigaben und Flatpak
+- **Log…** im Send-/Sync-Dialog oder **Kommunikationsprotokoll…** in den Client-Einstellungen öffnet einen Tab. Gerätefilter, Richtung und Textsuche grenzen die Einträge ein; die gefilterte Ansicht kann exportiert werden.
+- Angezeigt werden TCP-/TLS-Verbindungsereignisse, Protokolltypen wie Hello, Offer, Get/Put, Annahmen/Ablehnungen, Übertragungsgrössen und Fehlerkategorien. Bytezahlen sind Anwendungsdaten, kein vollständiger Paketmitschnitt. Inhalte, Bilder und Schlüssel werden nicht aufgezeichnet.
+- Dieses lokale Protokoll enthält zur Diagnose IP-Adressen und Geräte-Fingerabdrücke. Es wird getrennt vom allgemeinen Diagnoseexport gespeichert: höchstens 1500 Einträge im Viewer, zwei begrenzte Dateien unter `traffic`. Kein automatischer Upload.
 
-Die Berechtigungsübersicht öffnet sich ebenfalls als Einstellungs-Tab und zeigt Geräte, Fingerabdrücke, aktive Teilnehmer und ausstehende Sendungen. Gerätefreigabe und Dokumentzustimmung bleiben getrennt; beendeter Sync löscht keine fremden Kopien.
+## Pakete und Validierung
 
-Flatpak verwendet Dateiauswahl-Portale für Öffnen/Speichern, Bilder und Diagnoseexport; die globale Home-Freigabe entfällt. Alte Dateipfade gegebenenfalls erneut auswählen. Für `.etdoc` muss die Dateiendung bereits im Portal-Speicherdialog stimmen. Host-Zugriff für Flatpak-Updates, Netzwerk, X11 und Tray bleiben erforderlich.
+Windows Setup-EXE und portables ZIP; Linux Flatpak, RPM, DEB und portables TAR.GZ; macOS DMG und App-ZIP. Jeweils x64 und ARM64. Dazu SHA256SUMS.txt, update-metadata.json und update-metadata.sig mit derselben Ed25519-Vertrauensbasis wie V1.5.0.
 
-## Validierung und Veröffentlichung
-
-Auf Wunsch nur Codeprüfung, Release-Builds und Packaging: keine automatisierten, interaktiven oder Installationstests und kein App-Start. GitHub Actions baut Windows, Linux und macOS jeweils für x64 und ARM64. Die Veröffentlichung enthält 16 Pakete, SHA256SUMS.txt, update-metadata.json und update-metadata.sig. Windows-/Apple-Entwicklerzertifikate bleiben unabhängig davon nicht vorhanden; macOS ist ad-hoc signiert, ohne Notarisierung. The Unlicense für eigenen Code; Drittanbieter behalten ihre Lizenzen.
+Auf Wunsch nur Codeprüfung, native Release-Builds und Paketierung: keine automatisierten, interaktiven oder Installationstests und kein App-Start. Keine Windows-/Apple-Entwicklerzertifikate; macOS ad-hoc signiert, ohne Notarisierung. The Unlicense für eigenen Code, Drittanbieter-Lizenzen bleiben erhalten.

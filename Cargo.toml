@@ -1,6 +1,6 @@
 [package]
 name = "editortool"
-version = "1.5.0"
+version = "1.5.1"
 edition = "2021"
 rust-version = "1.90"
 description = "Schlanker Plaintext-Editor mit Textvergleich"
@@ -16,7 +16,9 @@ time = "0.3"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "aws_lc_rs", "prefer-post-quantum", "std", "tls12"] }
 rcgen = { version = "0.13", default-features = false, features = ["ring", "crypto"] }
-socket2 = "0.6"
+socket2 = { version = "0.6", features = ["all"] }
+network-interface = "2"
+mio = { version = "1", features = ["net", "os-poll"] }
 ureq = { version = "2.12", default-features = false, features = ["tls", "json"] }
 sha2 = "0.10"
 fltk = "=1.5.23"
@@ -31,6 +33,7 @@ png = "0.18"
 tray-icon = { version = "0.25", default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
 zbus = { version = "5", default-features = false, features = ["tokio", "blocking-api"] }
 url = "2"
 ksni = { version = "0.3", features = ["blocking"] }

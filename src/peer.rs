@@ -14,10 +14,10 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     io::{Read, Write},
-    net::{IpAddr, SocketAddr, TcpListener, TcpStream},
+    net::{IpAddr, SocketAddr, TcpStream},
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         mpsc, Arc, Mutex,
     },
     thread,
@@ -30,15 +30,26 @@ const HEADER: usize = 512 * 1024;
 struct DeadlineSocket {
     socket: TcpStream,
     started: Instant,
+    epoch: Arc<AtomicU64>,
+    generation: u64,
 }
 impl DeadlineSocket {
-    fn new(socket: TcpStream) -> Self {
+    fn new(socket: TcpStream, epoch: Arc<AtomicU64>) -> Self {
+        let generation = epoch.load(Ordering::Relaxed);
         Self {
             socket,
             started: Instant::now(),
+            epoch,
+            generation,
         }
     }
     fn remaining(&self) -> std::io::Result<Duration> {
+        if self.epoch.load(Ordering::Relaxed) != self.generation {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "Netzwerkeinstellungen wurden geändert.",
+            ));
+        }
         Duration::from_secs(45)
             .checked_sub(self.started.elapsed())
             .filter(|d| !d.is_zero())
@@ -133,6 +144,13 @@ pub struct Config {
     pub name: String,
     pub port: u16,
     pub clients: Vec<Peer>,
+    #[serde(default = "automatic_interfaces")]
+    pub automatic_interfaces: bool,
+    #[serde(default)]
+    pub interfaces: Vec<crate::network::Binding>,
+}
+fn automatic_interfaces() -> bool {
+    true
 }
 impl Default for Config {
     fn default() -> Self {
@@ -143,6 +161,8 @@ impl Default for Config {
                 .unwrap_or("EditorTool".into()),
             port: PORT,
             clients: vec![],
+            automatic_interfaces: true,
+            interfaces: vec![],
         }
     }
 }
@@ -201,6 +221,8 @@ struct Outbox {
 #[derive(Default, Serialize, Deserialize)]
 struct State {
     #[serde(default)]
+    locked_clients: BTreeSet<String>,
+    #[serde(default)]
     departures: BTreeMap<String, BTreeSet<String>>,
     #[serde(default)]
     denied: BTreeSet<String>,
@@ -224,6 +246,8 @@ struct State {
 #[derive(Clone, Debug)]
 pub enum Event {
     Changed,
+    Checked,
+    Disconnected(String),
     Left(String, String, String),
     Trust(Peer),
     Offer(Offer),
@@ -288,9 +312,37 @@ enum Reply {
     },
     Error(String),
 }
+trait WireLabel {
+    fn label(&self) -> &'static str;
+}
+impl WireLabel for Request {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Hello { .. } => "request Hello",
+            Self::Leave { .. } => "request Leave",
+            Self::Offer(_) => "request Offer",
+            Self::Put { .. } => "request Put",
+            Self::Get { .. } => "request Get",
+        }
+    }
+}
+impl WireLabel for Reply {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Hello { .. } => "reply Hello",
+            Self::Pending => "reply Pending",
+            Self::Accepted => "reply Accepted",
+            Self::Rejected => "reply Rejected",
+            Self::Ready => "reply Ready",
+            Self::Done => "reply Done",
+            Self::Data { .. } => "reply Data",
+            Self::Error(_) => "reply Error",
+        }
+    }
+}
 struct Listener {
     running: Arc<AtomicBool>,
-    port: u16,
+    wake: Arc<mio::Waker>,
     worker: thread::JoinHandle<()>,
 }
 pub struct Service {
@@ -307,10 +359,12 @@ struct Inner {
     tx: fltk::app::Sender<Message>,
     enabled: AtomicBool,
     stop: AtomicBool,
+    network_epoch: Arc<AtomicU64>,
     transfers: AtomicUsize,
     seen: Mutex<BTreeSet<String>>,
     admissions: Mutex<BTreeMap<IpAddr, (usize, u8, Instant)>>,
     statuses: Mutex<BTreeMap<String, bool>>,
+    checked: Mutex<BTreeMap<String, u64>>,
     acknowledgements: Mutex<BTreeMap<(String, String), String>>,
     wake: mpsc::Sender<()>,
 }
@@ -345,7 +399,8 @@ impl Inner {
     }
     fn event(&self, event: Event) {
         let label = match &event {
-            Event::Changed => None,
+            Event::Changed | Event::Checked => None,
+            Event::Disconnected(_) => Some("peer_disconnected"),
             Event::Trust(_) => Some("trust_request"),
             Event::Offer(_) => Some("file_offer"),
             Event::Received(_, _) => Some("file_received"),
@@ -570,10 +625,12 @@ impl Service {
             tx,
             enabled: AtomicBool::new(false),
             stop: AtomicBool::new(false),
+            network_epoch: Arc::new(AtomicU64::new(0)),
             transfers: AtomicUsize::new(0),
             seen: Mutex::new(BTreeSet::new()),
             admissions: Mutex::new(BTreeMap::new()),
             statuses: Mutex::new(BTreeMap::new()),
+            checked: Mutex::new(BTreeMap::new()),
             acknowledgements: Mutex::new(BTreeMap::new()),
             wake: wake.clone(),
         });
@@ -607,7 +664,17 @@ impl Service {
             listener: None,
         };
         let config = service.config();
-        service.configure(config)?;
+        if let Err(error) = service.configure(config) {
+            service.inner.enabled.store(false, Ordering::Relaxed);
+            {
+                let mut state = service.inner.state.lock().unwrap();
+                state.config.enabled = false;
+                service.inner.save(&state)?;
+            }
+            service.inner.event(Event::Notice(format!(
+                "Senden/Sync ist pausiert. Schnittstellen-Einstellungen prüfen: {error}"
+            )));
+        }
         {
             let s = service.inner.state.lock().unwrap();
             for o in s
@@ -677,6 +744,65 @@ impl Service {
             .copied()
             .unwrap_or(false)
     }
+    pub fn checked_at(&self, p: &Peer) -> u64 {
+        self.inner
+            .checked
+            .lock()
+            .unwrap()
+            .get(&format!("{}:{}", p.host, p.port))
+            .copied()
+            .unwrap_or(0)
+    }
+    pub fn edit(
+        &mut self,
+        index: usize,
+        name: String,
+        host: String,
+        port: u16,
+    ) -> Result<(), String> {
+        address(&host, port)?;
+        if name.trim().is_empty() || name.len() > 128 {
+            return Err("Client-Name muss 1 bis 128 Zeichen enthalten.".into());
+        }
+        let mut c = self.config();
+        let old = c.clients.get(index).ok_or("Client auswählen.")?.clone();
+        if c.clients
+            .iter()
+            .enumerate()
+            .any(|(i, p)| i != index && p.host == host && p.port == port)
+        {
+            return Err("Adresse und Port sind bereits vorhanden.".into());
+        }
+        c.clients[index].name = name.trim().into();
+        c.clients[index].host = host;
+        c.clients[index].port = port;
+        let updated = c.clients[index].clone();
+        {
+            let mut s = self.inner.state.lock().unwrap();
+            if !old.id.is_empty() {
+                s.locked_clients.insert(old.id.clone());
+            }
+            for d in s.docs.values_mut() {
+                for member in &mut d.members {
+                    if !old.id.is_empty() && member.id == old.id {
+                        *member = updated.clone();
+                    }
+                }
+            }
+            self.inner.save(&s)?;
+        }
+        self.inner
+            .statuses
+            .lock()
+            .unwrap()
+            .remove(&format!("{}:{}", old.host, old.port));
+        self.inner
+            .checked
+            .lock()
+            .unwrap()
+            .remove(&format!("{}:{}", old.host, old.port));
+        self.configure(c)
+    }
     pub fn configure(&mut self, config: Config) -> Result<(), String> {
         if config.port == 0
             || config.name.trim().is_empty()
@@ -685,10 +811,18 @@ impl Service {
         {
             return Err("Gerätename, Port oder Anzahl der Clients ist ungültig.".into());
         }
-        let restart = self
-            .listener
-            .as_ref()
-            .is_some_and(|l| l.port != config.port)
+        if config.interfaces.len() > 64
+            || (!config.automatic_interfaces && config.interfaces.is_empty())
+        {
+            return Err(
+                "Mindestens eine Schnittstelle/IP auswählen oder Automatisch aktivieren.".into(),
+            );
+        }
+        self.inner.network_epoch.fetch_add(1, Ordering::Relaxed);
+        let old = self.config();
+        let restart = old.port != config.port
+            || old.automatic_interfaces != config.automatic_interfaces
+            || old.interfaces != config.interfaces
             || !config.enabled;
         if restart {
             self.stop_listener();
@@ -699,94 +833,116 @@ impl Service {
             self.inner.save(&s)?;
         }
         if config.enabled && self.listener.is_none() {
-            let socket = socket2::Socket::new(
-                socket2::Domain::IPV6,
-                socket2::Type::STREAM,
-                Some(socket2::Protocol::TCP),
-            );
-            let listener: Result<TcpListener, String> = (|| {
-                if let Ok(socket) = socket {
-                    socket.set_only_v6(false).map_err(err)?;
-                    #[cfg(unix)]
-                    socket.set_reuse_address(true).map_err(err)?;
-                    socket
-                        .bind(&SocketAddr::from(([0u16; 8], config.port)).into())
-                        .map_err(err)?;
-                    socket.listen(16).map_err(err)?;
-                    Ok(socket.into())
-                } else {
-                    TcpListener::bind(("0.0.0.0", config.port)).map_err(err)
-                }
-            })();
-            let listener = match listener {
-                Ok(l) => l,
+            let sockets = match crate::network::listeners(
+                config.automatic_interfaces,
+                &config.interfaces,
+                config.port,
+            ) {
+                Ok(s) => s,
                 Err(e) => {
-                    let mut s = self.inner.state.lock().unwrap();
-                    s.config.enabled = false;
+                    let mut state = self.inner.state.lock().unwrap();
+                    state.config.enabled = false;
                     self.inner.enabled.store(false, Ordering::Relaxed);
-                    self.inner.save(&s)?;
-                    return Err(format!("Lokaler Port konnte nicht geöffnet werden: {e}"));
+                    self.inner.save(&state)?;
+                    return Err(format!(
+                        "Gewählte Schnittstellen konnten nicht geöffnet werden: {e}"
+                    ));
                 }
             };
+            let mut poll = mio::Poll::new().map_err(err)?;
+            let wake =
+                Arc::new(mio::Waker::new(poll.registry(), mio::Token(usize::MAX)).map_err(err)?);
+            let mut listeners = Vec::new();
+            for (index, socket) in sockets.into_iter().enumerate() {
+                let mut socket = mio::net::TcpListener::from_std(socket);
+                poll.registry()
+                    .register(&mut socket, mio::Token(index), mio::Interest::READABLE)
+                    .map_err(err)?;
+                listeners.push(socket);
+            }
             let running = Arc::new(AtomicBool::new(true));
             let flag = running.clone();
             let inner = self.inner.clone();
             self.inner.enabled.store(true, Ordering::Relaxed);
             let worker = thread::spawn(move || {
-                for connection in listener.incoming() {
-                    if !flag.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    let Ok(stream) = connection else {
-                        break;
-                    };
-                    let Ok(remote) = stream.peer_addr() else {
-                        continue;
-                    };
-                    if !private(remote.ip()) {
-                        continue;
-                    }
-                    if inner.transfers.fetch_add(1, Ordering::Relaxed) >= 2 {
-                        inner.transfers.fetch_sub(1, Ordering::Relaxed);
-                        continue;
-                    }
-                    let ip = remote.ip().to_canonical();
-                    {
-                        let mut admissions = inner.admissions.lock().unwrap();
-                        admissions.retain(|_, (active, _, since)| {
-                            *active > 0 || since.elapsed() < Duration::from_secs(60)
-                        });
-                        if !admissions.contains_key(&ip) && admissions.len() >= 128 {
-                            inner.transfers.fetch_sub(1, Ordering::Relaxed);
+                let mut events = mio::Events::with_capacity(128);
+                while flag.load(Ordering::Relaxed) {
+                    if let Err(error) = poll.poll(&mut events, None) {
+                        if error.kind() == std::io::ErrorKind::Interrupted {
                             continue;
                         }
-                        let entry = admissions.entry(ip).or_insert((0, 0, Instant::now()));
-                        if entry.2.elapsed() >= Duration::from_secs(60) {
-                            entry.1 = 0;
-                            entry.2 = Instant::now();
-                        }
-                        if entry.0 > 0 || entry.1 >= 240 {
-                            inner.transfers.fetch_sub(1, Ordering::Relaxed);
+                        inner.event(Event::Notice("Netzwerk-Listener wurde beendet.".into()));
+                        break;
+                    }
+                    for event in events.iter() {
+                        if event.token() == mio::Token(usize::MAX) {
                             continue;
                         }
-                        entry.0 += 1;
-                        entry.1 += 1;
-                    }
-                    let inner = inner.clone();
-                    thread::spawn(move || {
-                        let _permit = TransferPermit {
-                            inner: inner.clone(),
-                            ip,
+                        let Some(listener) = listeners.get(event.token().0) else {
+                            continue;
                         };
-                        if let Err(error) = serve(&inner, stream, remote) {
-                            crate::diagnostics::failure("sharing", "incoming_failed", &error);
+                        loop {
+                            let generation = inner.network_epoch.load(Ordering::Relaxed);
+                            let (stream, remote) = match listener.accept() {
+                                Ok(value) => value,
+                                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                                Err(_) => break,
+                            };
+                            if !flag.load(Ordering::Relaxed) {
+                                break;
+                            }
+                            let stream: TcpStream = stream.into();
+                            if stream.set_nonblocking(false).is_err() || !private(remote.ip()) {
+                                continue;
+                            }
+                            if inner.transfers.fetch_add(1, Ordering::Relaxed) >= 2 {
+                                inner.transfers.fetch_sub(1, Ordering::Relaxed);
+                                continue;
+                            }
+                            let ip = remote.ip().to_canonical();
+                            {
+                                let mut admissions = inner.admissions.lock().unwrap();
+                                admissions.retain(|_, (active, _, since)| {
+                                    *active > 0 || since.elapsed() < Duration::from_secs(60)
+                                });
+                                if !admissions.contains_key(&ip) && admissions.len() >= 128 {
+                                    inner.transfers.fetch_sub(1, Ordering::Relaxed);
+                                    continue;
+                                }
+                                let entry = admissions.entry(ip).or_insert((0, 0, Instant::now()));
+                                if entry.2.elapsed() >= Duration::from_secs(60) {
+                                    entry.1 = 0;
+                                    entry.2 = Instant::now();
+                                }
+                                if entry.0 > 0 || entry.1 >= 240 {
+                                    inner.transfers.fetch_sub(1, Ordering::Relaxed);
+                                    continue;
+                                }
+                                entry.0 += 1;
+                                entry.1 += 1;
+                            }
+                            let inner = inner.clone();
+                            thread::spawn(move || {
+                                let _permit = TransferPermit {
+                                    inner: inner.clone(),
+                                    ip,
+                                };
+                                if let Err(error) = serve(&inner, stream, remote, generation) {
+                                    crate::diagnostics::failure(
+                                        "sharing",
+                                        "incoming_failed",
+                                        &error,
+                                    );
+                                    crate::traffic::failure(&error);
+                                }
+                            });
                         }
-                    });
+                    }
                 }
             });
             self.listener = Some(Listener {
                 running,
-                port: config.port,
+                wake,
                 worker,
             });
         }
@@ -799,24 +955,12 @@ impl Service {
         Ok(())
     }
     pub fn stop_listener(&mut self) {
+        self.inner.network_epoch.fetch_add(1, Ordering::Relaxed);
         self.inner.enabled.store(false, Ordering::Relaxed);
         if let Some(listener) = self.listener.take() {
             listener.running.store(false, Ordering::Relaxed);
-            let wake = TcpStream::connect_timeout(
-                &SocketAddr::from(([127, 0, 0, 1], listener.port)),
-                Duration::from_millis(200),
-            )
-            .or_else(|_| {
-                TcpStream::connect_timeout(
-                    &SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], listener.port)),
-                    Duration::from_millis(200),
-                )
-            });
-            // The accept thread owns the bound socket. Release it before a
-            // settings change binds the replacement listener.
-            if wake.is_ok() || listener.worker.is_finished() {
-                let _ = listener.worker.join();
-            }
+            let _ = listener.wake.wake();
+            let _ = listener.worker.join();
         }
     }
     pub fn disable_after_error(&mut self) {
@@ -870,7 +1014,7 @@ impl Service {
         }
         self.configure(c)
     }
-    pub fn trust(&mut self, peer: Peer, accept: bool) -> Result<(), String> {
+    pub fn trust(&mut self, mut peer: Peer, accept: bool) -> Result<(), String> {
         if !accept {
             return Ok(());
         }
@@ -881,6 +1025,14 @@ impl Service {
         if let Some(p) = c.clients.iter_mut().find(|p| {
             p.host == peer.host && (p.port == peer.port || p.cert.is_empty()) || p.id == peer.id
         }) {
+            let mut state = self.inner.state.lock().unwrap();
+            if p.cert.is_empty() || state.locked_clients.contains(&p.id) {
+                peer.name = p.name.clone();
+                peer.host = p.host.clone();
+                peer.port = p.port;
+                state.locked_clients.insert(peer.id.clone());
+                self.inner.save(&state)?;
+            }
             *p = peer;
         } else {
             c.clients.push(peer);
@@ -1278,7 +1430,10 @@ impl ClientCertVerifier for Verifier {
         schemes()
     }
 }
-fn write_header(stream: &mut impl Write, value: &impl Serialize) -> Result<(), String> {
+fn write_header<T: Serialize + WireLabel>(
+    stream: &mut impl Write,
+    value: &T,
+) -> Result<(), String> {
     let bytes = serde_json::to_vec(value).map_err(err)?;
     if bytes.len() > HEADER {
         return Err("Protokollkopf zu gross.".into());
@@ -1287,9 +1442,13 @@ fn write_header(stream: &mut impl Write, value: &impl Serialize) -> Result<(), S
         .write_all(&(bytes.len() as u32).to_be_bytes())
         .map_err(err)?;
     stream.write_all(&bytes).map_err(err)?;
-    stream.flush().map_err(err)
+    stream.flush().map_err(err)?;
+    crate::traffic::record("TX", value.label(), bytes.len() as u64 + 4);
+    Ok(())
 }
-fn read_header<T: serde::de::DeserializeOwned>(stream: &mut impl Read) -> Result<T, String> {
+fn read_header<T: serde::de::DeserializeOwned + WireLabel>(
+    stream: &mut impl Read,
+) -> Result<T, String> {
     let mut size = [0; 4];
     stream.read_exact(&mut size).map_err(err)?;
     let size = u32::from_be_bytes(size) as usize;
@@ -1298,10 +1457,13 @@ fn read_header<T: serde::de::DeserializeOwned>(stream: &mut impl Read) -> Result
     }
     let mut data = vec![0; size];
     stream.read_exact(&mut data).map_err(err)?;
-    serde_json::from_slice(&data).map_err(err)
+    let value: T = serde_json::from_slice(&data).map_err(err)?;
+    crate::traffic::record("RX", value.label(), size as u64 + 4);
+    Ok(value)
 }
 fn send_body(inner: &Inner, stream: &mut impl Write, hash: &str) -> Result<(), String> {
     let mut file = fs::File::open(inner.content_path(hash)?).map_err(err)?;
+    let mut transferred = 0;
     let mut buffer = [0; 65536];
     loop {
         if !inner.enabled.load(Ordering::Relaxed) {
@@ -1312,8 +1474,11 @@ fn send_body(inner: &Inner, stream: &mut impl Write, hash: &str) -> Result<(), S
             break;
         }
         stream.write_all(&buffer[..n]).map_err(err)?;
+        transferred += n as u64;
     }
-    stream.flush().map_err(err)
+    stream.flush().map_err(err)?;
+    crate::traffic::record("TX", "document body completed", transferred);
+    Ok(())
 }
 fn read_body(
     inner: &Inner,
@@ -1357,6 +1522,7 @@ fn read_body(
         if format!("{:x}", hash.finalize()) != revision.hash {
             return Err("Inhaltsprüfsumme stimmt nicht.".into());
         }
+        crate::traffic::record("RX", "document body validated", len);
         if !path.exists() {
             fs::rename(&temp, &path).map_err(err)?;
         } else {
@@ -1369,8 +1535,20 @@ fn read_body(
     }
     result
 }
-fn serve(inner: &Arc<Inner>, socket: TcpStream, remote: SocketAddr) -> Result<(), String> {
-    let mut socket = DeadlineSocket::new(socket);
+fn serve(
+    inner: &Arc<Inner>,
+    socket: TcpStream,
+    remote: SocketAddr,
+    generation: u64,
+) -> Result<(), String> {
+    crate::traffic::context(
+        "",
+        remote.to_string(),
+        socket.local_addr().map_err(err)?.to_string(),
+    );
+    crate::traffic::record("IN", "TCP accepted", 0);
+    let mut socket = DeadlineSocket::new(socket, inner.network_epoch.clone());
+    socket.generation = generation;
     socket
         .set_read_timeout(Some(Duration::from_secs(15)))
         .map_err(err)?;
@@ -1402,6 +1580,8 @@ fn serve(inner: &Arc<Inner>, socket: TcpStream, remote: SocketAddr) -> Result<()
             .as_ref(),
     );
     let mut stream = rustls::StreamOwned::new(connection, socket);
+    crate::traffic::identify(&peer);
+    crate::traffic::record("IN", "TLS authenticated", 0);
     if !inner.enabled.load(Ordering::Relaxed) {
         return Err("Freigabe ist deaktiviert.".into());
     }
@@ -1462,11 +1642,13 @@ fn serve(inner: &Arc<Inner>, socket: TcpStream, remote: SocketAddr) -> Result<()
                 return Err("Ungültige Gerätekennung.".into());
             }
             let mut s = inner.state.lock().unwrap();
-            if let Some(client) = s.config.clients.iter_mut().find(|p| p.id == peer) {
-                if client.port != info.port || client.name != info.name {
-                    client.port = info.port;
-                    client.name = info.name;
-                    inner.save(&s)?;
+            if !s.locked_clients.contains(&peer) {
+                if let Some(client) = s.config.clients.iter_mut().find(|p| p.id == peer) {
+                    if client.port != info.port || client.name != info.name {
+                        client.port = info.port;
+                        client.name = info.name.clone();
+                        inner.save(&s)?;
+                    }
                 }
             }
             let heads = s
@@ -1645,11 +1827,26 @@ fn connect(
         .checked_sub(started.elapsed())
         .filter(|d| !d.is_zero())
         .ok_or("Sync-Gesamtzeitlimit je Gegenstelle erreicht.")?;
-    let socket = TcpStream::connect_timeout(
-        &address(&peer.host, peer.port)?,
+    crate::traffic::context(
+        &peer.id,
+        format!("{}:{}", peer.host, peer.port),
+        String::new(),
+    );
+    let generation = inner.network_epoch.load(Ordering::Relaxed);
+    let config = inner.state.lock().unwrap().config.clone();
+    let socket = crate::network::connect(
+        address(&peer.host, peer.port)?,
+        config.automatic_interfaces,
+        &config.interfaces,
         remaining.min(Duration::from_secs(3)),
     )
     .map_err(err)?;
+    crate::traffic::context(
+        &peer.id,
+        socket.peer_addr().map_err(err)?.to_string(),
+        socket.local_addr().map_err(err)?.to_string(),
+    );
+    crate::traffic::record("OUT", "TCP connected", 0);
     socket
         .set_read_timeout(Some(Duration::from_secs(15)))
         .map_err(err)?;
@@ -1677,7 +1874,12 @@ fn connect(
     .map_err(err)?;
     Ok(rustls::StreamOwned::new(
         connection,
-        DeadlineSocket { socket, started },
+        DeadlineSocket {
+            socket,
+            started,
+            epoch: inner.network_epoch.clone(),
+            generation,
+        },
     ))
 }
 fn sweep(inner: &Arc<Inner>) {
@@ -1872,7 +2074,22 @@ fn sweep(inner: &Arc<Inner>) {
         })();
         let key = format!("{}:{}", peer.host, peer.port);
         let mut statuses = inner.statuses.lock().unwrap();
-        let changed = statuses.insert(key, result.is_ok()) != Some(result.is_ok());
+        let previous = statuses.insert(key.clone(), result.is_ok());
+        let changed = previous != Some(result.is_ok());
+        inner.checked.lock().unwrap().insert(
+            key,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        );
+        if previous == Some(true) && result.is_err() {
+            inner.event(Event::Disconnected(peer.id.clone()));
+        }
+        if let Err(error) = &result {
+            crate::traffic::failure(error);
+        }
+        inner.event(Event::Checked);
         drop(statuses);
         if changed {
             if let Err(error) = &result {

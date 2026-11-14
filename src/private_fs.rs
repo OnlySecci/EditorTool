@@ -1,5 +1,22 @@
 //! Private application state; never use these permission changes on user documents.
 use std::{fs, io, path::Path};
+#[cfg(windows)]
+pub fn windows_wide(path: &Path) -> io::Result<Vec<u16>> {
+    use std::os::windows::ffi::OsStrExt;
+    let absolute = if path.exists() {
+        path.canonicalize()?
+    } else {
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        parent.canonicalize()?.join(
+            path.file_name()
+                .ok_or_else(|| io::Error::other("Dateiname fehlt"))?,
+        )
+    };
+    Ok(absolute.as_os_str().encode_wide().chain(Some(0)).collect())
+}
 pub fn is_link(metadata: &fs::Metadata) -> bool {
     #[cfg(windows)]
     {
@@ -40,7 +57,7 @@ pub fn restrict(path: &Path, directory: bool) -> io::Result<()> {
     }
     #[cfg(windows)]
     {
-        use std::{ffi::c_void, os::windows::ffi::OsStrExt, ptr};
+        use std::{ffi::c_void, ptr};
         #[link(name = "advapi32")]
         unsafe extern "system" {
             fn ConvertStringSecurityDescriptorToSecurityDescriptorW(
@@ -61,7 +78,9 @@ pub fn restrict(path: &Path, directory: bool) -> io::Result<()> {
             "D:P(A;;FA;;;OW)(A;;FA;;;SY)"
         };
         let s: Vec<u16> = sddl.encode_utf16().chain(Some(0)).collect();
-        let path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        // canonicalize returns a verbatim (\\?\ / \\?\UNC\) absolute path on
+        // Windows. Raw Win32 calls do not add Rust's long-path prefix for us.
+        let path = windows_wide(path)?;
         let mut descriptor = ptr::null_mut();
         unsafe {
             if ConvertStringSecurityDescriptorToSecurityDescriptorW(
@@ -77,6 +96,15 @@ pub fn restrict(path: &Path, directory: bool) -> io::Result<()> {
             let error = io::Error::last_os_error();
             LocalFree(descriptor);
             if ok == 0 {
+                crate::diagnostics::event(
+                    "storage",
+                    &format!(
+                        "private_acl kind={:?} os_error={:?} path_chars={}",
+                        error.kind(),
+                        error.raw_os_error(),
+                        path.len().saturating_sub(1)
+                    ),
+                );
                 return Err(error);
             }
         }

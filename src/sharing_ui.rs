@@ -17,16 +17,19 @@ pub struct Clients {
     pub remote_port: Input,
     pub fingerprint: Output,
     pub status: Frame,
+    pub automatic: fltk::button::CheckButton,
+    pub interfaces: CheckBrowser,
+    pub interface_choices: Vec<network::Binding>,
 }
 impl Clients {
     pub fn new(tx: app::Sender<Message>) -> Self {
         Group::set_current(None::<&Group>);
         let mut win = Window::default()
-            .with_size(700, 800)
+            .with_size(760, 900)
             .with_label("Clients und Synchronisierung — EditorTool");
         win.set_color(PANEL);
         chrome::set_icon(&mut win);
-        let mut root = Flex::new(20, 18, 660, 764, None).column();
+        let mut root = Flex::new(20, 18, 720, 1220, None).column();
         root.set_spacing(10);
         let heading = theme::heading("Clients und Synchronisierung", 21);
         root.fixed(&heading, 30);
@@ -65,6 +68,30 @@ impl Clients {
         row.end();
         root.fixed(&row, 58);
         enabled.emit(tx, (0, Action::ApplySharing));
+        let mut automatic = fltk::button::CheckButton::default()
+            .with_label("Schnittstelle automatisch wählen (Betriebssystem-Routing)");
+        theme::check(&mut automatic);
+        automatic.set_value(true);
+        root.fixed(&automatic, 28);
+        let mut interfaces = CheckBrowser::default();
+        interfaces.set_color(BG);
+        interfaces.set_text_color(FG);
+        interfaces.set_text_size(12);
+        interfaces.set_frame(FrameType::FlatBox);
+        root.fixed(&interfaces, 130);
+        let mut refresh_interfaces =
+            Button::default().with_label("Netzwerkadapter / IP / MAC aktualisieren");
+        theme::button(&mut refresh_interfaces, false, None);
+        refresh_interfaces.emit(tx, (0, Action::RefreshInterfaces));
+        root.fixed(&refresh_interfaces, 30);
+        let mut interface_hint = Frame::default().with_label(
+            "Für LAN oder VPN: Automatisch ausschalten, gewünschte IPs anhaken und Übernehmen.
+Mehrere IPs möglich. Ohne passende Auswahl kein Rückfall auf andere Adapter.",
+        );
+        interface_hint.set_align(Align::Left | Align::Inside | Align::Wrap);
+        interface_hint.set_label_color(MUTED);
+        interface_hint.set_label_size(11);
+        root.fixed(&interface_hint, 38);
         let mut fingerprint = Output::default();
         fingerprint.set_frame(FrameType::FlatBox);
         fingerprint.set_color(BG);
@@ -95,9 +122,11 @@ impl Clients {
         clients.set_color(BG);
         clients.set_label_color(FG);
         clients.set_text_size(13);
-        clients.set_format_char('\0');
+        clients.set_format_char('@');
         clients.set_column_char('\t');
         clients.set_column_widths(&[160, 260, 0]);
+        clients.emit(tx, (0, Action::SelectClient));
+        root.fixed(&clients, 140);
         let mut row = Flex::default().row();
         row.set_spacing(8);
         let mut field = Flex::default().column();
@@ -135,6 +164,9 @@ impl Clients {
         root.fixed(&row, 58);
         let mut row = Flex::default().row();
         row.set_spacing(8);
+        let mut save = Button::default().with_label("Änderungen speichern");
+        theme::button(&mut save, false, None);
+        save.emit(tx, (0, Action::EditClient));
         let mut remove = Button::default().with_label("Client entfernen");
         theme::button(&mut remove, false, None);
         remove.emit(tx, (0, Action::RemoveClient));
@@ -143,6 +175,10 @@ impl Clients {
         probe.emit(tx, (0, Action::ProbeClients));
         row.end();
         root.fixed(&row, 34);
+        let mut log = Button::default().with_label("Kommunikationsprotokoll…");
+        theme::button(&mut log, false, None);
+        log.emit(tx, (0, Action::Traffic));
+        root.fixed(&log, 32);
         let mut status = Frame::default();
         status.set_label_color(MUTED);
         status.set_label_size(12);
@@ -165,6 +201,43 @@ impl Clients {
             remote_port,
             fingerprint,
             status,
+            automatic,
+            interfaces,
+            interface_choices: vec![],
+        }
+    }
+    pub fn reload_interfaces(&mut self, config: &peer::Config) -> Result<(), String> {
+        self.interfaces.clear();
+        let mut choices = network::interfaces().map_err(|e| e.to_string())?;
+        for saved in &config.interfaces {
+            if !choices
+                .iter()
+                .any(|b| b.name == saved.name && b.ip == saved.ip)
+            {
+                choices.push(saved.clone());
+            }
+        }
+        for binding in &choices {
+            self.interfaces.add(
+                &binding.label(),
+                config
+                    .interfaces
+                    .iter()
+                    .any(|b| b.name == binding.name && b.ip == binding.ip),
+            );
+        }
+        self.interface_choices = choices;
+        self.automatic.set_value(config.automatic_interfaces);
+        Ok(())
+    }
+    pub fn select_client(&mut self, service: &peer::Service) {
+        let index = self.clients.value();
+        if index > 0 {
+            if let Some(peer) = service.config().clients.get(index as usize - 1) {
+                self.alias.set_value(&peer.name);
+                self.host.set_value(&peer.host);
+                self.remote_port.set_value(&peer.port.to_string());
+            }
         }
     }
     pub fn refresh(&mut self, service: &peer::Service, reset: bool) {
@@ -173,8 +246,13 @@ impl Clients {
         self.clients.clear();
         for p in &config.clients {
             self.clients.add(&format!(
-                "{}\t{}:{}\t{}{}",
-                p.name,
+                "@C{}@.{}\t{}:{}\t{}{}",
+                if service.status(p) {
+                    Color::Green.bits()
+                } else {
+                    Color::Red.bits()
+                },
+                p.name.replace(['\n', '\r', '\t'], " "),
                 p.host,
                 p.port,
                 if service.status(p) {
@@ -198,12 +276,30 @@ impl Clients {
             self.name.set_value(&config.name);
             self.port.set_value(&config.port.to_string());
         }
-        self.status.set_label(if config.enabled{"Interne Netze/VPN · Geräte an beiden Seiten freigeben. Dateien werden erst nach Annahme übertragen."}else{"Senden/Sync ist aus. Der Freigabe-Port ist geschlossen."});
+        let latest = config
+            .clients
+            .iter()
+            .map(|p| service.checked_at(p))
+            .max()
+            .unwrap_or(0);
+        let checked = if latest == 0 {
+            "noch keine Prüfung".into()
+        } else {
+            let t = time::OffsetDateTime::from_unix_timestamp(latest as i64)
+                .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+            format!(
+                "letzte Prüfung {:02}:{:02}:{:02} UTC",
+                t.hour(),
+                t.minute(),
+                t.second()
+            )
+        };
+        self.status.set_label(&if config.enabled{format!("Automatisch: 10 s Pause nach Prüfrunde, 1 s bei ausstehenden Sendungen.\nRunden dauern je nach Gegenstellen länger · {checked}.\nVerbindung prüfen = manuelle Prüfrunde. Geräte beidseitig freigeben.")}else{"Senden/Sync ist aus. Der Freigabe-Port ist geschlossen.".into()});
     }
 }
 pub struct Transfer {
     pub win: Window,
-    pub clients: CheckBrowser,
+    pub clients: colored_checks::Checks,
     pub autosave: fltk::button::CheckButton,
     pub stop: Button,
     pub context: Option<(usize, usize, bool)>,
@@ -221,11 +317,7 @@ impl Transfer {
         root.set_spacing(10);
         let label = theme::heading("Client auswählen", 20);
         root.fixed(&label, 28);
-        let mut clients = CheckBrowser::default();
-        clients.set_color(BG);
-        clients.set_text_color(FG);
-        clients.set_text_size(13);
-        clients.set_frame(FrameType::FlatBox);
+        let clients = colored_checks::Checks::new();
         let mut autosave = fltk::button::CheckButton::default()
             .with_label("Sync-Änderungen in meine lokale Datei speichern");
         theme::check(&mut autosave);
@@ -238,6 +330,10 @@ impl Transfer {
         let mut stop = Button::default().with_label("Sync beenden");
         theme::button(&mut stop, false, None);
         stop.emit(tx, (0, Action::StopSync));
+        let mut log = Button::default().with_label("Log…");
+        theme::button(&mut log, false, None);
+        log.emit(tx, (0, Action::Traffic));
+        row.fixed(&log, 70);
         row.end();
         root.fixed(&row, 36);
         root.end();
@@ -281,6 +377,7 @@ impl Transfer {
                     }
                 ),
                 false,
+                service.status(p),
             );
         }
         self.context = Some((wid, id, sync));
@@ -309,6 +406,7 @@ impl Transfer {
             "Dokument senden — EditorTool"
         });
         self.win.show();
+        self.clients.layout();
         chrome::dark_title(&self.win);
     }
     pub fn selected(&self) -> Vec<peer::Peer> {
