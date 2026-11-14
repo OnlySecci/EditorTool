@@ -17,7 +17,7 @@ impl Notice {
         text.set_align(Align::Left | Align::Inside | Align::Wrap);
         let mut close = Button::new(350, 8, 28, 28, None);
         theme::button(&mut close, false, Some(theme::Icon::Close));
-        close.set_tooltip("Hinweis schliessen");
+        close.set_tooltip(crate::i18n::tr("Dismiss notice"));
         close.set_callback(move |_| tx.send((route.get(), Action::DismissNotice)));
         group.end();
         win.end();

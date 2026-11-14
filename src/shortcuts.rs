@@ -88,39 +88,39 @@ fn mask() -> i32 {
 impl Command {
     pub fn label(self) -> &'static str {
         use Command::*;
-        match self {
-            NewTab => "Neuer Tab",
-            NewWindow => "Neues Fenster",
-            CloseTab => "Tab schliessen",
-            CloseAll => "Alle Tabs schliessen",
-            Open => "Datei öffnen",
-            Save => "Speichern",
-            SaveAs => "Speichern unter",
-            Undo => "Rückgängig",
-            Redo => "Wiederholen",
-            Cut => "Ausschneiden",
-            Copy => "Kopieren",
-            Paste => "Einfügen",
-            SelectAll => "Alles auswählen",
-            Find => "Suchen",
-            Replace => "Ersetzen",
-            FindNext => "Weitersuchen",
-            Image => "Bild einfügen",
-            Settings => "Einstellungen",
-            Updates => "Nach Updates suchen",
-            ZoomIn => "Zoom vergrössern",
-            ZoomOut => "Zoom verkleinern",
+        crate::i18n::tr(match self {
+            NewTab => "New tab",
+            NewWindow => "New window",
+            CloseTab => "Close tab",
+            CloseAll => "Close all tabs",
+            Open => "Open file",
+            Save => "Save",
+            SaveAs => "Save as",
+            Undo => "Undo",
+            Redo => "Redo",
+            Cut => "Cut",
+            Copy => "Copy",
+            Paste => "Paste",
+            SelectAll => "Select all",
+            Find => "Find",
+            Replace => "Replace",
+            FindNext => "Find next",
+            Image => "Insert image",
+            Settings => "Settings",
+            Updates => "Check for updates",
+            ZoomIn => "Zoom in",
+            ZoomOut => "Zoom out",
             ZoomReset => "Zoom 100 %",
-            NextTab => "Nächster Tab",
-            PreviousTab => "Vorheriger Tab",
-            ToggleCompare => "Vergleich ein/aus",
-            Compare => "Vergleich starten",
-            StopCompare => "Vergleich stoppen",
-            CloseCompare => "Vergleich schliessen",
-            SplitSide => "Split nebeneinander",
-            SplitStack => "Split übereinander",
-            MergeSplit => "Split zusammenführen",
-        }
+            NextTab => "Next tab",
+            PreviousTab => "Previous tab",
+            ToggleCompare => "Toggle comparison",
+            Compare => "Start comparison",
+            StopCompare => "Stop comparison",
+            CloseCompare => "Close comparison",
+            SplitSide => "Split side by side",
+            SplitStack => "Split stacked",
+            MergeSplit => "Merge split",
+        })
     }
     pub fn action(self) -> Action {
         use Command::*;
@@ -203,35 +203,35 @@ impl Command {
     pub fn menu(self) -> Option<&'static str> {
         use Command::*;
         Some(match self {
-            NewTab => "&Datei/Neuer &Tab",
-            NewWindow => "&Datei/Neues &Fenster",
-            CloseTab => "&Datei/Tab schließen",
-            CloseAll => "&Datei/Alle Tabs schließen",
-            Open => "&Datei/Öffnen…",
-            Save => "&Datei/Speichern",
-            SaveAs => "&Datei/Speichern unter…",
-            Undo => "&Bearbeiten/Rückgängig",
-            Redo => "&Bearbeiten/Wiederholen",
-            Cut => "&Bearbeiten/Ausschneiden",
-            Copy => "&Bearbeiten/Kopieren (Auswahl oder alles)",
-            Paste => "&Bearbeiten/Einfügen",
-            SelectAll => "&Bearbeiten/Alles auswählen",
-            Find => "&Bearbeiten/Suchen…",
-            Replace => "&Bearbeiten/Ersetzen…",
-            FindNext => "&Bearbeiten/Weitersuchen",
-            Image => "&Bearbeiten/Bild einfügen…",
-            Settings => "&Einstellungen/Allgemein…",
-            Updates => "&Hilfe/Nach Updates suchen…",
-            ZoomIn => "&Ansicht/Zoom/Vergrössern",
-            ZoomOut => "&Ansicht/Zoom/Verkleinern",
-            ZoomReset => "&Ansicht/Zoom/100 %",
-            ToggleCompare => "&Ansicht/Vergleich ein oder aus",
-            Compare => "&Ansicht/Texte vergleichen",
-            StopCompare => "&Ansicht/Vergleich stoppen",
-            CloseCompare => "&Ansicht/Vergleich schliessen",
-            SplitSide => "&Ansicht/Split View/Nebeneinander",
-            SplitStack => "&Ansicht/Split View/Übereinander",
-            MergeSplit => "&Ansicht/Split View/Zusammenführen",
+            NewTab => "&File/New tab",
+            NewWindow => "&File/New window",
+            CloseTab => "&File/Close tab",
+            CloseAll => "&File/Close all tabs",
+            Open => "&File/Open…",
+            Save => "&File/Save",
+            SaveAs => "&File/Save as…",
+            Undo => "&Edit/Undo",
+            Redo => "&Edit/Redo",
+            Cut => "&Edit/Cut",
+            Copy => "&Edit/Copy (selection or all)",
+            Paste => "&Edit/Paste",
+            SelectAll => "&Edit/Select all",
+            Find => "&Edit/Find…",
+            Replace => "&Edit/Replace…",
+            FindNext => "&Edit/Find next",
+            Image => "&Edit/Insert image…",
+            Settings => "&Settings/General…",
+            Updates => "&Help/Check for updates…",
+            ZoomIn => "&View/Zoom/Zoom in",
+            ZoomOut => "&View/Zoom/Zoom out",
+            ZoomReset => "&View/Zoom/100 %",
+            ToggleCompare => "&View/Toggle comparison",
+            Compare => "&View/Compare texts",
+            StopCompare => "&View/Stop comparison",
+            CloseCompare => "&View/Close comparison",
+            SplitSide => "&View/Split View/Side by side",
+            SplitStack => "&View/Split View/Stacked",
+            MergeSplit => "&View/Split View/Merge",
             _ => return None,
         })
     }
@@ -260,7 +260,7 @@ impl Chord {
     }
     fn text(self) -> String {
         if self.key == 0 {
-            return "Nicht zugewiesen".into();
+            return "Unassigned".into();
         }
         let mut parts = vec![];
         for (flag, label) in [
@@ -280,7 +280,7 @@ impl Chord {
         } else {
             char::from_u32(self.key as u32)
                 .map(|c| c.to_uppercase().to_string())
-                .unwrap_or_else(|| format!("Taste {}", self.key))
+                .unwrap_or_else(|| format!("Key {}", self.key))
         };
         parts.push(key);
         parts.join("+")
@@ -317,7 +317,7 @@ pub fn action_hint(action: &Action) -> Option<String> {
         _ => return None,
     };
     let text = hint(command);
-    Some(if text == "Nicht zugewiesen" {
+    Some(if text == "Unassigned" {
         String::new()
     } else {
         text
@@ -345,7 +345,7 @@ pub fn apply_menu(menu: &mut MenuBar) {
     CURRENT.with(|p| {
         for b in p.borrow().iter() {
             if let Some(path) = b.command.menu() {
-                if let Some(mut item) = menu.find_item(path) {
+                if let Some(mut item) = menu.find_item(&crate::i18n::menu_path(path)) {
                     item.set_shortcut(b.chord.shortcut());
                 }
             }
@@ -355,16 +355,16 @@ pub fn apply_menu(menu: &mut MenuBar) {
 }
 fn validate(bindings: &[Binding]) -> Result<(), String> {
     if bindings.len() != ALL.len() {
-        return Err("Ungültige Tastenkürzel-Liste".into());
+        return Err("Invalid keyboard shortcut list".into());
     }
     for (i, b) in bindings.iter().enumerate() {
         if !b.chord.allowed() || bindings[..i].iter().any(|a| a.command == b.command) {
-            return Err("Ungültige Tastenkombination".into());
+            return Err("Invalid key combination".into());
         }
         if b.chord.key != 0 {
             if let Some(other) = bindings[..i].iter().find(|a| a.chord == b.chord) {
-                return Err(format!(
-                    "{} ist bereits für {} vergeben.",
+                return Err(crate::tr_format!(
+                    "{} is already assigned to {}.",
                     b.chord.text(),
                     other.command.label()
                 ));
@@ -439,14 +439,14 @@ impl Panel {
         Group::set_current(None::<&Group>);
         let mut win = Window::default()
             .with_size(660, 680)
-            .with_label("Tastenkürzel");
+            .with_label(crate::i18n::tr("Keyboard shortcuts"));
         win.set_color(PANEL);
         chrome::set_icon(&mut win);
         let mut root = Flex::new(20, 20, 620, 640, None).column();
         root.set_spacing(12);
-        let title = theme::heading("Tastenkürzel", 22);
+        let title = theme::heading("Keyboard shortcuts", 22);
         root.fixed(&title, 32);
-        let mut info=Frame::default().with_label("Befehl auswählen, neue Kombination im Feld drücken und zuweisen.\nCtrl/Cmd-, Alt- und Funktionstasten sind möglich. Doppelte Belegungen werden angezeigt.");
+        let mut info=Frame::default().with_label(crate::i18n::tr("Select a command, press a new combination in the field and assign it.\nCtrl/Cmd, Alt and function keys are supported. Duplicate bindings are shown."));
         info.set_align(Align::Left | Align::Inside | Align::Wrap);
         info.set_label_size(12);
         info.set_label_color(MUTED);
@@ -462,7 +462,7 @@ impl Panel {
         list.set_column_char('\t');
         list.set_column_widths(&[310, 0]);
         rows(&mut list, &draft.borrow());
-        let heading = theme::heading("Neue Tastenkombination – hier klicken und drücken", 12);
+        let heading = theme::heading("New key combination — click here and press", 12);
         root.fixed(&heading, 18);
         let mut capture = Input::default();
         theme::input(&mut capture);
@@ -491,7 +491,7 @@ impl Panel {
         });
         let mut row = Flex::default().row();
         row.set_spacing(8);
-        let mut assign = Button::default().with_label("Zuweisen");
+        let mut assign = Button::default().with_label(crate::i18n::tr("Assign"));
         theme::button(&mut assign, true, None);
         let values = draft.clone();
         let value = captured.clone();
@@ -514,16 +514,16 @@ impl Panel {
                         .map(|w| unsafe { Window::from_widget_ptr(w.as_widget_ptr() as _) });
                     chrome::decision(
                         owner.as_ref(),
-                        "Tastenkürzel bereits belegt",
+                        "Keyboard shortcut already assigned",
                         &e,
                         "",
-                        &["Schliessen"],
+                        &["Close"],
                         0,
                     );
                 }
             }
         });
-        let mut clear = Button::default().with_label("Belegung entfernen");
+        let mut clear = Button::default().with_label(crate::i18n::tr("Remove binding"));
         theme::button(&mut clear, false, None);
         let values = draft.clone();
         let mut browser = list.clone();
@@ -534,7 +534,7 @@ impl Panel {
             if i >= 0 {
                 values.borrow_mut()[i as usize].chord = Chord::default();
                 rows(&mut browser, &values.borrow());
-                field.set_value("Nicht zugewiesen");
+                field.set_value("Unassigned");
                 value.set(Chord::default());
             }
         });
@@ -542,7 +542,7 @@ impl Panel {
         root.fixed(&row, 38);
         let mut row = Flex::default().row();
         row.set_spacing(8);
-        let mut reset = Button::default().with_label("Standardbelegung");
+        let mut reset = Button::default().with_label(crate::i18n::tr("Restore defaults"));
         theme::button(&mut reset, false, None);
         let values = draft.clone();
         let mut browser = list.clone();
@@ -551,7 +551,7 @@ impl Panel {
             rows(&mut browser, &values.borrow());
             browser.do_callback();
         });
-        let mut apply = Button::default().with_label("Für alle Fenster übernehmen");
+        let mut apply = Button::default().with_label(crate::i18n::tr("Apply to all windows"));
         theme::button(&mut apply, true, None);
         let values = draft.clone();
         apply.set_callback(move |_| tx.send((0, Action::KeyboardApply(values.borrow().clone()))));

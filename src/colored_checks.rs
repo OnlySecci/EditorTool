@@ -80,9 +80,9 @@ impl Checks {
                 peer.host,
                 peer.port,
                 if service.status(peer) {
-                    "Connected"
+                    crate::i18n::tr("Connected")
                 } else {
-                    "Not connected"
+                    crate::i18n::tr("Not connected")
                 }
             ));
             row.set_label_color(if service.status(peer) {

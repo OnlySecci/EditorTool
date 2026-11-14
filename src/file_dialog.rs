@@ -57,7 +57,7 @@ impl Chooser {
                         }
                         Ok(Err(error)) => {
                             dialog::alert_default(&format!(
-                                "Dateiauswahl-Portal nicht verfügbar: {error}"
+                                "File selection portal unavailable: {error}"
                             ));
                             break;
                         }
@@ -89,7 +89,7 @@ fn portal(save: bool, title: &str, preset: &str) -> Result<Option<PathBuf>, Stri
         let token = format!("editortool_{}", crate::private_fs::random_token()?);
         let sender = connection
             .unique_name()
-            .ok_or("Session-Bus ohne Namen")?
+            .ok_or("Session bus has no name")?
             .as_str()
             .trim_start_matches(':')
             .replace('.', "_");
@@ -123,26 +123,24 @@ fn portal(save: bool, title: &str, preset: &str) -> Result<Option<PathBuf>, Stri
             &("", title, options),
         )?;
         if returned.as_str() != path {
-            return Err("Unerwartete Portal-Anfragekennung".into());
+            return Err("Unexpected portal request identifier".into());
         }
-        let message = responses
-            .next()
-            .ok_or("Portal hat die Verbindung beendet")?;
+        let message = responses.next().ok_or("Portal closed the connection")?;
         let (code, mut result): (u32, HashMap<String, OwnedValue>) =
             message.body().deserialize()?;
         if code == 1 {
             return Ok(None);
         }
         if code != 0 {
-            return Err("Dateiauswahl wurde vom Portal abgelehnt".into());
+            return Err("File selection was rejected by the portal".into());
         }
-        let uris = Vec::<String>::try_from(result.remove("uris").ok_or("Dateipfad fehlt")?)?;
+        let uris = Vec::<String>::try_from(result.remove("uris").ok_or("File path is missing")?)?;
         if uris.len() != 1 {
-            return Err("Genau eine lokale Datei auswählen".into());
+            return Err("Select exactly one local file".into());
         }
         let path = url::Url::parse(&uris[0])?
             .to_file_path()
-            .map_err(|_| "Nur lokale Dateien werden unterstützt")?;
+            .map_err(|_| "Only local files are supported")?;
         Ok(Some(path))
     };
     run().map_err(|e| e.to_string())

@@ -30,16 +30,16 @@ pub fn select_version(labels: &[String]) -> Option<usize> {
     let selected = Rc::new(Cell::new(None));
     let mut win = Window::default()
         .with_size(600, 410)
-        .with_label("Ältere Dateistände")
+        .with_label(crate::i18n::tr("Older file versions"))
         .center_screen();
     win.set_color(PANEL);
     win.make_modal(true);
     set_icon(&mut win);
     let mut root = Flex::new(20, 20, 560, 370, None).column();
     root.set_spacing(12);
-    let mut hint = Frame::default().with_label(
-        "Stand auswählen und als neuen Tab öffnen. Die aktuelle Datei bleibt erhalten.",
-    );
+    let mut hint = Frame::default().with_label(crate::i18n::tr(
+        "Select a version to open in a new tab. The current file is preserved.",
+    ));
     hint.set_label_color(MUTED);
     hint.set_label_size(13);
     root.fixed(&hint, 36);
@@ -53,11 +53,11 @@ pub fn select_version(labels: &[String]) -> Option<usize> {
     }
     let mut row = Flex::default().row();
     row.set_spacing(12);
-    let mut cancel = Button::default().with_label("Abbrechen");
+    let mut cancel = Button::default().with_label(crate::i18n::tr("Cancel"));
     theme::button(&mut cancel, false, None);
     let mut owner = win.clone();
     cancel.set_callback(move |_| owner.hide());
-    let mut open = Button::default().with_label("Als neuen Tab öffnen");
+    let mut open = Button::default().with_label(crate::i18n::tr("Open as new tab"));
     theme::button(&mut open, true, None);
     let result = selected.clone();
     let mut owner = win.clone();
@@ -125,16 +125,16 @@ pub fn confirm_save(owner: &Window, title: &str) -> i32 {
     let result = Rc::new(Cell::new(0));
     let mut win = Window::default()
         .with_size(560, 254)
-        .with_label("Änderungen speichern?");
+        .with_label(crate::i18n::tr("Save changes?"));
     win.set_color(PANEL);
     win.make_modal(true);
     set_icon(&mut win);
     let mut root = Flex::new(26, 22, 508, 210, None).column();
     root.set_spacing(16);
-    let heading = theme::heading("Änderungen speichern?", 22);
+    let heading = theme::heading("Save changes?", 22);
     root.fixed(&heading, 36);
-    let mut message = Frame::default().with_label(&format!(
-        "„{}“ enthält ungespeicherte Änderungen.\nBeim Verwerfen gehen diese Änderungen verloren.",
+    let mut message = Frame::default().with_label(&crate::tr_format!(
+        "“{}” has unsaved changes.\nDiscarding will lose these changes.",
         title.trim_end_matches(" *")
     ));
     message.set_label_size(14);
@@ -143,8 +143,8 @@ pub fn confirm_save(owner: &Window, title: &str) -> i32 {
     let mut row = Flex::default().row();
     row.set_spacing(10);
     Frame::default();
-    for (label, value) in [("Abbrechen", 0), ("Verwerfen", 1), ("Speichern", 2)] {
-        let mut button = Button::default().with_label(label);
+    for (label, value) in [("Cancel", 0), ("Discard", 1), ("Save", 2)] {
+        let mut button = Button::default().with_label(crate::i18n::tr(label));
         theme::button(&mut button, value == 2, None);
         if value == 1 {
             button.set_label_color(fltk::enums::Color::from_hex(0xff9d96));
@@ -202,7 +202,9 @@ pub fn decision(
     };
     let message_height = (message.chars().count().div_ceil(78) as i32 * 20).clamp(60, 160);
     let height = 160 + message_height + detail_height;
-    let mut win = Window::default().with_size(660, height).with_label(title);
+    let mut win = Window::default()
+        .with_size(660, height)
+        .with_label(crate::i18n::tr(title));
     win.set_color(PANEL);
     win.make_modal(true);
     set_icon(&mut win);
@@ -210,7 +212,7 @@ pub fn decision(
     root.set_spacing(14);
     let label = theme::heading(title, 22);
     root.fixed(&label, 32);
-    let mut message = Frame::default().with_label(message);
+    let mut message = Frame::default().with_label(crate::i18n::tr(message));
     message.set_label_size(14);
     message.set_label_color(theme::TEXT);
     message.set_align(Align::Left | Align::Inside | Align::Wrap);
@@ -237,7 +239,7 @@ pub fn decision(
     row.set_spacing(10);
     let mut first = None;
     for (i, label) in choices.iter().enumerate() {
-        let mut button = Button::default().with_label(label);
+        let mut button = Button::default().with_label(crate::i18n::tr(label));
         theme::button(&mut button, i == primary, None);
         if i == 0 {
             first = Some(button.clone());
@@ -300,17 +302,17 @@ impl SearchPanel {
         Group::set_current(None::<&Group>);
         let mut win = Window::default()
             .with_size(520, 160)
-            .with_label("Suchen — EditorTool");
+            .with_label(crate::i18n::tr("Find — EditorTool"));
         win.set_color(PANEL);
         set_icon(&mut win);
         let mut root = Flex::new(14, 12, 492, 136, None).column();
         root.set_spacing(6);
         let mut header = Flex::default().row();
         header.set_spacing(8);
-        theme::heading("Suchen", 18);
-        let mut toggle = Button::default().with_label("Ersetzen");
+        theme::heading("Find", 18);
+        let mut toggle = Button::default().with_label(crate::i18n::tr("Replace"));
         theme::button(&mut toggle, false, None);
-        toggle.set_tooltip("Ersetzen ein- oder ausklappen");
+        toggle.set_tooltip(crate::i18n::tr("Expand or collapse replacement controls"));
         toggle.emit(tx, (wid, Action::ToggleReplace));
         header.fixed(&toggle, 92);
         header.end();
@@ -319,10 +321,10 @@ impl SearchPanel {
         row.set_spacing(8);
         let mut search = Input::default();
         theme::input(&mut search);
-        search.set_tooltip("Suchtext");
+        search.set_tooltip(crate::i18n::tr("Search text"));
         search.set_trigger(CallbackTrigger::EnterKeyAlways);
         search.emit(tx, (wid, Action::Find));
-        let mut next = Button::default().with_label("Weiter");
+        let mut next = Button::default().with_label(crate::i18n::tr("Next"));
         theme::button(&mut next, true, None);
         next.emit(tx, (wid, Action::Find));
         row.fixed(&next, 78);
@@ -330,18 +332,18 @@ impl SearchPanel {
         root.fixed(&row, 32);
         let mut replacement_row = Flex::default().column();
         replacement_row.set_spacing(6);
-        let mut caption = theme::heading("Ersetzen durch", 12);
+        let mut caption = theme::heading("Replace with", 12);
         caption.set_label_color(MUTED);
         replacement_row.fixed(&caption, 16);
         let mut replace_controls = Flex::default().row();
         replace_controls.set_spacing(8);
         let mut replacement = Input::default();
         theme::input(&mut replacement);
-        replacement.set_tooltip("Ersatztext");
+        replacement.set_tooltip(crate::i18n::tr("Replacement text"));
         replacement.set_trigger(CallbackTrigger::EnterKeyAlways);
         replacement.emit(tx, (wid, Action::Replace));
         super::button(
-            "Ersetzen",
+            "Replace",
             84,
             &mut replace_controls,
             Action::Replace,
@@ -349,7 +351,7 @@ impl SearchPanel {
             tx,
         );
         super::button(
-            "Alle ersetzen",
+            "Replace all",
             104,
             &mut replace_controls,
             Action::ReplaceAll,
@@ -360,11 +362,11 @@ impl SearchPanel {
         replacement_row.end();
         root.fixed(&replacement_row, 54);
         replacement_row.hide();
-        let mut case = CheckButton::default().with_label("Groß-/Kleinschreibung beachten");
+        let mut case = CheckButton::default().with_label(crate::i18n::tr("Match case"));
         theme::check(&mut case);
         root.fixed(&case, 22);
         let mut feedback =
-            Frame::default().with_label("Enter  Nächster Treffer     ·     Esc  Schließen");
+            Frame::default().with_label(crate::i18n::tr("Enter  Next match     ·     Esc  Close"));
         feedback.set_label_color(MUTED);
         feedback.set_label_size(11);
         feedback.set_align(Align::Left | Align::Inside);
@@ -403,19 +405,16 @@ impl SearchPanel {
         } else {
             theme::SURFACE
         });
-        self.toggle.set_label(if expanded {
-            "Ersetzen −"
-        } else {
-            "Ersetzen +"
-        });
+        self.toggle
+            .set_label(if expanded { "Replace −" } else { "Replace +" });
         let height = if expanded { 220 } else { 160 };
         self.win.resize(self.win.x(), self.win.y(), 520, height);
         self.root.resize(14, 12, 492, height - 24);
         self.root.recalc();
         self.win.set_label(if expanded {
-            "Suchen und Ersetzen — EditorTool"
+            "Find and Replace — EditorTool"
         } else {
-            "Suchen — EditorTool"
+            "Find — EditorTool"
         });
         self.win.redraw();
     }
@@ -450,6 +449,7 @@ pub struct SettingsPanel {
     accent: fltk::menu::Choice,
     size: fltk::menu::Choice,
     image_auto: CheckButton,
+    language: fltk::menu::Choice,
     update_check: CheckButton,
     update_install: CheckButton,
 }
@@ -457,25 +457,26 @@ impl SettingsPanel {
     pub fn new(wid: usize, tx: app::Sender<Message>, vertical: bool) -> Self {
         Group::set_current(None::<&Group>);
         let mut win = Window::default()
-            .with_size(560, 810)
-            .with_label("Einstellungen — EditorTool");
+            .with_size(560, 910)
+            .with_label(crate::i18n::tr("Settings — EditorTool"));
         win.set_color(PANEL);
         set_icon(&mut win);
-        let mut root = Flex::new(24, 20, 512, 770, None).column();
+        let mut root = Flex::new(24, 20, 512, 870, None).column();
         root.set_spacing(12);
-        let title = theme::heading("Einstellungen", 23);
+        let title = theme::heading("Settings", 23);
         root.fixed(&title, 34);
         let mut segment = Flex::default().row();
         segment.set_spacing(6);
-        let mut horizontal = Button::default().with_label("Tabs oben");
+        let mut horizontal = Button::default().with_label(crate::i18n::tr("Tabs on top"));
         theme::button(&mut horizontal, false, None);
         horizontal.emit(tx, (wid, Action::Orientation(false)));
-        let mut vertical_button = Button::default().with_label("Tabs links");
+        let mut vertical_button = Button::default().with_label(crate::i18n::tr("Tabs on the left"));
         theme::button(&mut vertical_button, false, None);
         vertical_button.emit(tx, (wid, Action::Orientation(true)));
         segment.end();
         root.fixed(&segment, 36);
-        let mut wrap = CheckButton::default().with_label("Zeilenumbruch am Fensterrand");
+        let mut wrap =
+            CheckButton::default().with_label(crate::i18n::tr("Wrap lines at the window edge"));
         theme::check(&mut wrap);
         wrap.set_callback(move |w| tx.send((wid, Action::WordWrap(w.value()))));
         root.fixed(&wrap, 34);
@@ -487,49 +488,65 @@ impl SettingsPanel {
             choice.set_color(theme::SURFACE);
             choice.set_text_color(theme::TEXT);
             choice.set_text_size(14);
-            choice.add_choice(values);
+            choice.add_choice(crate::i18n::tr(values));
             root.fixed(&choice, 34);
             choice
         }
-        let mut design = choice(&mut root, "Farbschema", "Dunkel|Hell|Graphit");
+        let mut language = choice(
+            &mut root,
+            "Interface language",
+            &crate::i18n::LANGUAGES.join("|"),
+        );
+        language.set_callback(move |c| tx.send((wid, Action::InterfaceLanguage(c.value() as u8))));
+        let mut restart = Frame::default().with_label(crate::i18n::tr(
+            "Restart EditorTool to apply the interface language.",
+        ));
+        restart.set_label_size(11);
+        restart.set_label_color(MUTED);
+        restart.set_align(Align::Left | Align::Inside | Align::Wrap);
+        root.fixed(&restart, 34);
+        let mut design = choice(&mut root, "Colour scheme", "Dark|Light|Graphite");
         design.set_callback(move |c| tx.send((wid, Action::Design(c.value() as u8))));
-        let mut accent = choice(&mut root, "Akzentfarbe", "Blau|Violett|Grün");
+        let mut accent = choice(&mut root, "Accent colour", "Blue|Purple|Green");
         accent.set_callback(move |c| tx.send((wid, Action::Accent(c.value() as u8))));
-        let mut size = choice(&mut root, "Textgrösse", "12|14|16|18|20|24|28");
+        let mut size = choice(&mut root, "Text size", "12|14|16|18|20|24|28");
         size.set_callback(move |c| {
             if let Some(value) = c.choice().and_then(|s| s.parse().ok()) {
                 tx.send((wid, Action::FontSize(value)));
             }
         });
-        let mut image_auto = CheckButton::default()
-            .with_label("Neue Bilder automatisch auf 50 % der Textfeldbreite verkleinern");
+        let mut image_auto = CheckButton::default().with_label(crate::i18n::tr(
+            "Automatically fit new images to 50% of the text area width",
+        ));
         theme::check(&mut image_auto);
         image_auto.set_callback(move |c| tx.send((wid, Action::ImageAutoSize(c.value()))));
         root.fixed(&image_auto, 30);
-        let mut update_check = CheckButton::default().with_label("Beim Start nach Updates suchen");
+        let mut update_check =
+            CheckButton::default().with_label(crate::i18n::tr("Check for updates on startup"));
         theme::check(&mut update_check);
         update_check.set_callback(move |c| tx.send((wid, Action::UpdateCheckOption(c.value()))));
         root.fixed(&update_check, 28);
-        let mut update_install =
-            CheckButton::default().with_label("Updates beim Start automatisch installieren");
+        let mut update_install = CheckButton::default()
+            .with_label(crate::i18n::tr("Install updates automatically on startup"));
         theme::check(&mut update_install);
         update_install
             .set_callback(move |c| tx.send((wid, Action::UpdateInstallOption(c.value()))));
         root.fixed(&update_install, 28);
-        let mut check_now = Button::default().with_label("Jetzt nach Updates suchen…");
+        let mut check_now = Button::default().with_label(crate::i18n::tr("Check for updates now…"));
         theme::button(&mut check_now, false, None);
         check_now.emit(tx, (wid, Action::CheckUpdates(true)));
         root.fixed(&check_now, 32);
-        let mut clients = Button::default().with_label("Clients, Senden und Sync…");
+        let mut clients = Button::default().with_label(crate::i18n::tr("Clients, Send and Sync…"));
         theme::button(&mut clients, false, None);
         clients.emit(tx, (wid, Action::SharingSettings));
         root.fixed(&clients, 32);
-        let mut keyboard = Button::default().with_label("Tastenkürzel anpassen…");
+        let mut keyboard =
+            Button::default().with_label(crate::i18n::tr("Customise keyboard shortcuts…"));
         theme::button(&mut keyboard, false, None);
         keyboard.emit(tx, (wid, Action::KeyboardSettings));
         root.fixed(&keyboard, 32);
         let mut footer = Frame::default().with_label(concat!(
-            "Wird für alle Fenster gespeichert.     ·     ",
+            "Saved for all windows.     ·     ",
             env!("CARGO_PKG_VERSION")
         ));
         footer.set_label_color(MUTED);
@@ -549,6 +566,7 @@ impl SettingsPanel {
             accent,
             size,
             image_auto,
+            language,
             update_check,
             update_install,
         };
@@ -568,6 +586,7 @@ impl SettingsPanel {
                 .position(|&v| v == prefs.font_size)
                 .unwrap_or(2) as i32,
         );
+        self.language.set_value(prefs.language as i32);
         self.image_auto.set_value(prefs.image_auto_size);
         self.update_check.set_value(prefs.update_check);
         self.update_install.set_value(prefs.update_install);
@@ -600,12 +619,12 @@ impl UpdatePanel {
         Group::set_current(None::<&Group>);
         let mut win = Window::default()
             .with_size(640, 560)
-            .with_label("Updates — EditorTool");
+            .with_label(crate::i18n::tr("Updates — EditorTool"));
         win.set_color(PANEL);
         set_icon(&mut win);
         let mut root = Flex::new(22, 18, 596, 524, None).column();
         root.set_spacing(12);
-        let title = theme::heading("EditorTool aktualisieren", 21);
+        let title = theme::heading("Update EditorTool", 21);
         root.fixed(&title, 30);
         let mut status = Frame::default();
         status.set_label_color(MUTED);
@@ -626,23 +645,23 @@ impl UpdatePanel {
         display.draw(|w| theme::draw_scrollbars(w));
         let grab = Cell::new(None);
         display.handle(move |w, e| theme::handle_scrollbars(w, e, &grab));
-        let mut hint = Frame::default().with_label(
-            "Vor der Installation wird die Sitzung gesichert. Die App startet danach neu.",
-        );
+        let mut hint = Frame::default().with_label(crate::i18n::tr(
+            "Your session is saved before installation. The app then restarts.",
+        ));
         hint.set_label_size(11);
         hint.set_label_color(MUTED);
         hint.set_align(Align::Left | Align::Inside | Align::Wrap);
         root.fixed(&hint, 36);
         let mut controls = Flex::default().row();
         controls.set_spacing(8);
-        let mut check = Button::default().with_label("Erneut prüfen");
+        let mut check = Button::default().with_label(crate::i18n::tr("Check again"));
         theme::button(&mut check, false, None);
         check.emit(tx, (0, Action::CheckUpdates(true)));
-        let mut install = Button::default().with_label("Jetzt aktualisieren");
+        let mut install = Button::default().with_label(crate::i18n::tr("Update now"));
         theme::button(&mut install, true, None);
         install.emit(tx, (0, Action::InstallUpdate));
         install.deactivate();
-        let mut close = Button::default().with_label("Schliessen");
+        let mut close = Button::default().with_label(crate::i18n::tr("Close"));
         theme::button(&mut close, false, None);
         close.set_callback(|b| {
             if let Some(mut w) = b.window() {
@@ -664,8 +683,8 @@ impl UpdatePanel {
         }
     }
     pub fn state(&mut self, title: &str, status: &str, notes: &str, available: bool, busy: bool) {
-        self.title.set_label(title);
-        self.status.set_label(status);
+        self.title.set_label(crate::i18n::tr(title));
+        self.status.set_label(crate::i18n::tr(status));
         self.notes.set_text(notes);
         if available && !busy {
             self.install.activate()
@@ -681,7 +700,7 @@ impl UpdatePanel {
     }
     pub fn progress(&mut self, percent: u8) {
         self.status
-            .set_label(&format!("Update wird heruntergeladen: {percent} %"));
+            .set_label(&crate::tr_format!("Downloading update: {percent}%"));
         self.win.redraw();
     }
     pub fn show(&mut self, owner: Option<&Window>) {

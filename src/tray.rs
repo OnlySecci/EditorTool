@@ -11,9 +11,9 @@ impl Native {
             TrayIconBuilder,
         };
         let menu = Menu::new();
-        let show = MenuItem::new("EditorTool öffnen", true, None);
-        let clients = MenuItem::new("Clients und Sync", true, None);
-        let quit = MenuItem::new("Beenden", true, None);
+        let show = MenuItem::new(crate::i18n::tr("Open EditorTool"), true, None);
+        let clients = MenuItem::new(crate::i18n::tr("Clients and Sync"), true, None);
+        let quit = MenuItem::new(crate::i18n::tr("Quit"), true, None);
         menu.append_items(&[&show, &clients, &quit])
             .map_err(|e| e.to_string())?;
         let show_id = show.id().clone();
@@ -41,7 +41,7 @@ impl Native {
         .map_err(|e| e.to_string())?;
         let icon = TrayIconBuilder::new()
             .with_icon(icon)
-            .with_tooltip("EditorTool – Senden und Sync")
+            .with_tooltip("EditorTool — Send and Sync")
             .with_menu(Box::new(menu))
             .build()
             .map_err(|e| e.to_string())?;
@@ -92,19 +92,19 @@ impl ksni::Tray for LinuxTray {
         use ksni::menu::StandardItem;
         vec![
             StandardItem {
-                label: "EditorTool öffnen".into(),
+                label: "Open EditorTool".into(),
                 activate: Box::new(|t: &mut Self| t.tx.send((0, Action::ShowWindows))),
                 ..Default::default()
             }
             .into(),
             StandardItem {
-                label: "Clients und Sync".into(),
+                label: "Clients and Sync".into(),
                 activate: Box::new(|t: &mut Self| t.tx.send((0, Action::SharingSettings))),
                 ..Default::default()
             }
             .into(),
             StandardItem {
-                label: "Beenden".into(),
+                label: "Quit".into(),
                 activate: Box::new(|t: &mut Self| t.tx.send((0, Action::QuitAll))),
                 ..Default::default()
             }

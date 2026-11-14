@@ -1,9 +1,9 @@
 [package]
 name = "editortool"
-version = "1.5.1"
+version = "1.5.2"
 edition = "2021"
 rust-version = "1.90"
-description = "Schlanker Plaintext-Editor mit Textvergleich"
+description = "Lightweight native editor for text, code and images"
 license = "Unlicense"
 
 [features]

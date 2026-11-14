@@ -14,17 +14,17 @@ impl Panel {
         root.set_spacing(12);
         let title = theme::heading(
             if permissions {
-                "Freigaben und Berechtigungen"
+                "Sharing and Permissions"
             } else {
-                "Speicher und Dateistände"
+                "Storage and File History"
             },
             22,
         );
         root.fixed(&title, 36);
         let mut subtitle = Frame::default().with_label(if permissions {
-            "Gerätefreigaben und Dokumentzustimmungen bleiben getrennt.\nZum Beenden eines Syncs den Dokument-Tab auswählen."
+            "Device approval and document consent remain separate.\nSelect the document tab to stop its sync."
         } else {
-            "Grössen werden nur beim Öffnen oder Aktualisieren ermittelt.\nAktive Sitzungen und Sync-Daten werden nicht bereinigt."
+            "Sizes are calculated only on opening or refreshing.\nActive sessions and sync data are not cleaned up."
         });
         subtitle.set_align(Align::Left | Align::Inside | Align::Wrap);
         subtitle.set_label_color(MUTED);
@@ -44,13 +44,13 @@ impl Panel {
         row.set_spacing(8);
         for (label, action) in if permissions {
             vec![
-                ("Aktualisieren", Action::Permissions),
+                ("Refresh", Action::Permissions),
                 ("Clients verwalten…", Action::SharingSettings),
             ]
         } else {
             vec![
-                ("Aktualisieren", Action::Storage),
-                ("Bereinigung auswählen…", Action::StorageClean),
+                ("Refresh", Action::Storage),
+                ("Select cleanup category…", Action::StorageClean),
             ]
         } {
             let mut button = Button::default().with_label(label);
@@ -119,22 +119,22 @@ impl Runtime {
             (|| -> Result<String,String> {
                 self.persist(); self.store.flush()?;
                 let root=self.config.parent().unwrap(); let mut text=String::new();
-                for (dir,label) in [("session","Sitzung inkl. ungespeicherter Tabs"),("history","Ältere Dateistände"),("sharing","Freigaben und Sync-Versionen"),("updates","Update-Pakete"),("logs","Diagnoseprotokolle")] {
+                for (dir,label) in [("session","Session including unsaved tabs"),("history","Older file versions"),("sharing","Sharing and sync revisions"),("updates","Update packages"),("logs","Diagnostic logs")] {
                     text.push_str(&format!("{label}\n{:.2} MiB\n\n",storage::size(&root.join(dir)).map_err(|e|e.to_string())? as f64/1048576.0));
                 }
-                text.push_str("Vor jedem Speichern wird der vorige Dateiinhalt gesichert (bis zu 10 Stände / 256 MiB je Datei).\nDatei → Ältere Dateistände öffnet einen Stand als neuen Tab.\n\nBereinigung löscht endgültig, ohne physisches Überschreiben zu versprechen. Persönliche Dateien werden nicht gelöscht."); Ok(text)
-            })().unwrap_or_else(|e|format!("Speicher konnte nicht vollständig ermittelt werden:\n{e}"))
+                text.push_str("Previous file contents are backed up before saving (up to 10 versions / 256 MiB per file).\nFile → Older file versions opens a version as a new tab.\n\nCleanup is permanent and does not promise secure physical erasure. Personal files are not deleted."); Ok(text)
+            })().unwrap_or_else(|e|crate::tr_format!("Could not calculate all storage:\n{e}"))
         } else {
-            let mut text=String::from("Verbindungsschutz\nTLS 1.3 · AES-256-GCM · X25519 + ML-KEM-768\nGeräteidentitäten: klassische Signaturen mit Fingerabdruckfreigabe.\n\nUpdates\nEd25519-signierte Metadaten mit Ablaufdatum und Versionsschutz.\n\nLokale Daten\nSitzungen und Historie sind unverschlüsselt, durch Benutzerrechte geschützt. Keine automatischen Diagnose-Uploads.\n\n");
+            let mut text=String::from("Connection protection\nTLS 1.3 · AES-256-GCM · X25519 + ML-KEM-768\nDevice identities: classical signatures with fingerprint approval.\n\nUpdates\nEd25519-signed metadata with expiry and version protection.\n\nLocal data\nSessions and history are unencrypted, protected by user permissions. No automatic diagnostic uploads.\n\n");
             if file_dialog::portal_required() {
-                text.push_str("Flatpak\nDateizugriff über einzeln erteilte Portal-Freigaben. Netzwerk, X11, Tray und Host-Aufruf für Updates bleiben freigegeben.\n\n");
+                text.push_str("Flatpak\nFile access through individual portal grants. Network, X11, tray and the host call for updates remain enabled.\n\n");
             }
             text.push_str(
                 &self
                     .sharing
                     .as_ref()
                     .map(peer::Service::permissions)
-                    .unwrap_or_else(|| "Senden/Sync nicht verfügbar.".into()),
+                    .unwrap_or_else(|| "Send/Sync unavailable.".into()),
             );
             text
         };
@@ -157,16 +157,16 @@ impl Runtime {
             let root = self.config.parent().unwrap().to_owned();
             let mut details = String::new();
             for (dir, label) in [
-                ("session", "Sitzung inkl. ungespeicherter Tabs"),
-                ("history", "Ältere Dateistände"),
-                ("sharing", "Freigaben, Geräteidentität und Sync-Versionen"),
-                ("updates", "Update-Pakete"),
-                ("logs", "Diagnoseprotokolle"),
+                ("session", "Session including unsaved tabs"),
+                ("history", "Older file versions"),
+                ("sharing", "Approvals, device identity and sync revisions"),
+                ("updates", "Update packages"),
+                ("logs", "Diagnostic logs"),
             ] {
                 let size = storage::size(&root.join(dir)).map_err(|e| e.to_string())?;
                 details.push_str(&format!("{label}: {:.2} MiB\n", size as f64 / 1048576.0));
             }
-            let choice = chrome::decision(None, "Speicher und Bereinigung", "Sitzungen, Freigaben und Geräteidentität bleiben erhalten. Bereinigen entfernt nur die gewählte Kategorie; gelöschte Dateistände können nicht wiederhergestellt werden.", &details, &["Schliessen", "Verwaiste Tabs", "Dateistände", "Update-Pakete"], 0);
+            let choice = chrome::decision(None, "Storage and cleanup", "Sessions, approvals and device identity are preserved. Cleanup removes only the chosen category; deleted history cannot be recovered.", &details, &["Close", "Orphaned tabs", "File history", "Update packages"], 0);
             let (selected, category) = match choice {
                 Some(1) => (
                     self.store
@@ -176,29 +176,26 @@ impl Runtime {
                 ),
                 Some(2) => (
                     storage::files(&root.join("history")).map_err(|e| e.to_string())?,
-                    "ältere Dateistände",
+                    "older file versions",
                 ),
                 Some(3) if !self.update_busy => (
                     storage::files(&root.join("updates")).map_err(|e| e.to_string())?,
-                    "heruntergeladene Update-Dateien",
+                    "downloaded update files",
                 ),
-                Some(3) => return Err(
-                    "Während einer Aktualisierung können Update-Dateien nicht bereinigt werden."
-                        .into(),
-                ),
+                Some(3) => return Err("Update files cannot be cleaned up during an update.".into()),
                 _ => return Ok(()),
             };
             if selected.is_empty() {
-                dialog::message_default("Keine Dateien in dieser Kategorie vorhanden.");
+                dialog::message_default("No files in this category.");
                 return Ok(());
             }
             let bytes: u64 = selected
                 .iter()
                 .map(|p| std::fs::symlink_metadata(p).map(|m| m.len()).unwrap_or(0))
                 .sum();
-            if chrome::decision(None, "Dateien endgültig löschen?", &format!("{} Dateien ({:.2} MiB): {category}. Benutzerdateien und aktuelle Sitzungen bleiben erhalten.", selected.len(), bytes as f64 / 1048576.0), "", &["Abbrechen", "Endgültig löschen"], 0) == Some(1) {
+            if chrome::decision(None, "Permanently delete files?", &crate::tr_format!("{} files ({:.2} MiB): {category}. User files and current sessions are preserved.", selected.len(), bytes as f64 / 1048576.0), "", &["Cancel", "Delete permanently"], 0) == Some(1) {
                 let n = storage::remove_files(&root, &selected).map_err(|e| e.to_string())?;
-                dialog::message_default(&format!("{n} Dateien entfernt."));
+                dialog::message_default(&crate::tr_format!("Removed {n} files."));
             }
             Ok(())
         })();
@@ -213,11 +210,11 @@ impl Runtime {
                 .get(wid)
                 .and_then(Option::as_ref)
                 .and_then(|w| w.docs[w.active].path.clone())
-                .ok_or("Bitte eine gespeicherte Datei auswählen.")?;
+                .ok_or("Select a saved file.")?;
             let root = self.config.parent().unwrap().to_owned();
             let versions = storage::versions(&root, &path).map_err(|e| e.to_string())?;
             if versions.is_empty() {
-                dialog::message_default("Noch keine älteren Dateistände. Beim Speichern wird der vorherige Dateiinhalt lokal gesichert (höchstens 10 Stände / 256 MiB je Datei).");
+                dialog::message_default("No older file versions yet. Saving backs up the previous file contents locally (up to 10 versions / 256 MiB per file).");
                 return Ok(());
             }
             let labels: Vec<String> = versions.iter().map(|p| storage::describe(p)).collect();
@@ -235,7 +232,7 @@ impl Runtime {
                 path.file_name().unwrap_or_default().to_string_lossy()
             ));
             d.saved_revision = u64::MAX;
-            d.report = "Älterer Dateistand · als neue Datei speichern".into();
+            d.report = "Older file version · Save as a new file".into();
             Ok(())
         })();
         if let Err(error) = result {

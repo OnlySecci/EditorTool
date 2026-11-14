@@ -152,7 +152,7 @@ pub fn export(root: &Path, runtime: &str) -> io::Result<()> {
     let mut chooser =
         crate::file_dialog::Chooser::new(dialog::NativeFileChooserType::BrowseSaveFile);
     chooser.set_title("Diagnoseprotokoll exportieren");
-    chooser.set_filter("Protokoll\t*.log");
+    chooser.set_filter("Log\t*.log");
     chooser.set_preset_file(&format!("EditorTool-Diagnose-{}.log", millis()));
     chooser.set_option(dialog::FileDialogOptions::SaveAsConfirm);
     chooser.show();

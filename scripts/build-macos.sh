@@ -32,4 +32,4 @@ cat > "$bundle/Info.plist" <<PLIST
 <key>NSHumanReadableCopyright</key><string>EditorTool contributors</string>
 </dict></plist>
 PLIST
-printf 'Erstellt: %s/dist/macos/EditorTool.app\n' "$PWD"
+printf 'Created: %s/dist/macos/EditorTool.app\n' "$PWD"

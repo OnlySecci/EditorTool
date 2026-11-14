@@ -7,6 +7,7 @@ mod core;
 mod desktop;
 mod diagnostics;
 mod file_dialog;
+mod i18n;
 mod ipc;
 mod limits;
 mod network;
@@ -105,6 +106,7 @@ enum Action {
     Design(u8),
     Accent(u8),
     FontSize(i32),
+    InterfaceLanguage(u8),
     UpdateCheckOption(bool),
     UpdateInstallOption(bool),
     CheckUpdates(bool),
@@ -270,14 +272,14 @@ impl Document {
     }
     fn title(&self) -> String {
         if self.page != 0 {
-            return match self.page {
-                1 => "Einstellungen",
-                2 => "Clients und Sync",
-                3 => "Tastenkürzel",
-                4 => "Speicher und Dateistände",
-                5 => "Freigaben und Berechtigungen",
-                _ => "Kommunikationsprotokoll",
-            }
+            return i18n::tr(match self.page {
+                1 => "Settings",
+                2 => "Clients and Sync",
+                3 => "Keyboard shortcuts",
+                4 => "Storage and File History",
+                5 => "Sharing and Permissions",
+                _ => "Communication log",
+            })
             .into();
         }
         format!(
@@ -305,7 +307,7 @@ impl Document {
         self.compare_generation = self.compare_generation.wrapping_add(1);
         self.comparing = false;
         self.clear_styles();
-        self.report = "Vergleich beendet".into();
+        self.report = i18n::tr("Comparison stopped").into();
     }
     fn rewire_comparison(&mut self, wid: usize, tx: app::Sender<Message>) {
         self.compare_open.emit(tx, (wid, Action::Open(true)));
@@ -341,10 +343,10 @@ impl Document {
         }
         if self.comparing {
             self.compare_run.deactivate();
-            self.compare_run.set_label("Läuft…");
+            self.compare_run.set_label(crate::i18n::tr("Running…"));
         } else {
             self.compare_run.activate();
-            self.compare_run.set_label("Vergleichen");
+            self.compare_run.set_label(crate::i18n::tr("Compare"));
         }
         let rev = (
             self.left_meta.borrow().revision,
@@ -352,7 +354,7 @@ impl Document {
         );
         if self.compared.is_some_and(|r| r != rev) {
             self.clear_styles();
-            self.report = "Vergleich veraltet – erneut vergleichen".into();
+            self.report = i18n::tr("Comparison outdated — compare again").into();
         }
         let (buf, editor, meta) = if self.target_right.get() {
             (&self.right_buf, &self.right, &self.right_meta)
@@ -397,15 +399,15 @@ impl Document {
             s.breaks + usize::from(!selected.ends_with('\n'))
         };
         let selection = if s.chars > 0 {
-            format!(
-                "Auswahl  {selection_lines} Zeilen · {} Zeichen · {} Wörter",
+            crate::tr_format!(
+                "Selection  {selection_lines} lines · {} characters · {} words",
                 s.chars,
                 selected.split_whitespace().count()
             )
         } else {
-            "Keine Auswahl".to_owned()
+            "No selection".to_owned()
         };
-        let text = format!("Zeile {line}, Spalte {col}     ·     {} Zeilen     ·     {} Zeichen     ·     {} Bytes\n{selection}     ·     {}", c.breaks + 1, c.chars, c.bytes, format!("{} · {} Bilder · Zoom {zoom} % · {}",self.language(self.target_right.get()).name(),if self.target_right.get(){self.right.image_count()}else{self.left.image_count()},self.report));
+        let text = crate::tr_format!("Line {line}, Column {col}     ·     {} lines     ·     {} characters     ·     {} bytes\n{selection}     ·     {}", c.breaks + 1, c.chars, c.bytes, crate::tr_format!("{} · {} images · Zoom {zoom}% · {}",self.language(self.target_right.get()).name(),if self.target_right.get(){self.right.image_count()}else{self.left.image_count()},self.report));
         if text != self.status_text {
             self.status.set_label(&text);
             self.status_text = text;
@@ -447,12 +449,8 @@ fn button(
     wid: usize,
     tx: app::Sender<Message>,
 ) {
-    let mut b = Button::default().with_label(label);
-    theme::button(
-        &mut b,
-        label == "Weitersuchen" || label == "Vergleichen",
-        None,
-    );
+    let mut b = Button::default().with_label(i18n::tr(label));
+    theme::button(&mut b, label == "Find next" || label == "Compare", None);
     row.fixed(&b, width);
     b.emit(tx, (wid, action));
 }
@@ -503,7 +501,7 @@ impl EditorWindow {
         Group::set_current(None::<&Group>);
         let mut win = Window::default()
             .with_size(1180, 760)
-            .with_label("EditorTool — Plain Text");
+            .with_label(crate::i18n::tr("EditorTool — Plain Text"));
         win.set_color(PANEL);
         win.size_range(800, 480, 0, 0);
         chrome::set_icon(&mut win);
@@ -520,152 +518,126 @@ impl EditorWindow {
         menu.set_text_color(MUTED);
         let entries = [
             (
-                "&Einstellungen/Speicher und Bereinigung…",
+                "&Settings/Storage and cleanup…",
                 Shortcut::None,
                 Action::Storage,
             ),
             (
-                "&Einstellungen/Freigaben und Berechtigungen…",
+                "&Settings/Sharing and permissions…",
                 Shortcut::None,
                 Action::Permissions,
             ),
             (
-                "&Datei/Ältere Dateistände…",
+                "&File/Older file versions…",
                 Shortcut::None,
                 Action::FileHistory,
             ),
             (
-                "&Einstellungen/Allgemein…",
+                "&Settings/General…",
                 Shortcut::Command | ',',
                 Action::Settings,
             ),
             (
-                "&Einstellungen/Clients und Sync…",
+                "&Settings/Clients and Sync…",
                 Shortcut::None,
                 Action::SharingSettings,
             ),
             (
-                "&Einstellungen/Tastenkürzel…",
+                "&Settings/Keyboard shortcuts…",
                 Shortcut::None,
                 Action::KeyboardSettings,
             ),
-            ("&Datei/Neuer &Tab", Shortcut::Command | 't', Action::NewTab),
+            ("&File/New tab", Shortcut::Command | 't', Action::NewTab),
             (
-                "&Datei/Neues &Fenster",
+                "&File/New window",
                 Shortcut::Command | 'n',
                 Action::NewWindow,
             ),
+            ("&File/Open…", Shortcut::Command | 'o', Action::Open(false)),
+            ("&File/Save", Shortcut::Command | 's', Action::Save(false)),
             (
-                "&Datei/Öffnen…",
-                Shortcut::Command | 'o',
-                Action::Open(false),
-            ),
-            (
-                "&Datei/Speichern",
-                Shortcut::Command | 's',
-                Action::Save(false),
-            ),
-            (
-                "&Datei/Speichern unter…",
+                "&File/Save as…",
                 Shortcut::Command | Shortcut::Shift | 's',
                 Action::Save(true),
             ),
+            ("&File/Close tab", Shortcut::Command | 'w', Action::CloseTab),
             (
-                "&Datei/Tab schließen",
-                Shortcut::Command | 'w',
-                Action::CloseTab,
-            ),
-            (
-                "&Datei/Alle Tabs schließen",
+                "&File/Close all tabs",
                 Shortcut::Command | Shortcut::Shift | 'w',
                 Action::CloseAllTabs,
             ),
             (
-                "&Datei/Fenster schließen",
+                "&File/Close window",
                 Shortcut::Alt | fltk::enums::Key::F4,
                 Action::CloseWindow,
             ),
+            ("&Edit/Undo", Shortcut::Command | 'z', Action::Undo),
+            ("&Edit/Cut", Shortcut::Command | 'x', Action::Cut),
             (
-                "&Bearbeiten/Rückgängig",
-                Shortcut::Command | 'z',
-                Action::Undo,
-            ),
-            (
-                "&Bearbeiten/Ausschneiden",
-                Shortcut::Command | 'x',
-                Action::Cut,
-            ),
-            (
-                "&Bearbeiten/Kopieren (Auswahl oder alles)",
+                "&Edit/Copy (selection or all)",
                 Shortcut::None,
                 Action::Copy,
             ),
+            ("&Edit/Paste", Shortcut::Command | 'v', Action::Paste),
             (
-                "&Bearbeiten/Einfügen",
-                Shortcut::Command | 'v',
-                Action::Paste,
-            ),
-            (
-                "&Bearbeiten/Bild einfügen…",
+                "&Edit/Insert image…",
                 Shortcut::Command | Shortcut::Shift | 'i',
                 Action::InsertImage,
             ),
             (
-                "&Bearbeiten/Alles auswählen",
+                "&Edit/Select all",
                 Shortcut::Command | 'a',
                 Action::SelectAll,
             ),
             (
-                "&Bearbeiten/Suchen…",
+                "&Edit/Find…",
                 Shortcut::Command | 'f',
                 Action::ShowFind(false),
             ),
             (
-                "&Bearbeiten/Ersetzen…",
+                "&Edit/Replace…",
                 Shortcut::Command | 'h',
                 Action::ShowFind(true),
             ),
             (
-                "&Bearbeiten/Weitersuchen",
+                "&Edit/Find next",
                 Shortcut::from_key(fltk::enums::Key::F3),
                 Action::Find,
             ),
             (
-                "&Ansicht/Zoom/Vergrössern",
+                "&View/Zoom/Zoom in",
                 Shortcut::Command | '+',
                 Action::Zoom(10),
             ),
             (
-                "&Ansicht/Zoom/Verkleinern",
+                "&View/Zoom/Zoom out",
                 Shortcut::Command | '-',
                 Action::Zoom(-10),
             ),
+            ("&View/Zoom/100 %", Shortcut::Command | '0', Action::Zoom(0)),
             (
-                "&Ansicht/Zoom/100 %",
-                Shortcut::Command | '0',
-                Action::Zoom(0),
-            ),
-            (
-                "&Ansicht/Vergleich ein oder aus",
+                "&View/Toggle comparison",
                 Shortcut::None,
                 Action::ToggleCompare,
             ),
+            ("&View/Compare texts", Shortcut::None, Action::Compare),
             (
-                "&Ansicht/Texte vergleichen",
-                Shortcut::None,
-                Action::Compare,
-            ),
-            (
-                "&Ansicht/Vergleichstext öffnen…",
+                "&View/Open comparison text…",
                 Shortcut::None,
                 Action::Open(true),
             ),
         ];
         for (label, shortcut, action) in entries {
-            menu.add_emit(label, shortcut, MenuFlag::Normal, tx, (wid, action));
+            menu.add_emit(
+                &i18n::menu_path(label),
+                shortcut,
+                MenuFlag::Normal,
+                tx,
+                (wid, action),
+            );
         }
         menu.add_emit(
-            "&Ansicht/Sprache/Automatisch",
+            &i18n::menu_path("&View/Language/Automatic"),
             Shortcut::None,
             MenuFlag::Normal,
             tx,
@@ -685,9 +657,9 @@ impl EditorWindow {
             Language::Config,
             Language::Sql,
         ] {
-            let label = format!("&Ansicht/Sprache/{}", language.name().replace('/', " · "));
+            let label = crate::tr_format!("&View/Language/{}", language.name().replace('/', " · "));
             menu.add_emit(
-                &label,
+                &i18n::menu_path(&label),
                 Shortcut::None,
                 MenuFlag::Normal,
                 tx,
@@ -695,41 +667,44 @@ impl EditorWindow {
             );
         }
         for (label, action) in [
-            ("&Ansicht/Split View/Nebeneinander", Action::Split(false)),
-            ("&Ansicht/Split View/Übereinander", Action::Split(true)),
-            ("&Ansicht/Split View/Zusammenführen", Action::MergeSplit),
-            (
-                "&Ansicht/Split View/Als zwei Fenster weiterführen",
-                Action::EndSplit,
-            ),
-            ("&Ansicht/Vergleich stoppen", Action::StopCompare),
-            ("&Ansicht/Vergleich schliessen", Action::CloseCompare),
+            ("&View/Split View/Side by side", Action::Split(false)),
+            ("&View/Split View/Stacked", Action::Split(true)),
+            ("&View/Split View/Merge", Action::MergeSplit),
+            ("&View/Split View/Continue as two windows", Action::EndSplit),
+            ("&View/Stop comparison", Action::StopCompare),
+            ("&View/Close comparison", Action::CloseCompare),
         ] {
-            menu.add_emit(label, Shortcut::None, MenuFlag::Normal, tx, (wid, action));
+            menu.add_emit(
+                &i18n::menu_path(label),
+                Shortcut::None,
+                MenuFlag::Normal,
+                tx,
+                (wid, action),
+            );
         }
         menu.add_emit(
-            "&Hilfe/Nach Updates suchen…",
+            &i18n::menu_path("&Help/Check for updates…"),
             Shortcut::Command | Shortcut::Shift | 'u',
             MenuFlag::Normal,
             tx,
             (wid, Action::CheckUpdates(true)),
         );
         menu.add_emit(
-            "&Datei/Geschlossenes Fenster wiederherstellen",
+            &i18n::menu_path("&File/Restore closed window"),
             Shortcut::None,
             MenuFlag::Normal,
             tx,
             (wid, Action::RestoreClosed),
         );
         menu.add_emit(
-            "&Bearbeiten/Wiederholen",
+            &i18n::menu_path("&Edit/Redo"),
             Shortcut::None,
             MenuFlag::Normal,
             tx,
             (wid, Action::Redo),
         );
         menu.add_emit(
-            "&Hilfe/Diagnoseprotokoll exportieren…",
+            &i18n::menu_path("&Help/Export diagnostic log…"),
             Shortcut::None,
             MenuFlag::Normal,
             tx,
@@ -739,12 +714,12 @@ impl EditorWindow {
         for (glyph, tooltip, action) in [
             (
                 theme::Icon::Search,
-                "Suchen (Strg/Cmd+F)",
+                "Find (Ctrl/Cmd+F)",
                 Action::ShowFind(false),
             ),
             (
                 theme::Icon::Compare,
-                "Vergleich ein oder aus",
+                "Toggle comparison",
                 Action::ToggleCompare,
             ),
         ] {
@@ -774,7 +749,7 @@ impl EditorWindow {
         bar.end();
         tab_scroll.end();
         let mut divider = Frame::default();
-        divider.set_tooltip("Ziehen, um die Tab-Leiste breiter oder schmaler zu machen");
+        divider.set_tooltip(crate::i18n::tr("Drag to resize the tab sidebar"));
         let drag_start = Rc::new(Cell::new(0));
         let drag_width = Rc::new(Cell::new(184));
         divider.handle(move |f, event| match event {
@@ -871,14 +846,16 @@ impl EditorWindow {
             for i in 0..row.children() {
                 if let Some(mut child) = row.child(i) {
                     if let Some(hint) = child.tooltip() {
-                        if hint.starts_with("Suchen") {
-                            child.set_tooltip(&format!(
-                                "Suchen ({})",
+                        if hint.starts_with(i18n::tr("Find")) {
+                            child.set_tooltip(&crate::tr_format!(
+                                "Find ({})",
                                 shortcuts::hint(shortcuts::Command::Find)
                             ));
-                        } else if hint.starts_with("Vergleich") {
+                        } else if hint.starts_with(i18n::tr("Comparison"))
+                            || hint.starts_with(i18n::tr("Toggle comparison"))
+                        {
                             let key = shortcuts::hint(shortcuts::Command::ToggleCompare);
-                            child.set_tooltip(&format!("Vergleich ein/aus ({key})"));
+                            child.set_tooltip(&crate::tr_format!("Toggle comparison ({key})"));
                         }
                     }
                 }
@@ -961,8 +938,8 @@ impl EditorWindow {
         controls.set_spacing(4);
         let mut header = Flex::default().row();
         header.set_spacing(6);
-        theme::heading("Vergleich", 14);
-        let mut compare_stop = Button::default().with_label("Stopp");
+        theme::heading("Comparison", 14);
+        let mut compare_stop = Button::default().with_label(crate::i18n::tr("Stop"));
         theme::button(&mut compare_stop, false, None);
         compare_stop.emit(tx, (wid, Action::StopCompare));
         header.fixed(&compare_stop, 64);
@@ -970,17 +947,17 @@ impl EditorWindow {
         compare_stop.set_label_color(MUTED);
         let mut compare_close = Button::default();
         theme::button(&mut compare_close, false, Some(theme::Icon::Close));
-        compare_close.set_tooltip("Vergleich schliessen – Text bleibt erhalten");
+        compare_close.set_tooltip(crate::i18n::tr("Close comparison — keep text"));
         compare_close.emit(tx, (wid, Action::CloseCompare));
         header.fixed(&compare_close, 28);
         header.end();
         controls.fixed(&header, 30);
         let mut row = Flex::default().row();
         row.set_spacing(6);
-        let mut compare_open = Button::default().with_label("Datei öffnen…");
+        let mut compare_open = Button::default().with_label(crate::i18n::tr("Open file…"));
         theme::button(&mut compare_open, false, None);
         compare_open.emit(tx, (wid, Action::Open(true)));
-        let mut compare_run = Button::default().with_label("Vergleichen");
+        let mut compare_run = Button::default().with_label(crate::i18n::tr("Compare"));
         theme::button(&mut compare_run, true, None);
         compare_run.emit(tx, (wid, Action::Compare));
         row.end();
@@ -1037,7 +1014,7 @@ impl EditorWindow {
             compare_run,
             compare_stop,
             compare_close,
-            report: "UTF-8 · Nur Text".into(),
+            report: "UTF-8 · Plain text".into(),
             path: None,
             saved_revision: 0,
             comparison_visible: false,
@@ -1146,7 +1123,7 @@ impl EditorWindow {
             let mut add = Button::default();
             theme::button(&mut add, false, Some(theme::Icon::Plus));
             add.set_color(PANEL);
-            add.set_tooltip("Neuer Tab (Strg/Cmd+T)");
+            add.set_tooltip(crate::i18n::tr("Neuer Tab (Strg/Cmd+T)"));
             add.emit(tx, (wid, Action::NewTab));
 
             self.bar.end();
@@ -1299,9 +1276,9 @@ impl EditorWindow {
         let mut path = if save_as || d.path.is_none() {
             let mut chooser =
                 file_dialog::Chooser::new(dialog::NativeFileChooserType::BrowseSaveFile);
-            chooser.set_title("UTF-8-Text speichern");
+            chooser.set_title(crate::i18n::tr("Save UTF-8 text"));
             if d.left.has_images() {
-                chooser.set_preset_file("Dokument.etdoc");
+                chooser.set_preset_file("Document.etdoc");
             }
             chooser.set_option(dialog::NativeFileChooserOptions::SaveAsConfirm);
             chooser.show();
@@ -1316,16 +1293,16 @@ impl EditorWindow {
         let rich_file = d.left.has_images() || path.extension().is_some_and(|e| e == "etdoc");
         if rich_file && path.extension().is_none_or(|e| e != "etdoc") {
             if file_dialog::portal_required() {
-                dialog::alert_default("Bitte im Speichern-Dialog einen Namen mit der Endung .etdoc wählen, damit die Dateifreigabe exakt stimmt.");
+                dialog::alert_default("Choose a filename ending in .etdoc in the save dialog so the file permission matches exactly.");
                 return false;
             }
             let original_language = d.language(false);
             path.set_extension("etdoc");
             if path.exists()
                 && dialog::choice2_default(
-                    &format!("{} existiert bereits. Überschreiben?", path.display()),
-                    "Abbrechen",
-                    "Überschreiben",
+                    &crate::tr_format!("{} already exists. Overwrite?", path.display()),
+                    "Cancel",
+                    "Overwrite",
                     "",
                 ) != Some(1)
             {
@@ -1363,11 +1340,11 @@ impl EditorWindow {
                 }
                 d.path = Some(path);
                 d.saved_revision = d.left_meta.borrow().revision;
-                d.report = "Gespeichert · UTF-8".into();
+                d.report = i18n::tr("Saved · UTF-8").into();
                 true
             }
             Err(e) => {
-                dialog::alert_default(&format!("Speichern fehlgeschlagen: {e}"));
+                dialog::alert_default(&crate::tr_format!("Save failed: {e}"));
                 false
             }
         }
@@ -1417,10 +1394,10 @@ impl EditorWindow {
                     if diagnostics::reveal(path).is_err() {
                         chrome::decision(
                             Some(&self.win),
-                            "Ordner nicht geöffnet",
-                            "Der Dateimanager konnte nicht gestartet werden.",
+                            "Folder not opened",
+                            "Could not start the file manager.",
                             "",
-                            &["Schliessen"],
+                            &["Close"],
                             0,
                         );
                     }
@@ -1430,9 +1407,7 @@ impl EditorWindow {
                 if let Some(path) = &self.docs[self.active].path {
                     app::copy(&path.to_string_lossy());
                 } else {
-                    dialog::message_default(
-                        "Dieses Dokument wurde noch nicht als Datei gespeichert.",
-                    );
+                    dialog::message_default("This document has not been saved to a file yet.");
                 }
             }
             Action::CloseOtherTabs => {
@@ -1462,8 +1437,8 @@ impl EditorWindow {
             Action::InsertImage => {
                 let mut chooser =
                     file_dialog::Chooser::new(dialog::NativeFileChooserType::BrowseFile);
-                chooser.set_title("Bild einfügen");
-                chooser.set_filter("Bilder\t*.{png,jpg,jpeg,bmp,gif}");
+                chooser.set_title(crate::i18n::tr("Insert image"));
+                chooser.set_filter("Images\t*.{png,jpg,jpeg,bmp,gif}");
                 chooser.show();
                 let path = chooser.filename();
                 if !path.as_os_str().is_empty() {
@@ -1474,7 +1449,7 @@ impl EditorWindow {
                         &mut d.left
                     };
                     if let Err(e) = editor.load_image(&path) {
-                        dialog::alert_default(&format!("Bild konnte nicht eingefügt werden: {e}"));
+                        dialog::alert_default(&crate::tr_format!("Could not insert image: {e}"));
                     }
                 }
             }
@@ -1641,7 +1616,7 @@ impl EditorWindow {
                 }
                 let mut chooser =
                     file_dialog::Chooser::new(dialog::NativeFileChooserType::BrowseFile);
-                chooser.set_title("UTF-8-Text öffnen");
+                chooser.set_title(crate::i18n::tr("Open UTF-8 text"));
                 chooser.show();
                 let path = chooser.filename();
                 if path.as_os_str().is_empty() {
@@ -1672,8 +1647,8 @@ impl EditorWindow {
                             d.saved_revision = d.left_meta.borrow().revision;
                         }
                     }
-                    Err(e) => dialog::alert_default(&format!(
-                        "Datei kann nicht als UTF-8 geöffnet werden: {e}"
+                    Err(e) => dialog::alert_default(&crate::tr_format!(
+                        "Could not open file as UTF-8: {e}"
                     )),
                 }
             }
@@ -1730,7 +1705,7 @@ impl EditorWindow {
                 );
                 let left = d.left_buf.text();
                 let right = d.right_buf.text();
-                d.report = "Vergleich läuft …".into();
+                d.report = i18n::tr("Comparing…").into();
                 std::thread::spawn(move || {
                     if let Some(result) = core::compare_interruptible(&left, &right, &cancel) {
                         tx.send((wid, Action::Compared(key, generation, revisions, result)));
@@ -1748,7 +1723,7 @@ impl EditorWindow {
                         d.right_meta.borrow().revision,
                     );
                     if rev != revisions {
-                        d.report = "Text verändert – bitte erneut vergleichen".into();
+                        d.report = i18n::tr("Text changed — compare again").into();
                         return;
                     }
                     let mut a = TextBuffer::default();
@@ -1779,11 +1754,12 @@ impl EditorWindow {
                     d.styles = Some((a, b));
                     d.compared = Some(rev);
                     d.report = if result.removed == 0 && result.added == 0 {
-                        "Texte identisch".into()
+                        "Texts are identical".into()
                     } else {
-                        format!(
-                            "Links: {} entfernte Zeilen (rot) · Rechts: {} neue Zeilen (grün)",
-                            result.removed, result.added
+                        crate::tr_format!(
+                            "Left: {} removed lines (red) · Right: {} added lines (green)",
+                            result.removed,
+                            result.added
                         )
                     };
                 }
@@ -1849,9 +1825,9 @@ impl EditorWindow {
             buf.select(found.start() as i32, found.end() as i32);
             ed.set_insert_position(found.end() as i32);
             ed.show_insert_position();
-            d.report = "Treffer markiert".into();
+            d.report = i18n::tr("Match highlighted").into();
         } else {
-            d.report = "Kein Treffer".into();
+            d.report = i18n::tr("No match").into();
         }
     }
 }
@@ -1935,8 +1911,8 @@ impl EditorWindow {
                 }
                 Err(e) => {
                     success = false;
-                    dialog::alert_default(&format!(
-                        "Tab {} konnte nicht wiederhergestellt werden: {e}",
+                    dialog::alert_default(&crate::tr_format!(
+                        "Could not restore tab {}: {e}",
                         tab.id + 1
                     ));
                 }
@@ -1950,8 +1926,8 @@ impl EditorWindow {
                 }
                 Err(e) => {
                     success = false;
-                    dialog::alert_default(&format!(
-                        "Vergleichstext konnte nicht wiederhergestellt werden: {e}"
+                    dialog::alert_default(&crate::tr_format!(
+                        "Could not restore comparison text: {e}"
                     ));
                 }
             }
@@ -2189,8 +2165,8 @@ impl Runtime {
                                 d.left_language = None;
                                 d.saved_revision = d.left_meta.borrow().revision;
                             }
-                            Err(e) => dialog::alert_default(&format!(
-                                "Datei konnte nicht geöffnet werden: {e}"
+                            Err(e) => dialog::alert_default(&crate::tr_format!(
+                                "Could not open file: {e}"
                             )),
                         }
                     }
@@ -2208,8 +2184,8 @@ impl Runtime {
                 diagnostics::event("session", "cache_error");
                 self.store.revisions.clear();
                 self.last_fingerprint.clear();
-                dialog::alert_default(&format!(
-                    "Die automatische Sitzungssicherung ist fehlgeschlagen: {error}"
+                dialog::alert_default(&crate::tr_format!(
+                    "Automatic session backup failed: {error}"
                 ));
             }
             Action::NewWindow => {
@@ -2219,6 +2195,17 @@ impl Runtime {
                     .push(Some(EditorWindow::new(id, self.tx, self.vertical)));
                 if let Some(w) = &self.windows[id] {
                     shutdown::hook(&w.win, self.weak_self.clone());
+                }
+            }
+            Action::InterfaceLanguage(value) => {
+                let mut prefs = preferences::get();
+                prefs.language = value.min(9);
+                preferences::set(prefs);
+                if let Err(error) = preferences::save(&self.config) {
+                    dialog::alert_default(&error.to_string());
+                }
+                for window in self.windows.iter_mut().flatten() {
+                    window.settings.sync();
                 }
             }
             Action::Orientation(_)
@@ -2268,9 +2255,7 @@ impl Runtime {
                     chrome::dark_title(&w.win);
                 }
                 if let Err(e) = preferences::save(&self.config) {
-                    dialog::alert_default(&format!(
-                        "Einstellung konnte nicht gespeichert werden: {e}"
-                    ));
+                    dialog::alert_default(&crate::tr_format!("Could not save preference: {e}"));
                 }
             }
             Action::CheckUpdates(manual) => {
@@ -2291,8 +2276,8 @@ impl Runtime {
                 self.update_busy = true;
                 self.update_release = None;
                 self.updates.state(
-                    "Nach Updates suchen",
-                    "GitHub wird nach einer neuen Version gefragt…",
+                    "Check for updates",
+                    "Checking GitHub for a new version…",
                     "",
                     false,
                     true,
@@ -2326,8 +2311,8 @@ impl Runtime {
                     Ok(Some(release)) => {
                         self.updates.state(
                             &release.title,
-                            &format!(
-                                "{} ist verfügbar. Installiert: {}",
+                            &crate::tr_format!(
+                                "{} is available. Installed: {}",
                                 release.tag,
                                 env!("CARGO_PKG_VERSION")
                             ),
@@ -2343,9 +2328,9 @@ impl Runtime {
                     }
                     Ok(None) => {
                         self.updates.state(
-                            "EditorTool ist aktuell",
-                            concat!("Installierte Version: ", env!("CARGO_PKG_VERSION")),
-                            "Keine neuere stabile Version verfügbar.",
+                            "EditorTool is up to date",
+                            concat!("Installed version: ", env!("CARGO_PKG_VERSION")),
+                            "No newer stable version is available.",
                             false,
                             false,
                         );
@@ -2355,8 +2340,8 @@ impl Runtime {
                     }
                     Err(error) => {
                         self.updates.state(
-                            "Update-Suche fehlgeschlagen",
-                            "Du kannst die Prüfung später wiederholen.",
+                            "Update check failed",
+                            "You can check again later.",
                             &error,
                             false,
                             false,
@@ -2373,13 +2358,13 @@ impl Runtime {
                 }
                 if let Some(release) = self.update_release.clone() {
                     if !self.cache_enabled {
-                        self.updates.state("Update pausiert","Die Sitzungssicherung ist nicht verfügbar.","Bitte zuerst die Dokumente speichern und das Problem mit dem Sitzungscache beheben. Es wurde nichts installiert.",true,false);
+                        self.updates.state("Update paused","Session backup is unavailable.","Save your documents and resolve the session cache issue first. Nothing was installed.",true,false);
                         return;
                     }
                     self.update_busy = true;
                     self.updates.state(
                         &release.title,
-                        "Update wird heruntergeladen…",
+                        "Downloading update…",
                         &release.notes,
                         false,
                         true,
@@ -2431,8 +2416,8 @@ impl Runtime {
                         diagnostics::event("updater", "install_handoff_failed");
                         diagnostics::failure("updater", "install_handoff_failed", &error);
                         self.updates.state(
-                            "Aktualisierung fehlgeschlagen",
-                            "Die App bleibt geöffnet. Es wurden keine Dokumente geschlossen.",
+                            "Update failed",
+                            "The app remains open. No documents were closed.",
                             &error,
                             true,
                             false,
@@ -2444,8 +2429,8 @@ impl Runtime {
             }
             Action::UpdateNotice(message) => {
                 self.updates.state(
-                    "Hinweis zur letzten Aktualisierung",
-                    "Das vorherige Update konnte nicht abgeschlossen werden.",
+                    "Previous update notice",
+                    "The previous update could not be completed.",
                     &message,
                     false,
                     false,
@@ -2472,10 +2457,10 @@ impl Runtime {
                     let owner = self.windows.iter().flatten().next().map(|w| w.win.clone());
                     chrome::decision(
                         owner.as_ref(),
-                        "Tastenkürzel nicht gespeichert",
+                        "Keyboard shortcuts not saved",
                         &e,
                         "",
-                        &["Schliessen"],
+                        &["Close"],
                         0,
                     );
                 }
@@ -2499,7 +2484,7 @@ impl Runtime {
             }
             Action::TrafficExport => {
                 if let Err(e) = self.traffic_panel.export() {
-                    dialog::alert_default(&format!("Protokollexport fehlgeschlagen: {e}"));
+                    dialog::alert_default(&format!("Log export failed: {e}"));
                 }
             }
             Action::Storage => self.open_management_tab(wid, 4),
@@ -2529,7 +2514,14 @@ impl Runtime {
                 );
                 let owner = self.windows.iter().flatten().next().map(|w| w.win.clone());
                 if let Err(_) = diagnostics::export(self.config.parent().unwrap(), &info) {
-                    chrome::decision(owner.as_ref(), "Diagnoseexport fehlgeschlagen", "Das Protokoll konnte nicht gespeichert werden. Bitte einen beschreibbaren Speicherort wählen.", "", &["Schliessen"], 0);
+                    chrome::decision(
+                        owner.as_ref(),
+                        "Diagnostic export failed",
+                        "Could not save the log. Choose a writable location.",
+                        "",
+                        &["Close"],
+                        0,
+                    );
                 }
             }
             Action::RestoreClosed => self.restore_closed(),
@@ -2643,20 +2635,19 @@ fn main() {
         }
         Ok(())
     }) {
-        dialog::alert_default(&format!(
-            "Privater Speicher konnte nicht geschützt werden: {e}"
-        ));
+        dialog::alert_default(&crate::tr_format!("Could not protect private storage: {e}"));
         return;
     }
     diagnostics::init(config.parent().unwrap());
     traffic::init(config.parent().unwrap());
     preferences::load(&config);
+    i18n::init(preferences::get().language);
     if let Err(e) = shortcuts::load(&config) {
-        dialog::alert_default(&format!("Tastenkürzel konnten nicht geladen werden: {e}"));
+        dialog::alert_default(&crate::tr_format!("Could not load keyboard shortcuts: {e}"));
     }
     #[cfg(target_os = "linux")]
     if let Err(e) = desktop::integrate() {
-        dialog::alert_default(&format!("Desktop-Integration: {e}"));
+        dialog::alert_default(&format!("Desktop integration: {e}"));
     }
     theme::init();
     let vertical = preferences::get().vertical;
@@ -2678,9 +2669,7 @@ fn main() {
         }
     };
     if let Err(e) = ipc::listen(&session_directory, tx) {
-        dialog::alert_default(&format!(
-            "Datei-Übergabe konnte nicht gestartet werden: {e}"
-        ));
+        dialog::alert_default(&crate::tr_format!("Could not start file handoff: {e}"));
     }
     #[cfg(target_os = "macos")]
     {
@@ -2723,7 +2712,7 @@ fn main() {
     let sharing = match peer::Service::new(config.parent().unwrap().join("sharing"), tx) {
         Ok(s) => Some(s),
         Err(e) => {
-            dialog::alert_default(&format!("Senden/Sync ist nicht verfügbar: {e}"));
+            dialog::alert_default(&crate::tr_format!("Send/Sync is unavailable: {e}"));
             None
         }
     };
@@ -2817,6 +2806,6 @@ fn main() {
     diagnostics::event("app", "shutdown");
     runtime.persist();
     if let Err(error) = runtime.store.flush() {
-        dialog::alert_default(&format!("Sitzungssicherung fehlgeschlagen: {error}"));
+        dialog::alert_default(&format!("Session backup failed: {error}"));
     }
 }

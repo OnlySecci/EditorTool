@@ -15,9 +15,9 @@ impl Runtime {
             self.clients.refresh(s, true);
             if let Err(e) = self.clients.reload_interfaces(&s.config()) {
                 diagnostics::failure("network", "interface_discovery", &e);
-                self.clients.status.set_label(&format!(
-                    "Netzwerkadapter konnten nicht gelesen werden: {e}"
-                ));
+                self.clients
+                    .status
+                    .set_label(&crate::tr_format!("Could not read network adapters: {e}"));
             }
         }
     }
@@ -101,7 +101,7 @@ impl Runtime {
                     if let Some(service) = &self.sharing {
                         let progress = service.progress(&binding.doc);
                         if d.sync_error == Some(revision) {
-                            "Sync fehlgeschlagen · Bearbeiten oder Verbindung erneut prüfen".into()
+                            "Sync failed · Edit or check the connection again".into()
                         } else if let Some(p) = self.share_timers.get(&d.cache_key) {
                             if d.group.visible_r() {
                                 visible_countdown = true;
@@ -112,34 +112,36 @@ impl Runtime {
                                 .as_secs_f64()
                                 .ceil() as u64;
                             if !progress.enabled {
-                                format!("Sync pausiert · Änderungen in {remaining} s lokal bereit")
+                                crate::tr_format!(
+                                    "Sync paused · Changes ready locally in {remaining} s"
+                                )
                             } else if remaining > 0 {
-                                format!("Sync in {remaining} s · nach der letzten Eingabe")
+                                crate::tr_format!("Sync in {remaining} s · since the last edit")
                             } else {
-                                "Sync wird vorbereitet…".into()
+                                "Preparing sync…".into()
                             }
                         } else if !progress.enabled {
-                            "Sync pausiert · Senden/Sync ist ausgeschaltet".into()
+                            "Sync paused · Send/Sync is disabled".into()
                         } else if progress.conflict {
-                            "Sync-Konflikt · Bitte eine Version auswählen".into()
+                            "Sync conflict · Select a revision".into()
                         } else if progress.clients == 0 {
-                            "Sync · Keine aktiven Clients".into()
+                            "Sync · No active clients".into()
                         } else if progress.offers > 0 {
-                            format!(
-                                "Sync wartet auf Freigabe · {} Client{}",
+                            crate::tr_format!(
+                                "Sync awaiting approval · {} client{}",
                                 progress.offers,
                                 if progress.offers == 1 { "" } else { "s" }
                             )
                         } else if progress.confirmed == progress.clients {
                             if progress.online == progress.clients {
-                                format!(
-                                    "Synchronisiert · {} Client{} bestätigt",
+                                crate::tr_format!(
+                                    "Synced · {} client{} confirmed",
                                     progress.clients,
                                     if progress.clients == 1 { "" } else { "s" }
                                 )
                             } else {
-                                format!(
-                                    "Zuletzt bestätigt · {} Client{} derzeit offline",
+                                crate::tr_format!(
+                                    "Last confirmed · {} client{} currently offline",
                                     progress.clients - progress.online,
                                     if progress.clients - progress.online == 1 {
                                         ""
@@ -149,19 +151,20 @@ impl Runtime {
                                 )
                             }
                         } else if progress.online == 0 {
-                            format!(
-                                "Sync ausstehend · Warte auf {} Client{}",
+                            crate::tr_format!(
+                                "Sync pending · Waiting for {} client{}",
                                 progress.clients,
                                 if progress.clients == 1 { "" } else { "s" }
                             )
                         } else {
-                            format!(
-                                "Sync ausstehend · {} von {} Clients bestätigt",
-                                progress.confirmed, progress.clients
+                            crate::tr_format!(
+                                "Sync pending · {} of {} clients confirmed",
+                                progress.confirmed,
+                                progress.clients
                             )
                         }
                     } else {
-                        "Sync nicht verfügbar".into()
+                        "Sync unavailable".into()
                     }
                 } else {
                     String::new()
@@ -216,7 +219,7 @@ impl Runtime {
         let revision = self
             .sharing
             .as_ref()
-            .ok_or("Senden/Sync ist nicht verfügbar.")?
+            .ok_or("Send/Sync is unavailable.")?
             .publish(&binding.doc, &binding.clock, &data)?;
         let d = &mut self.windows[wi].as_mut().unwrap().docs[di];
         if let Some(b) = &mut d.sharing {
@@ -245,10 +248,7 @@ impl Runtime {
         }
         let Some(path) = &d.path else {
             b.autosave = false;
-            return Err(
-                "Automatisches Speichern pausiert: Bitte zuerst eine lokale Datei speichern."
-                    .into(),
-            );
+            return Err("Autosave paused: save to a local file first.".into());
         };
         let disk = match crate::limits::read(path, crate::limits::DOCUMENT) {
             Ok(data) => Some(peer::hash(&data)),
@@ -256,18 +256,18 @@ impl Runtime {
             Err(e) => {
                 diagnostics::io_failure("storage", "autosave_read_current", &e, path);
                 b.autosave = false;
-                return Err(format!(
-                    "Automatisches Speichern pausiert (Datei lesen): {e}"
-                ));
+                return Err(crate::tr_format!("Autosave paused (reading file): {e}"));
             }
         };
         if disk != b.disk_hash {
             b.autosave = false;
-            return Err(format!("Dateikonflikt: {} wurde ausserhalb des Editors geändert. Automatisches Speichern ist pausiert. Die Datei und die Editor-Version bleiben erhalten. Bitte vergleichen und anschliessend selbst speichern.",path.display()));
+            return Err(crate::tr_format!("File conflict: {} was changed outside the editor. Autosave is paused. Both the file and editor version are preserved. Compare them and save manually.",path.display()));
         }
         if d.left.has_images() && path.extension().is_none_or(|e| e != "etdoc") {
             b.autosave = false;
-            return Err("Automatisches Speichern pausiert: Dokument mit Bildern bitte über Speichern unter als .etdoc sichern.".into());
+            return Err(
+                "Autosave paused: use Save as to store documents with images as .etdoc.".into(),
+            );
         }
         let data = if path.extension().is_some_and(|e| e == "etdoc") {
             d.left.document_text()
@@ -278,16 +278,14 @@ impl Runtime {
         if let Err(e) = storage::preserve(&root, path) {
             diagnostics::io_failure("storage", "autosave_history", &e, path);
             b.autosave = false;
-            return Err(format!(
-                "Automatisches Speichern pausiert (Dateihistorie sichern): {e}"
+            return Err(crate::tr_format!(
+                "Autosave paused (saving file history): {e}"
             ));
         }
         if let Err(e) = storage::write_document(path, data.as_bytes()) {
             diagnostics::io_failure("storage", "autosave_write_document", &e, path);
             b.autosave = false;
-            return Err(format!(
-                "Automatisches Speichern pausiert (Datei schreiben): {e}"
-            ));
+            return Err(crate::tr_format!("Autosave paused (writing file): {e}"));
         }
         b.disk_hash = Some(peer::hash(data.as_bytes()));
         d.saved_revision = d.left_meta.borrow().revision;
@@ -308,7 +306,7 @@ impl Runtime {
                 for d in &mut w.docs {
                     if d.sharing.as_ref().is_some_and(|b| b.doc == id) {
                         d.sharing = None;
-                        d.report = "Sync für dieses Dokument beendet".into();
+                        d.report = "Sync stopped for this document".into();
                     }
                 }
             }
@@ -377,7 +375,7 @@ impl Runtime {
             let result = self
                 .sharing
                 .as_ref()
-                .ok_or("Freigabe nicht verfügbar".to_string())
+                .ok_or("Sharing unavailable".to_string())
                 .and_then(|s| s.body(&r.hash));
             let text = match result {
                 Ok(data) => {
@@ -389,7 +387,7 @@ impl Runtime {
                         .unwrap_or(&data);
                     let mut preview: String = text.chars().take(32_000).collect();
                     if text.chars().count() > 32_000 {
-                        preview.push_str("\n… Vorschau gekürzt");
+                        preview.push_str("\n… Preview truncated");
                     }
                     preview
                 }
@@ -406,14 +404,14 @@ impl Runtime {
         }) {
             self.sharing
                 .as_ref()
-                .ok_or("Freigabe fehlt")?
+                .ok_or("Sharing service is missing")?
                 .delivered(&offer.id)?;
             return Ok(());
         }
         let data = self
             .sharing
             .as_ref()
-            .ok_or("Freigabe fehlt")?
+            .ok_or("Sharing service is missing")?
             .body(&offer.revision.hash)?;
         let wi = if let Some(wi) = self.windows.iter().position(Option::is_some) {
             wi
@@ -469,7 +467,7 @@ impl Runtime {
         w.tab_signature.clear();
         self.persist();
         if !self.cache_enabled {
-            return Err("Empfangenes Dokument ist geöffnet. Die Empfangsbestätigung bleibt bis zur erfolgreichen Sitzungssicherung ausstehend.".into());
+            return Err("Received document is open. Its acknowledgement remains pending until the session is saved successfully.".into());
         }
         self.store.flush()?;
         self.sharing.as_ref().unwrap().delivered(&offer.id)?;
@@ -524,11 +522,11 @@ impl Runtime {
                         self.clients.reload_interfaces(&s.config())?;
                         self.open_clients_tab(wid);
                     } else {
-                        return Err("Senden/Sync konnte nicht gestartet werden.".into());
+                        return Err("Could not start Send/Sync.".into());
                     }
                 }
                 Action::ApplySharing => {
-                    let s = self.sharing.as_mut().ok_or("Freigabe nicht verfügbar")?;
+                    let s = self.sharing.as_mut().ok_or("Sharing unavailable")?;
                     let mut c = s.config();
                     c.enabled = self.clients.enabled.value();
                     c.name = self.clients.name.value().trim().into();
@@ -546,7 +544,7 @@ impl Runtime {
                         .port
                         .value()
                         .parse()
-                        .map_err(|_| "Bitte einen gültigen Port eingeben.")?;
+                        .map_err(|_| "Enter a valid port.")?;
                     let result = s.configure(c);
                     self.clients.refresh(s, true);
                     result?;
@@ -564,31 +562,37 @@ impl Runtime {
                 Action::EditClient => {
                     let index = self.clients.clients.value();
                     if index <= 0 {
-                        return Err("Client in der Liste auswählen.".into());
+                        return Err("Select a client in the list.".into());
                     }
                     let port = self
                         .clients
                         .remote_port
                         .value()
                         .parse()
-                        .map_err(|_| "Ungültiger Client-Port")?;
-                    self.sharing.as_mut().ok_or("Freigabe fehlt")?.edit(
-                        index as usize - 1,
-                        self.clients.alias.value(),
-                        self.clients.host.value().trim().into(),
-                        port,
-                    )?;
+                        .map_err(|_| "Invalid client port")?;
+                    self.sharing
+                        .as_mut()
+                        .ok_or("Sharing service is missing")?
+                        .edit(
+                            index as usize - 1,
+                            self.clients.alias.value(),
+                            self.clients.host.value().trim().into(),
+                            port,
+                        )?;
                 }
                 Action::AddClient => {
-                    self.sharing.as_mut().ok_or("Freigabe fehlt")?.add(
-                        self.clients.alias.value(),
-                        self.clients.host.value().trim().into(),
-                        self.clients
-                            .remote_port
-                            .value()
-                            .parse()
-                            .map_err(|_| "Ungültiger Client-Port")?,
-                    )?;
+                    self.sharing
+                        .as_mut()
+                        .ok_or("Sharing service is missing")?
+                        .add(
+                            self.clients.alias.value(),
+                            self.clients.host.value().trim().into(),
+                            self.clients
+                                .remote_port
+                                .value()
+                                .parse()
+                                .map_err(|_| "Invalid client port")?,
+                        )?;
                     self.clients.host.set_value("");
                     self.clients.alias.set_value("");
                 }
@@ -597,7 +601,7 @@ impl Runtime {
                     if i > 0 {
                         self.sharing
                             .as_mut()
-                            .ok_or("Freigabe fehlt")?
+                            .ok_or("Sharing service is missing")?
                             .remove(i as usize - 1)?;
                     }
                 }
@@ -628,7 +632,7 @@ impl Runtime {
                             Ok(t) => self.tray = Some(t),
                             Err(e) => {
                                 self.tx.send((0, Action::TrayUnavailable));
-                                return Err(format!("Tray konnte nicht gestartet werden: {e}"));
+                                return Err(crate::tr_format!("Could not start the tray: {e}"));
                             }
                         }
                     }
@@ -654,7 +658,7 @@ impl Runtime {
                     self.show_windows();
                     self.tray = None;
                     self.clients.background.set_value(false);
-                    return Err("Kein erreichbarer System-Tray. EditorTool bleibt als Fenster geöffnet. Unter GNOME wird eine StatusNotifier-/AppIndicator-Erweiterung benötigt.".into());
+                    return Err("No accessible system tray. EditorTool stays open as a window. GNOME needs a StatusNotifier/AppIndicator extension.".into());
                 }
                 Action::ShowWindows => self.show_windows(),
                 Action::QuitAll => {
@@ -673,7 +677,7 @@ impl Runtime {
                             return Ok(());
                         }
                         self.transfer.show(
-                            self.sharing.as_ref().ok_or("Freigabe fehlt")?,
+                            self.sharing.as_ref().ok_or("Sharing service is missing")?,
                             wid,
                             d.id,
                             sync,
@@ -682,24 +686,24 @@ impl Runtime {
                     }
                 }
                 Action::SubmitTransfer => {
-                    let (wi, id, sync) = self.transfer.context.ok_or("Kein Dokument ausgewählt")?;
+                    let (wi, id, sync) = self.transfer.context.ok_or("No document selected")?;
                     let peers = self.transfer.selected();
                     let w = self
                         .windows
                         .get_mut(wi)
                         .and_then(Option::as_mut)
-                        .ok_or("Fenster wurde geschlossen")?;
+                        .ok_or("Window was closed")?;
                     let di = w
                         .docs
                         .iter()
                         .position(|d| d.id == id)
-                        .ok_or("Tab wurde geschlossen")?;
+                        .ok_or("Tab was closed")?;
                     let autosave = sync && self.transfer.autosave.value();
                     if autosave && w.docs[di].path.is_none() && !w.save(di, true) {
                         return Ok(());
                     }
                     let d = &mut w.docs[di];
-                    let s = self.sharing.as_ref().ok_or("Freigabe fehlt")?;
+                    let s = self.sharing.as_ref().ok_or("Sharing service is missing")?;
                     let old = d.sharing.as_ref().and_then(|b| s.document(&b.doc));
                     let same = sync
                         && old.is_some_and(|doc| {
@@ -719,7 +723,7 @@ impl Runtime {
                                 .map(|v| peer::hash(&v))
                         });
                     } else {
-                        if sync&&d.sharing.is_some()&&chrome::decision(Some(&w.win),"Neue Sync-Gruppe","Ein geänderter Teilnehmerkreis benötigt neue Freigaben. Die bisherigen Kopien bleiben erhalten.","",&["Abbrechen","Neue Gruppe"],1)!=Some(1){return Ok(());}
+                        if sync&&d.sharing.is_some()&&chrome::decision(Some(&w.win),"Neue Sync-Gruppe","Changing participants requires new approvals. Existing copies are preserved.","",&["Cancel","Neue Gruppe"],1)!=Some(1){return Ok(());}
                         let (doc, r) = s.begin(
                             d.title().trim_end_matches(" *").into(),
                             &d.left.cache_text(),
@@ -745,7 +749,7 @@ impl Runtime {
                         }
                     }
                     d.report = if sync {
-                        "Sync-Anfragen gesendet · 5 Sekunden Schreibpause"
+                        "Sync requests sent · 5-second writing pause"
                     } else {
                         "Sendeanfrage gesendet"
                     }
@@ -760,12 +764,11 @@ impl Runtime {
                                 if let Some(binding) = &d.sharing {
                                     self.sharing
                                         .as_ref()
-                                        .ok_or("Freigabe fehlt")?
+                                        .ok_or("Sharing service is missing")?
                                         .leave(&binding.doc)?;
                                 }
                                 d.sharing = None;
-                                d.report =
-                                    "Sync beendet · Andere Clients werden benachrichtigt".into();
+                                d.report = "Sync stopped · Notifying other clients".into();
                             }
                         }
                     }
@@ -780,16 +783,12 @@ impl Runtime {
                     {
                         self.open_conflict(&id);
                     } else {
-                        return Err("Dieses Dokument wird nicht synchronisiert.".into());
+                        return Err("This document is not synchronised.".into());
                     }
                 }
                 Action::PreviewConflict => self.preview_conflict(),
                 Action::ResolveConflict => {
-                    let id = self
-                        .conflicts
-                        .doc
-                        .clone()
-                        .ok_or("Kein Konflikt ausgewählt")?;
+                    let id = self.conflicts.doc.clone().ok_or("No conflict selected")?;
                     let i = self.conflicts.list.value();
                     if i < 1 {
                         return Ok(());
@@ -798,7 +797,7 @@ impl Runtime {
                         .conflicts
                         .versions
                         .get(i as usize - 1)
-                        .ok_or("Bitte Version auswählen")?
+                        .ok_or("Select a revision")?
                         .key();
                     let pending: Vec<_> = self
                         .windows
@@ -819,11 +818,11 @@ impl Runtime {
                             self.publish_shared(&k, r)?;
                         }
                         self.open_conflict(&id);
-                        return Err("Die letzten lokalen Änderungen wurden als zusätzliche Version gesichert. Bitte jetzt die gewünschte Version auswählen.".into());
+                        return Err("Recent local changes were saved as an additional revision. Select the revision to use now.".into());
                     }
                     self.sharing
                         .as_ref()
-                        .ok_or("Freigabe fehlt")?
+                        .ok_or("Sharing service is missing")?
                         .resolve(&id, &key)?;
                     self.conflict_notified.remove(&id);
                     self.conflicts.win.hide();
@@ -848,7 +847,7 @@ impl Runtime {
                             .and_then(|s| s.config().clients.into_iter().find(|p| p.id == id));
                         if let Some(peer) = peer {
                             for w in self.windows.iter_mut().flatten() {
-                                w.notice.push(format!("Not connected: {}\n{}:{} – letzter Abgleich fehlgeschlagen. Details im Log.",peer.name,peer.host,peer.port));
+                                w.notice.push(format!("Not connected: {}\n{}:{} — last exchange failed. See the log for details.",peer.name,peer.host,peer.port));
                             }
                         }
                     }
@@ -861,7 +860,7 @@ impl Runtime {
                         }
                     }
                     peer::Event::Trust(p) => {
-                        let s = self.sharing.as_ref().ok_or("Freigabe fehlt")?;
+                        let s = self.sharing.as_ref().ok_or("Sharing service is missing")?;
                         if s.config()
                             .clients
                             .iter()
@@ -875,7 +874,7 @@ impl Runtime {
                             .flatten()
                             .find(|w| !w.embedded && w.win.shown())
                             .map(|w| w.win.clone());
-                        let accept=chrome::decision(owner.as_ref(),"Gerät verbinden","Vergleiche den Fingerabdruck auf dem anderen Gerät. Die Gerätefreigabe erlaubt noch keine Dokumentübertragung.",&format!("Gerät: {}:{}\nFingerabdruck:\n{}\n\nAnschliessend auch auf dem anderen Gerät freigeben.",p.host,p.port,p.id),&["Ablehnen","Gerät freigeben"],1)==Some(1);
+                        let accept=chrome::decision(owner.as_ref(),"Connect device","Compare the fingerprint on the other device. Device approval does not grant document access.",&crate::tr_format!("Device: {}:{}\nFingerprint:\n{}\n\nAlso approve the connection on the other device.",p.host,p.port,p.id),&["Reject","Approve device"],1)==Some(1);
                         self.sharing.as_mut().unwrap().trust(p, accept)?;
                     }
                     peer::Event::Offer(o) => {
@@ -899,12 +898,12 @@ impl Runtime {
                                 "Dokument empfangen"
                             },
                             if o.sync {
-                                "Nach Annahme werden Änderungen mit diesen Geräten ausgetauscht. Wähle, ob Änderungen auch in eine lokale Datei gespeichert werden sollen."
+                                "After acceptance, changes are exchanged with these devices. Choose whether changes should also be saved to a local file."
                             } else {
-                                "Das Dokument wird nach Annahme als neuer Tab geöffnet."
+                                "After acceptance, the document opens as a new tab."
                             },
                             &format!("Dokument: {}\n\nTeilnehmer:\n{}", o.title, participants),
-                            &["Ablehnen", "Nur im Editor", "Mit lokaler Datei"],
+                            &["Reject", "Editor only", "With local file"],
                             1,
                         );
                         let accepted = matches!(choice, Some(1 | 2));
@@ -913,7 +912,7 @@ impl Runtime {
                             let mut chooser = crate::file_dialog::Chooser::new(
                                 dialog::NativeFileChooserType::BrowseSaveFile,
                             );
-                            chooser.set_title("Lokale Datei für empfangenes Dokument");
+                            chooser.set_title(crate::i18n::tr("Local file for received document"));
                             chooser.set_option(dialog::NativeFileChooserOptions::SaveAsConfirm);
                             chooser.show();
                             let p = chooser.filename();
@@ -921,12 +920,10 @@ impl Runtime {
                                 path = Some(p);
                             }
                         }
-                        self.sharing.as_ref().ok_or("Freigabe fehlt")?.approve(
-                            &o.id,
-                            accepted,
-                            path.clone(),
-                            o.sync && path.is_some(),
-                        )?;
+                        self.sharing
+                            .as_ref()
+                            .ok_or("Sharing service is missing")?
+                            .approve(&o.id, accepted, path.clone(), o.sync && path.is_some())?;
                     }
                     peer::Event::Left(id, client, name) => {
                         let title = self
@@ -938,7 +935,8 @@ impl Runtime {
                         for w in self.windows.iter_mut().flatten() {
                             for d in &mut w.docs {
                                 if d.sharing.as_ref().is_some_and(|b| b.doc == id) {
-                                    d.report = format!("{} hat Sync für diese Datei beendet", name);
+                                    d.report =
+                                        crate::tr_format!("{} stopped sync for this file", name);
                                 }
                             }
                         }
@@ -949,7 +947,7 @@ impl Runtime {
                             .flatten()
                             .find(|w| !w.embedded && w.win.shown())
                             .map(|w| w.win.clone());
-                        chrome::decision(owner.as_ref(),"Sync für Client beendet",&format!("{} synchronisiert dieses Dokument nicht mehr. Die Verbindung für diesen Client und dieses Dokument wurde auch hier beendet. Andere Dokumente bleiben verbunden.",name),&format!("Dokument: {}\nClient: {}",title,client),&["Verstanden"],0);
+                        chrome::decision(owner.as_ref(),"Sync stopped for client",&crate::tr_format!("{} no longer synchronises this document. Sync for this client and document has also stopped here. Other documents remain connected.",name),&format!("Dokument: {}\nClient: {}",title,client),&["Verstanden"],0);
                     }
                     peer::Event::Received(o, a) => self.receive_shared(o, a)?,
                     peer::Event::Updated(id) => self.apply_shared(&id)?,
@@ -963,8 +961,8 @@ impl Runtime {
                         if let Some(s) = &mut self.sharing {
                             s.disable_after_error();
                         }
-                        return Err(format!(
-                            "Senden/Sync gestoppt, weil die Sicherung fehlgeschlagen ist: {e}"
+                        return Err(crate::tr_format!(
+                            "Send/Sync stopped because backup failed: {e}"
                         ));
                     }
                 },
@@ -981,10 +979,10 @@ impl Runtime {
                 .map(|w| w.win.clone());
             chrome::decision(
                 owner.as_ref(),
-                "Hinweis zu Senden und Sync",
+                "Send and Sync notice",
                 &e,
                 "",
-                &["Schliessen"],
+                &["Close"],
                 0,
             );
         }

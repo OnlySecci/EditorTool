@@ -50,7 +50,7 @@ pub fn listen(directory: &Path, tx: app::Sender<Message>) -> Result<(), String> 
                             return Ok(());
                         }
                         if bytes.len() + n > 256 * 1024 {
-                            return Err(std::io::Error::other("IPC-Grössenlimit"));
+                            return Err(std::io::Error::other("IPC size limit"));
                         }
                         bytes.extend_from_slice(&buffer[..n]);
                     }

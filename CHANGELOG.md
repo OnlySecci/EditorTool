@@ -1,5 +1,14 @@
 # Changelog
 
+## V1.5.2 — 2026-11-14
+
+- English repository documentation, source wording and historical GitHub release notes.
+- Restructure the README around project introduction, downloads, support, contribution, features and development, retaining the supplied screenshot.
+- Persist an interface-language choice for English, German, French, Italian, Spanish, Portuguese, Dutch, Polish, Turkish and Ukrainian. Restart to apply.
+- Embed local catalogs for menus and common controls with English fallback for technical messages and untranslated text. Do not translate user documents, paths, identifiers or protocol fields.
+- Preserve custom shortcut lookup against translated menu paths and avoid interpreting translated slashes as submenus.
+- Native builds and packaging only; no tests or app launches.
+
 ## V1.5.1 — 2026-11-14
 
 - Fix Windows long-path handling for ACLs, file history and atomic saves; shorten temporary filenames.
@@ -12,13 +21,13 @@
 
 ## V1.5.0 — 2026-11-13
 
-- Unabhängige Ed25519-Update-Metadaten mit fester Vertrauensbasis, Versionsbindung und erneuter Paketprüfung vor Installation. Release verlangt alle 16 Pakete und einen dauerhaft gespeicherten passenden Actions-Signierschlüssel.
-- Begrenztes Einlesen, begrenzte Bilddecoder und Gesamtpixel-/Bildanzahlgrenzen auch für Import, Zwischenablage und empfangene Dokumente.
-- Restriktive lokale Rechte und kryptografische Instanz-Tokens; feste Sync-Gesamtzeitlimits, Parallelitäts- und IP-Ratenlimits.
-- Speicherübersicht und getrennte Bereinigung; begrenzte lokale Dateihistorie und Wiederherstellen als neuer Tab; Übersicht über Geräte- und Dokumentberechtigungen.
-- Flatpak-Dateiauswahl-Portale statt pauschaler Home-Freigabe. Bestehende Host-Update-Möglichkeit bleibt erhalten.
-- Ergänzende Codeprüfung: native Dateirechte beim Speichern erhalten, Portal-Dateien ohne nicht freigegebene temporäre Nachbardateien schreiben, abgelaufene oder bereits überholte signierte Updates ablehnen. Speicher- und Berechtigungsübersicht als Tabs.
-- Release-Builds und Paketierung über die Plattformmatrix; keine Tests oder App-Starts.
+- Pin an Ed25519 update trust key and require signed, expiring version/package metadata; recheck integrity before installation and require all 16 packages at release time.
+- Bound file reads, image decoders, aggregate image pixels and image counts for imports, clipboard and received documents.
+- Restrict local permissions, use cryptographic instance tokens, and enforce sync total deadlines, concurrency and IP rate limits.
+- Add storage usage, targeted cleanup, bounded local file history with recovery as a new tab, and device/document permission overviews.
+- Use Flatpak file-selection portals instead of blanket home access, retaining host update integration.
+- Preserve native file permissions on saves, write portal-granted files without unapproved neighbouring temporary files, and reject expired or superseded signed updates.
+- Native release builds and packaging only; no tests or app launches.
 
 ## V1.4.9 — 2026-11-12
 

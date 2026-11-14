@@ -19,7 +19,7 @@ impl Binding {
             "{} · {} · MAC {}",
             self.name,
             self.ip,
-            self.mac.as_deref().unwrap_or("— (virtuell/keine MAC)")
+            self.mac.as_deref().unwrap_or("— (virtual/no MAC)")
         )
     }
     pub fn address(&self, port: u16) -> SocketAddr {
@@ -78,7 +78,7 @@ pub fn listeners(automatic: bool, selected: &[Binding], port: u16) -> io::Result
         return Ok(vec![s.into()]);
     }
     if selected.is_empty() {
-        return Err(io::Error::other("Mindestens eine lokale IP auswählen."));
+        return Err(io::Error::other("Select at least one local IP address."));
     }
     let current = interfaces()?;
     let mut listeners = Vec::new();
@@ -89,7 +89,7 @@ pub fn listeners(automatic: bool, selected: &[Binding], port: u16) -> io::Result
             .ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::AddrNotAvailable,
-                    "Gewählte Schnittstelle ist nicht verfügbar. Auswahl prüfen.",
+                    "Selected interface is unavailable. Check your selection.",
                 )
             })?;
         let address = binding.address(port);
@@ -111,7 +111,7 @@ fn bind_interface(s: &socket2::Socket, binding: &Binding) -> io::Result<()> {
     #[cfg(target_os = "macos")]
     {
         let index = std::num::NonZeroU32::new(binding.index)
-            .ok_or_else(|| io::Error::other("Ungültiger Schnittstellenindex"))?;
+            .ok_or_else(|| io::Error::other("Invalid interface index"))?;
         if binding.ip.is_ipv4() {
             s.bind_device_by_index_v4(Some(index))?;
         } else {
@@ -169,7 +169,7 @@ pub fn connect(
     let started = std::time::Instant::now();
     let mut error = io::Error::new(
         io::ErrorKind::AddrNotAvailable,
-        "Keine gewählte Schnittstelle für diese Adressfamilie verfügbar.",
+        "No selected interface is available for this address family.",
     );
     let candidates: Vec<_> = selected
         .iter()
@@ -185,10 +185,7 @@ pub fn connect(
             .checked_sub(started.elapsed())
             .filter(|d| !d.is_zero())
             .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "Schnittstellen-Verbindungszeitlimit",
-                )
+                io::Error::new(io::ErrorKind::TimedOut, "Interface connection timeout")
             })?;
         let budget = remaining / (candidates.len() - index) as u32;
         crate::traffic::local(binding.address(0).to_string());

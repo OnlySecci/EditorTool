@@ -2,7 +2,7 @@ Unicode true
 !include "MUI2.nsh"
 !include "x64.nsh"
 !ifndef VERSION
-!define VERSION "1.5.1"
+!define VERSION "1.5.2"
 !endif
 !ifndef ARCH
 !define ARCH "x64"
@@ -29,12 +29,12 @@ Function .onInit
   !if "${ARCH}" == "arm64"
     System::Call 'kernel32::IsWow64Process2(p -1, *i .r0, *i .r1)'
     IntCmp $1 43620 arm_ok
-      MessageBox MB_ICONSTOP "Dieses Paket benötigt Windows ARM64."
+      MessageBox MB_ICONSTOP "This package requires Windows ARM64."
       Abort
     arm_ok:
   !else
     ${IfNot} ${RunningX64}
-      MessageBox MB_ICONSTOP "Dieses Paket benötigt Windows x64 oder ARM64 mit x64-Unterstützung."
+      MessageBox MB_ICONSTOP "This package requires Windows x64 or ARM64 with x64 emulation."
       Abort
     ${EndIf}
   !endif
@@ -67,7 +67,7 @@ Section "EditorTool"
   WriteRegStr HKCU "Software\Classes\EditorTool.Document\DefaultIcon" "" "$INSTDIR\EditorTool.exe,0"
   WriteRegStr HKCU "Software\Classes\EditorTool.Document\shell\open\command" "" '$\"$INSTDIR\EditorTool.exe$\" $\"%1$\"'
   WriteRegStr HKCU "Software\OnlySecci\EditorTool\Capabilities" "ApplicationName" "EditorTool"
-  WriteRegStr HKCU "Software\OnlySecci\EditorTool\Capabilities" "ApplicationDescription" "Text und Bilder mit EditorTool bearbeiten"
+  WriteRegStr HKCU "Software\OnlySecci\EditorTool\Capabilities" "ApplicationDescription" "Edit text and images with EditorTool"
   WriteRegStr HKCU "Software\OnlySecci\EditorTool\Capabilities\FileAssociations" ".etdoc" "EditorTool.Document"
   WriteRegStr HKCU "Software\RegisteredApplications" "EditorTool" "Software\OnlySecci\EditorTool\Capabilities"
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'

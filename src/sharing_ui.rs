@@ -26,19 +26,19 @@ impl Clients {
         Group::set_current(None::<&Group>);
         let mut win = Window::default()
             .with_size(760, 900)
-            .with_label("Clients und Synchronisierung — EditorTool");
+            .with_label(crate::i18n::tr("Clients and Sync — EditorTool"));
         win.set_color(PANEL);
         chrome::set_icon(&mut win);
         let mut root = Flex::new(20, 18, 720, 1220, None).column();
         root.set_spacing(10);
-        let heading = theme::heading("Clients und Synchronisierung", 21);
+        let heading = theme::heading("Clients and Sync", 21);
         root.fixed(&heading, 30);
         let mut enabled = fltk::button::CheckButton::default()
-            .with_label("Senden und Sync aktivieren (lokalen Port öffnen)");
+            .with_label(crate::i18n::tr("Enable Send and Sync (open local port)"));
         theme::check(&mut enabled);
         root.fixed(&enabled, 28);
-        let mut background =
-            fltk::button::CheckButton::default().with_label("Beim Schliessen im Tray weiterlaufen");
+        let mut background = fltk::button::CheckButton::default()
+            .with_label(crate::i18n::tr("Keep running in the tray when closing"));
         theme::check(&mut background);
         background.emit(tx, (0, Action::KeepTray));
         root.fixed(&background, 28);
@@ -46,30 +46,31 @@ impl Clients {
         row.set_spacing(10);
         let mut field = Flex::default().column();
         field.set_spacing(4);
-        let label = theme::heading("Name dieses Geräts", 12);
+        let label = theme::heading("This device's name", 12);
         field.fixed(&label, 18);
         let mut name = Input::default();
         theme::input(&mut name);
-        name.set_tooltip("Name dieses Geräts");
+        name.set_tooltip(crate::i18n::tr("This device's name"));
         field.end();
         let mut field = Flex::default().column();
         field.set_spacing(4);
-        let label = theme::heading("Lokaler Port", 12);
+        let label = theme::heading("Local port", 12);
         field.fixed(&label, 18);
         let mut port = Input::default();
         theme::input(&mut port);
-        port.set_tooltip("Lokaler TCP-Port");
+        port.set_tooltip(crate::i18n::tr("Local TCP port"));
         field.end();
         row.fixed(&field, 100);
-        let mut apply = Button::default().with_label("Übernehmen");
+        let mut apply = Button::default().with_label(crate::i18n::tr("Apply"));
         theme::button(&mut apply, true, None);
         apply.emit(tx, (0, Action::ApplySharing));
         row.fixed(&apply, 128);
         row.end();
         root.fixed(&row, 58);
         enabled.emit(tx, (0, Action::ApplySharing));
-        let mut automatic = fltk::button::CheckButton::default()
-            .with_label("Schnittstelle automatisch wählen (Betriebssystem-Routing)");
+        let mut automatic = fltk::button::CheckButton::default().with_label(crate::i18n::tr(
+            "Select interface automatically (OS routing)",
+        ));
         theme::check(&mut automatic);
         automatic.set_value(true);
         root.fixed(&automatic, 28);
@@ -80,14 +81,13 @@ impl Clients {
         interfaces.set_frame(FrameType::FlatBox);
         root.fixed(&interfaces, 130);
         let mut refresh_interfaces =
-            Button::default().with_label("Netzwerkadapter / IP / MAC aktualisieren");
+            Button::default().with_label(crate::i18n::tr("Refresh network adapters / IP / MAC"));
         theme::button(&mut refresh_interfaces, false, None);
         refresh_interfaces.emit(tx, (0, Action::RefreshInterfaces));
         root.fixed(&refresh_interfaces, 30);
-        let mut interface_hint = Frame::default().with_label(
-            "Für LAN oder VPN: Automatisch ausschalten, gewünschte IPs anhaken und Übernehmen.
-Mehrere IPs möglich. Ohne passende Auswahl kein Rückfall auf andere Adapter.",
-        );
+        let mut interface_hint = Frame::default().with_label(crate::i18n::tr(
+            "For LAN or VPN: disable Automatic, select IP addresses and apply.",
+        ));
         interface_hint.set_align(Align::Left | Align::Inside | Align::Wrap);
         interface_hint.set_label_color(MUTED);
         interface_hint.set_label_size(11);
@@ -97,18 +97,20 @@ Mehrere IPs möglich. Ohne passende Auswahl kein Rückfall auf andere Adapter.",
         fingerprint.set_color(BG);
         fingerprint.set_text_color(MUTED);
         fingerprint.set_text_size(11);
-        fingerprint.set_tooltip("Eigener Schlüssel-Fingerabdruck – beim Verbinden vergleichen");
+        fingerprint.set_tooltip(crate::i18n::tr(
+            "This device's key fingerprint — compare when connecting",
+        ));
         root.fixed(&fingerprint, 30);
-        let mut crypto=Frame::default().with_label("Verschlüsselung: TLS 1.3 · AES-256-GCM\nHybrider Schlüsselaustausch: X25519 + ML-KEM-768 (Post-Quanten-Schutz)\nGeräteidentität: bestätigter SHA-256-Fingerabdruck, klassische Signatur\nErforderlich auf beiden Geräten: EditorTool 1.4.1 oder neuer");
+        let mut crypto=Frame::default().with_label(crate::i18n::tr("Encryption: TLS 1.3 · AES-256-GCM\nHybrid key exchange: X25519 + ML-KEM-768 (post-quantum protection)\nDevice identity: approved SHA-256 fingerprint, classical signature\nRequired on both devices: EditorTool 1.4.1 or newer"));
         crypto.set_label_size(12);
         crypto.set_label_color(FG);
         crypto.set_align(Align::Left | Align::Inside | Align::Wrap);
         root.fixed(&crypto, 82);
         let mut headers = Flex::default().row();
         for (text, width) in [
-            ("Client-Name", 160),
-            ("IP-Adresse : Port", 260),
-            ("Verbindungsstatus", 0),
+            ("Client name", 160),
+            ("IP address : Port", 260),
+            ("Connection status", 0),
         ] {
             let label = theme::heading(text, 12);
             if width > 0 {
@@ -131,20 +133,20 @@ Mehrere IPs möglich. Ohne passende Auswahl kein Rückfall auf andere Adapter.",
         row.set_spacing(8);
         let mut field = Flex::default().column();
         field.set_spacing(4);
-        let label = theme::heading("Client-Name", 12);
+        let label = theme::heading("Client name", 12);
         field.fixed(&label, 18);
         let mut alias = Input::default();
         theme::input(&mut alias);
-        alias.set_tooltip("Client-Name");
+        alias.set_tooltip(crate::i18n::tr("Client name"));
         field.end();
         row.fixed(&field, 140);
         let mut field = Flex::default().column();
         field.set_spacing(4);
-        let label = theme::heading("IP-Adresse", 12);
+        let label = theme::heading("IP address", 12);
         field.fixed(&label, 18);
         let mut host = Input::default();
         theme::input(&mut host);
-        host.set_tooltip("Interne IP-Adresse");
+        host.set_tooltip(crate::i18n::tr("Private IP address"));
         field.end();
         let mut field = Flex::default().column();
         field.set_spacing(4);
@@ -152,11 +154,11 @@ Mehrere IPs möglich. Ohne passende Auswahl kein Rückfall auf andere Adapter.",
         field.fixed(&label, 18);
         let mut remote_port = Input::default();
         theme::input(&mut remote_port);
-        remote_port.set_tooltip("Client-Port");
+        remote_port.set_tooltip(crate::i18n::tr("Client port"));
         remote_port.set_value(&peer::PORT.to_string());
         field.end();
         row.fixed(&field, 80);
-        let mut add = Button::default().with_label("Hinzufügen");
+        let mut add = Button::default().with_label(crate::i18n::tr("Add"));
         theme::button(&mut add, false, None);
         add.emit(tx, (0, Action::AddClient));
         row.fixed(&add, 120);
@@ -164,18 +166,18 @@ Mehrere IPs möglich. Ohne passende Auswahl kein Rückfall auf andere Adapter.",
         root.fixed(&row, 58);
         let mut row = Flex::default().row();
         row.set_spacing(8);
-        let mut save = Button::default().with_label("Änderungen speichern");
+        let mut save = Button::default().with_label(crate::i18n::tr("Save changes"));
         theme::button(&mut save, false, None);
         save.emit(tx, (0, Action::EditClient));
-        let mut remove = Button::default().with_label("Client entfernen");
+        let mut remove = Button::default().with_label(crate::i18n::tr("Remove client"));
         theme::button(&mut remove, false, None);
         remove.emit(tx, (0, Action::RemoveClient));
-        let mut probe = Button::default().with_label("Verbindung prüfen / freigeben");
+        let mut probe = Button::default().with_label(crate::i18n::tr("Check connection / approve"));
         theme::button(&mut probe, false, None);
         probe.emit(tx, (0, Action::ProbeClients));
         row.end();
         root.fixed(&row, 34);
-        let mut log = Button::default().with_label("Kommunikationsprotokoll…");
+        let mut log = Button::default().with_label(crate::i18n::tr("Communication log…"));
         theme::button(&mut log, false, None);
         log.emit(tx, (0, Action::Traffic));
         root.fixed(&log, 32);
@@ -256,12 +258,12 @@ Mehrere IPs möglich. Ohne passende Auswahl kein Rückfall auf andere Adapter.",
                 p.host,
                 p.port,
                 if service.status(p) {
-                    "Connected"
+                    crate::i18n::tr("Connected")
                 } else {
-                    "Not connected"
+                    crate::i18n::tr("Not connected")
                 },
                 if p.cert.is_empty() {
-                    " · Freigabe fehlt"
+                    " · Sharing service is missing"
                 } else {
                     ""
                 }
@@ -270,8 +272,10 @@ Mehrere IPs möglich. Ohne passende Auswahl kein Rückfall auf andere Adapter.",
         self.clients.select(selected);
         self.enabled.set_value(config.enabled);
         self.background.set_value(preferences::get().keep_in_tray);
-        self.fingerprint
-            .set_value(&format!("Eigener Fingerabdruck: {}", service.identity()));
+        self.fingerprint.set_value(&crate::tr_format!(
+            "Own fingerprint: {}",
+            service.identity()
+        ));
         if reset {
             self.name.set_value(&config.name);
             self.port.set_value(&config.port.to_string());
@@ -283,18 +287,18 @@ Mehrere IPs möglich. Ohne passende Auswahl kein Rückfall auf andere Adapter.",
             .max()
             .unwrap_or(0);
         let checked = if latest == 0 {
-            "noch keine Prüfung".into()
+            "not checked yet".into()
         } else {
             let t = time::OffsetDateTime::from_unix_timestamp(latest as i64)
                 .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
-            format!(
-                "letzte Prüfung {:02}:{:02}:{:02} UTC",
+            crate::tr_format!(
+                "last checked {:02}:{:02}:{:02} UTC",
                 t.hour(),
                 t.minute(),
                 t.second()
             )
         };
-        self.status.set_label(&if config.enabled{format!("Automatisch: 10 s Pause nach Prüfrunde, 1 s bei ausstehenden Sendungen.\nRunden dauern je nach Gegenstellen länger · {checked}.\nVerbindung prüfen = manuelle Prüfrunde. Geräte beidseitig freigeben.")}else{"Senden/Sync ist aus. Der Freigabe-Port ist geschlossen.".into()});
+        self.status.set_label(&if config.enabled{crate::tr_format!("Automatic: 10 s after each round, 1 s with pending sends.\nRounds may take longer depending on peers · {checked}.\nCheck connection starts a manual round. Approve both devices.")}else{"Send/Sync is off. The sharing port is closed.".into()});
     }
 }
 pub struct Transfer {
@@ -310,27 +314,27 @@ impl Transfer {
         Group::set_current(None::<&Group>);
         let mut win = Window::default()
             .with_size(560, 390)
-            .with_label("Dokument freigeben — EditorTool");
+            .with_label(crate::i18n::tr("Share document — EditorTool"));
         win.set_color(PANEL);
         chrome::set_icon(&mut win);
         let mut root = Flex::new(20, 18, 520, 354, None).column();
         root.set_spacing(10);
-        let label = theme::heading("Client auswählen", 20);
+        let label = theme::heading("Select client", 20);
         root.fixed(&label, 28);
         let clients = colored_checks::Checks::new();
         let mut autosave = fltk::button::CheckButton::default()
-            .with_label("Sync-Änderungen in meine lokale Datei speichern");
+            .with_label(crate::i18n::tr("Save sync changes to my local file"));
         theme::check(&mut autosave);
         root.fixed(&autosave, 28);
         let mut row = Flex::default().row();
         row.set_spacing(8);
-        let mut submit = Button::default().with_label("Anfragen / Übernehmen");
+        let mut submit = Button::default().with_label(crate::i18n::tr("Request / Apply"));
         theme::button(&mut submit, true, None);
         submit.emit(tx, (0, Action::SubmitTransfer));
-        let mut stop = Button::default().with_label("Sync beenden");
+        let mut stop = Button::default().with_label(crate::i18n::tr("Stop sync"));
         theme::button(&mut stop, false, None);
         stop.emit(tx, (0, Action::StopSync));
-        let mut log = Button::default().with_label("Log…");
+        let mut log = Button::default().with_label(crate::i18n::tr("Log…"));
         theme::button(&mut log, false, None);
         log.emit(tx, (0, Action::Traffic));
         row.fixed(&log, 70);
@@ -371,9 +375,9 @@ impl Transfer {
                     p.host,
                     p.port,
                     if service.status(p) {
-                        "Connected"
+                        crate::i18n::tr("Connected")
                     } else {
-                        "Not connected"
+                        crate::i18n::tr("Not connected")
                     }
                 ),
                 false,
@@ -401,9 +405,9 @@ impl Transfer {
             self.stop.hide();
         }
         self.win.set_label(if sync {
-            "Dokument synchronisieren — EditorTool"
+            "Synchronise document — EditorTool"
         } else {
-            "Dokument senden — EditorTool"
+            "Send document — EditorTool"
         });
         self.win.show();
         self.clients.layout();
@@ -430,12 +434,12 @@ impl Conflicts {
         Group::set_current(None::<&Group>);
         let mut win = Window::default()
             .with_size(680, 510)
-            .with_label("Versionskonflikt — EditorTool");
+            .with_label(crate::i18n::tr("Versionskonflikt — EditorTool"));
         win.set_color(PANEL);
         chrome::set_icon(&mut win);
         let mut root = Flex::new(20, 18, 640, 474, None).column();
         root.set_spacing(10);
-        let label = theme::heading("Welche Version soll übernommen werden?", 20);
+        let label = theme::heading("Which revision should be used?", 20);
         root.fixed(&label, 30);
         let mut list = HoldBrowser::default();
         list.set_color(BG);
@@ -460,10 +464,10 @@ impl Conflicts {
         view.handle(move |w, e| theme::handle_scrollbars(w, e, &grab));
         let mut row = Flex::default().row();
         row.set_spacing(8);
-        let mut resolve = Button::default().with_label("Ausgewählte Version übernehmen");
+        let mut resolve = Button::default().with_label(crate::i18n::tr("Use selected revision"));
         theme::button(&mut resolve, true, None);
         resolve.emit(tx, (0, Action::ResolveConflict));
-        let mut later = Button::default().with_label("Später entscheiden");
+        let mut later = Button::default().with_label(crate::i18n::tr("Decide later"));
         theme::button(&mut later, false, None);
         later.set_callback(|b| {
             if let Some(mut w) = b.window() {

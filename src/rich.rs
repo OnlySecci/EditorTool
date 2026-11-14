@@ -73,7 +73,7 @@ fltk::widget_extends!(RichEditor, Scroll, scroll);
 fn encode(image: &RgbImage) -> Result<String, String> {
     let (w, h) = (image.data_w(), image.data_h());
     if w <= 0 || h <= 0 || w as u64 * h as u64 > 40_000_000 {
-        return Err("Bild ist zu groß (maximal 40 Megapixel).".into());
+        return Err("Image is too large (maximum 40 megapixels).".into());
     }
     crate::limits::pixels(w as u32, h as u32)?;
     let mut bytes = Vec::new();
@@ -92,13 +92,13 @@ fn encode(image: &RgbImage) -> Result<String, String> {
             .map_err(|e| e.to_string())?;
     }
     if bytes.len() as u64 > crate::limits::IMAGE_BYTES {
-        return Err("Kodiertes Bild ist zu gross (32 MiB).".into());
+        return Err("Encoded image is too large (32 MiB).".into());
     }
     Ok(STANDARD.encode(bytes))
 }
 fn image_reader(bytes: &[u8]) -> Result<image::ImageReader<std::io::Cursor<&[u8]>>, String> {
     if bytes.len() as u64 > crate::limits::IMAGE_BYTES {
-        return Err("Bilddatei ist zu gross (32 MiB).".into());
+        return Err("Image file is too large (32 MiB).".into());
     }
     let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
@@ -132,7 +132,7 @@ fn decode_bytes(bytes: &[u8]) -> Result<RgbImage, String> {
 }
 fn asset_bytes(data: &str) -> Result<Vec<u8>, String> {
     if data.len() as u64 > crate::limits::IMAGE_BYTES.div_ceil(3) * 4 {
-        return Err("Kodiertes Bild ist zu gross.".into());
+        return Err("Encoded image is too large.".into());
     }
     STANDARD.decode(data).map_err(|e| e.to_string())
 }
@@ -141,12 +141,12 @@ fn decode(data: &str) -> Result<RgbImage, String> {
 }
 pub fn validate_snapshot(text: &str) -> Result<(), String> {
     if text.len() as u64 > crate::limits::DOCUMENT {
-        return Err("Dokument ist zu gross (64 MiB).".into());
+        return Err("Document is too large (64 MiB).".into());
     }
     if let Ok(doc) = serde_json::from_str::<FileDocument>(text) {
         if doc.format == MAGIC {
             if doc.images.len() > crate::limits::IMAGES {
-                return Err("Zu viele Bilder (maximal 64).".into());
+                return Err("Too many images (maximum 64).".into());
             }
             let mut pixels = 0u64;
             let mut previous = None;
@@ -155,16 +155,16 @@ pub fn validate_snapshot(text: &str) -> Result<(), String> {
                     || !doc.text[asset.position..].starts_with(IMAGE_MARKER)
                     || previous.is_some_and(|p| p >= asset.position)
                 {
-                    return Err("Ungültige Bildposition.".into());
+                    return Err("Invalid image position.".into());
                 }
                 previous = Some(asset.position);
                 pixels += image_pixels(&asset_bytes(&asset.png)?)?;
                 if pixels > crate::limits::PIXELS {
-                    return Err("Bilder überschreiten zusammen 40 Megapixel.".into());
+                    return Err("Images exceed 40 megapixels in total.".into());
                 }
             }
             if doc.text.matches(IMAGE_MARKER).count() != doc.images.len() {
-                return Err("Ungültige Bildreferenzen.".into());
+                return Err("Invalid image references.".into());
             }
         }
     }
@@ -307,7 +307,7 @@ impl RichEditor {
                     || !document.text[asset.position..].starts_with(IMAGE_MARKER)
                     || previous.is_some_and(|p| p >= asset.position)
                 {
-                    return Err("Ungültige Bildposition im Dokument".into());
+                    return Err("Invalid image position in document".into());
                 }
                 let old = s
                     .assets
@@ -330,7 +330,7 @@ impl RichEditor {
                 previous = Some(asset.position);
             }
             if document.text.matches(IMAGE_MARKER).count() != document.images.len() {
-                return Err("Bildreferenzen und Bilddaten stimmen nicht überein".into());
+                return Err("Image references and image data do not match".into());
             }
         }
         let mut s = self.state.borrow_mut();
@@ -564,7 +564,7 @@ fn insert_image(state: &Rc<RefCell<State>>, png: String, original_width: i32) {
     let check = (|| -> Result<(), String> {
         let s = state.borrow();
         if s.assets.len() >= crate::limits::IMAGES {
-            return Err("Zu viele Bilder (maximal 64).".into());
+            return Err("Too many images (maximum 64).".into());
         }
         let mut pixels = image_pixels(&asset_bytes(&png)?)?;
         let mut encoded = png.len() as u64 + s.buffer.length() as u64;
@@ -573,7 +573,7 @@ fn insert_image(state: &Rc<RefCell<State>>, png: String, original_width: i32) {
             pixels += image_pixels(&asset_bytes(&a.png)?)?;
         }
         if pixels > crate::limits::PIXELS || encoded > crate::limits::DOCUMENT - 65536 {
-            return Err("Dokumentgrenze für Bilder oder Speicher erreicht.".into());
+            return Err("Document image or storage limit reached.".into());
         }
         Ok(())
     })();
@@ -869,9 +869,7 @@ fn rebuild(state: &Rc<RefCell<State>>) {
                     })
                     .unwrap_or(0);
                 if input.len() as u64 + current > crate::limits::DOCUMENT - 65536 {
-                    dialog::alert_default(
-                        "Einfügen würde die Dokumentgrenze von 64 MiB überschreiten.",
-                    );
+                    dialog::alert_default("Pasting would exceed the 64 MiB document limit.");
                     return true;
                 }
                 let value = plain_text(&input).replace(IMAGE_MARKER, "");
@@ -940,9 +938,9 @@ fn rebuild(state: &Rc<RefCell<State>>) {
                 let image = Rc::new(RefCell::new(image));
                 let drawn = image.clone();
                 let mut frame = Frame::default();
-                frame.set_tooltip(
-                    "Bild auswählen und an einer Ecke ziehen · Rechtsklick: Bildaktionen",
-                );
+                frame.set_tooltip(crate::i18n::tr(
+                    "Select an image and drag a corner · Right-click: image actions",
+                ));
                 let selected_state = Rc::downgrade(state);
                 let selected_data = asset.png.clone();
                 frame.super_draw(false);
@@ -1067,10 +1065,10 @@ fn rebuild(state: &Rc<RefCell<State>>) {
                                     app::awake_callback(move || {
                                         if let Some(state) = weak.upgrade() {
                                             match dialog::choice2_default(
-                                                "Bild bearbeiten",
-                                                "Abbrechen",
-                                                "An Textfeld anpassen",
-                                                "Entfernen",
+                                                crate::i18n::tr("Edit image"),
+                                                crate::i18n::tr("Cancel"),
+                                                crate::i18n::tr("Fit to text area"),
+                                                crate::i18n::tr("Remove"),
                                             ) {
                                                 Some(1) => {
                                                     let width =
@@ -1080,10 +1078,10 @@ fn rebuild(state: &Rc<RefCell<State>>) {
                                                 }
                                                 Some(2) => {
                                                     if dialog::choice2_default(
-                                                        "Bild entfernen?",
-                                                        "Abbrechen",
-                                                        "Entfernen",
-                                                        "",
+                                                        crate::i18n::tr("Remove image?"),
+                                                        crate::i18n::tr("Cancel"),
+                                                        crate::i18n::tr("Remove"),
+                                                        crate::i18n::tr(""),
                                                     ) == Some(1)
                                                     {
                                                         let item = {

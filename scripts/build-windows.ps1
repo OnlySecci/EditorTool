@@ -22,7 +22,7 @@ try {
         $previousName = 'EditorTool.previous.' + [DateTime]::Now.ToString('yyyyMMdd-HHmmss-fff') + '.exe'
         Rename-Item -LiteralPath 'dist/windows/EditorTool.exe' -NewName $previousName
         Copy-Item -LiteralPath $binary -Destination 'dist/windows/EditorTool.exe'
-        Write-Host 'Die laufende Version bleibt geöffnet; beim nächsten Start wird die neue Fassung verwendet.'
+        Write-Host 'The running version remains open; the new build will be used on the next start.'
     }
     Copy-Item -LiteralPath 'README.md','LICENSE' -Destination 'dist/windows'
     # GNU builds can depend on MinGW runtimes. Copy the ones present in PATH.
@@ -33,5 +33,5 @@ try {
         if ($candidate) { Copy-Item -LiteralPath $candidate -Destination "dist/windows/$dll" }
     }
     }
-    Write-Host "Erstellt: $projectRoot\dist\windows\EditorTool.exe"
+    Write-Host "Created: $projectRoot\dist\windows\EditorTool.exe"
 } finally { Pop-Location }

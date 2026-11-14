@@ -192,7 +192,7 @@ impl Runtime {
         let axis = direction.clone();
         let value = ratio.clone();
         let tx = self.tx;
-        divider.set_tooltip("Ziehen, um die Grösse der Ansichten zu ändern");
+        divider.set_tooltip("Drag to resize the views");
         divider.handle(move |frame, event| match event {
             Event::Enter => {
                 if let Some(mut win) = frame.window() {
@@ -522,7 +522,7 @@ impl Runtime {
         if self.cache_enabled {
             if let Err(e) = self.store.flush() {
                 dialog::alert_default(&format!(
-                    "Fenster bleibt offen: Sitzung konnte nicht gesichert werden: {e}"
+                    "Window remains open: could not save the session: {e}"
                 ));
                 self.store.revisions.clear();
                 self.last_fingerprint.clear();

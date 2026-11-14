@@ -5,6 +5,7 @@ use std::{cell::Cell, path::Path};
 #[serde(default)]
 pub struct Preferences {
     pub keep_in_tray: bool,
+    pub language: u8,
     pub vertical: bool,
     pub wrap: bool,
     pub design: u8,
@@ -18,6 +19,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             keep_in_tray: false,
+            language: 0,
             vertical: false,
             wrap: false,
             design: 0,
@@ -45,6 +47,7 @@ pub fn load(path: &Path) {
         vertical: text.trim() == "vertical",
         ..Preferences::default()
     });
+    value.language = value.language.min(9);
     value.font_size = value.font_size.clamp(12, 28);
     value.design = value.design.min(2);
     value.accent = value.accent.min(2);
