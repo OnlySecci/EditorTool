@@ -416,5 +416,6 @@
   "Which revision should be used?": "Quelle version utiliser ?",
   "Use selected revision": "Utiliser la version sélectionnée",
   "Fit to text area": "Adapter à la zone de texte",
-  "Security": "Sécurité"
+  "Security": "Sécurité",
+  "Force sync main": "Forcer la version principale"
 }

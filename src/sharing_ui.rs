@@ -464,9 +464,9 @@ impl Conflicts {
         view.handle(move |w, e| theme::handle_scrollbars(w, e, &grab));
         let mut row = Flex::default().row();
         row.set_spacing(8);
-        let mut resolve = Button::default().with_label(crate::i18n::tr("Use selected revision"));
+        let mut resolve = Button::default().with_label(crate::i18n::tr("Force sync main"));
         theme::button(&mut resolve, true, None);
-        resolve.emit(tx, (0, Action::ResolveConflict));
+        resolve.emit(tx, (0, Action::ForceSyncMain));
         let mut later = Button::default().with_label(crate::i18n::tr("Decide later"));
         theme::button(&mut later, false, None);
         later.set_callback(|b| {
@@ -495,7 +495,8 @@ impl Conflicts {
         self.list.clear();
         for r in &self.versions {
             self.list.add(&format!(
-                "{} · Stand {} · Inhalt {}",
+                "Force {} · {} · revision {} · content {}",
+                r.force.as_ref().map_or(0, |f| f.generation),
                 r.name,
                 r.clock.values().copied().fold(0u64, u64::saturating_add),
                 r.hash.get(..12).unwrap_or(&r.hash)

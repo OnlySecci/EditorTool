@@ -14,6 +14,12 @@ use std::{
 };
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Entry {
+    #[serde(default)]
+    pub document: String,
+    #[serde(default)]
+    pub force_generation: u64,
+    #[serde(default)]
+    pub force_author: String,
     pub time: u64,
     pub peer: String,
     pub remote: String,
@@ -92,10 +98,25 @@ pub fn local(local: String) {
     CONTEXT.with(|c| c.borrow_mut().local = local);
 }
 pub fn record(direction: &str, event: &str, bytes: u64) {
+    append(direction, event, bytes, "", None);
+}
+pub fn force(doc: &str, event: &str, marker: &crate::revision::ForceMain, bytes: u64) {
+    append("SYNC", event, bytes, doc, Some(marker));
+}
+fn append(
+    direction: &str,
+    event: &str,
+    bytes: u64,
+    doc: &str,
+    marker: Option<&crate::revision::ForceMain>,
+) {
     let Some(log) = LOG.get() else { return };
     let Ok(mut log) = log.lock() else { return };
     let context = CONTEXT.with(|c| c.borrow().clone());
     let entry = Entry {
+        document: doc.into(),
+        force_generation: marker.map_or(0, |f| f.generation),
+        force_author: marker.map_or_else(String::new, |f| f.author.clone()),
         time: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()

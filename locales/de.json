@@ -822,5 +822,6 @@
   "Understood": "Verstanden",
   "Unsafe cleanup path.": "Unsicherer Bereinigungspfad.",
   "Move to other view": "In andere Ansicht verschieben",
-  "Security": "Sicherheit"
+  "Security": "Sicherheit",
+  "Force sync main": "Force sync main"
 }

@@ -1,5 +1,15 @@
 # Changelog
 
+## V1.5.4 — 2026-11-14
+
+- Add a confirmed Force sync main action to the version/conflict view. Sign the selected parent and a logical force generation; consistently order competing force decisions without wall-clock timestamps.
+- Retain winning authority across ordinary edits and reject superseded offline branches. Preserve discarded local counter provenance so normal editing can resume.
+- Recover unsent local edits into separate protected-session tabs before applying an incoming force decision, and reconcile newer persisted authority at restart.
+- Log force creation/application, stale peers, acknowledgements and recovery with group/generation/authority metadata and a SYNC filter. Omit added identifiers from pseudonymised exports.
+- Preserve V1.5.3 groups/signatures while requiring compatible V1.5.4 peers. Refuse peers with a different protocol and profiles with a newer unsupported protocol.
+- Keep equal-content concurrent revisions signed and immutable rather than changing signed counters in place.
+- Preserve autosave consent, file conflict checks, membership, revocation and quota limits. Build/package without tests or app launches.
+
 ## V1.5.3 — 2026-11-14
 
 - Encrypt session/history/sharing storage and device identities with OS-protected or password-protected keys; add authenticated migration and encrypted recovery-key export/import.
