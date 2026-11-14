@@ -1129,6 +1129,24 @@ impl Service {
         let _ = self.wake.send(());
     }
     pub fn retry(&self) {
+        {
+            let mut state = self.inner.state.lock().unwrap();
+            let mut changed = false;
+            for request in state.bases.values_mut() {
+                changed |= !request.checked.is_empty();
+                request.checked.clear();
+            }
+            for request in state.links.values_mut().filter(|r| r.proposal.is_none()) {
+                changed |= !request.checked.is_empty();
+                request.checked.clear();
+            }
+            if changed {
+                if let Err(error) = self.inner.save(&state) {
+                    crate::diagnostics::failure("sharing", "recovery_retry_persistence", &error);
+                    return;
+                }
+            }
+        }
         self.inner.unavailable_bodies.lock().unwrap().clear();
         self.inner.unavailable_proofs.lock().unwrap().clear();
         self.inner.seen.lock().unwrap().clear();
