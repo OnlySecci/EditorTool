@@ -736,6 +736,9 @@ impl Service {
         text
     }
     pub fn status(&self, p: &Peer) -> bool {
+        if !self.inner.enabled.load(Ordering::Relaxed) {
+            return false;
+        }
         self.inner
             .statuses
             .lock()
@@ -826,6 +829,8 @@ impl Service {
             || !config.enabled;
         if restart {
             self.stop_listener();
+            self.inner.statuses.lock().unwrap().clear();
+            self.inner.checked.lock().unwrap().clear();
         }
         {
             let mut s = self.inner.state.lock().unwrap();
@@ -1889,6 +1894,7 @@ fn sweep(inner: &Arc<Inner>) {
             break;
         }
         let started = Instant::now();
+        let checked_generation = inner.network_epoch.load(Ordering::Relaxed);
         let result = (|| -> Result<(), String> {
             let mut stream = connect(inner, &peer, started)?;
             let mut info = inner.own();
@@ -2072,6 +2078,11 @@ fn sweep(inner: &Arc<Inner>) {
             }
             Ok(())
         })();
+        if !inner.enabled.load(Ordering::Relaxed)
+            || inner.network_epoch.load(Ordering::Relaxed) != checked_generation
+        {
+            continue;
+        }
         let key = format!("{}:{}", peer.host, peer.port);
         let mut statuses = inner.statuses.lock().unwrap();
         let previous = statuses.insert(key.clone(), result.is_ok());
