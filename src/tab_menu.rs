@@ -12,7 +12,7 @@ fn items(page: u8, settings: bool, index: usize) -> Vec<Item> {
     if settings {
         return vec![
             Section("TAB"),
-            Action("Close tab", "Strg/Cmd+W", crate::Action::CloseTab),
+            Action("Close tab", "Ctrl/Cmd+W", crate::Action::CloseTab),
             Action("Close other tabs", "", crate::Action::CloseOtherTabs),
             Action("Close all tabs", "", crate::Action::CloseAllTabs),
         ];
@@ -49,16 +49,12 @@ fn items(page: u8, settings: bool, index: usize) -> Vec<Item> {
             Action("Side by side", "", crate::Action::Split(false)),
             Action("Stacked", "", crate::Action::Split(true)),
             Action("Merge split", "", crate::Action::MergeSplit),
-            Action(
-                "In andere Ansicht verschieben",
-                "",
-                crate::Action::MoveTab(index),
-            ),
+            Action("Move to other view", "", crate::Action::MoveTab(index)),
             Action("Continue as two windows", "", crate::Action::EndSplit),
         ],
         _ => vec![
             Section("FILE"),
-            Action("Save", "Strg/Cmd+S", crate::Action::Save(false)),
+            Action("Save", "Ctrl/Cmd+S", crate::Action::Save(false)),
             Action("Save as…", "", crate::Action::Save(true)),
             Action("Copy file path", "", crate::Action::CopyPath),
             Action("Older file versions…", "", crate::Action::FileHistory),
@@ -70,7 +66,7 @@ fn items(page: u8, settings: bool, index: usize) -> Vec<Item> {
             Action("Versions / Conflicts…", "", crate::Action::ShowConflicts),
             Page("Split View", 2),
             Section("TABS"),
-            Action("Close tab", "Strg/Cmd+W", crate::Action::CloseTab),
+            Action("Close tab", "Ctrl/Cmd+W", crate::Action::CloseTab),
             Action("Close other tabs", "", crate::Action::CloseOtherTabs),
             Action("Close all tabs", "", crate::Action::CloseAllTabs),
         ],

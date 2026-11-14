@@ -723,7 +723,7 @@ impl Runtime {
                                 .map(|v| peer::hash(&v))
                         });
                     } else {
-                        if sync&&d.sharing.is_some()&&chrome::decision(Some(&w.win),"Neue Sync-Gruppe","Changing participants requires new approvals. Existing copies are preserved.","",&["Cancel","Neue Gruppe"],1)!=Some(1){return Ok(());}
+                        if sync&&d.sharing.is_some()&&chrome::decision(Some(&w.win),"New sync group","Changing participants requires new approvals. Existing copies are preserved.","",&["Cancel","New group"],1)!=Some(1){return Ok(());}
                         let (doc, r) = s.begin(
                             d.title().trim_end_matches(" *").into(),
                             &d.left.cache_text(),
@@ -893,16 +893,16 @@ impl Runtime {
                         let choice = chrome::decision(
                             owner.as_ref(),
                             if o.sync {
-                                "Dokument synchronisieren"
+                                "Synchronise document"
                             } else {
-                                "Dokument empfangen"
+                                "Receive document"
                             },
                             if o.sync {
                                 "After acceptance, changes are exchanged with these devices. Choose whether changes should also be saved to a local file."
                             } else {
                                 "After acceptance, the document opens as a new tab."
                             },
-                            &format!("Dokument: {}\n\nTeilnehmer:\n{}", o.title, participants),
+                            &format!("Document: {}\n\nParticipants:\n{}", o.title, participants),
                             &["Reject", "Editor only", "With local file"],
                             1,
                         );
@@ -947,7 +947,7 @@ impl Runtime {
                             .flatten()
                             .find(|w| !w.embedded && w.win.shown())
                             .map(|w| w.win.clone());
-                        chrome::decision(owner.as_ref(),"Sync stopped for client",&crate::tr_format!("{} no longer synchronises this document. Sync for this client and document has also stopped here. Other documents remain connected.",name),&format!("Dokument: {}\nClient: {}",title,client),&["Verstanden"],0);
+                        chrome::decision(owner.as_ref(),"Sync stopped for client",&crate::tr_format!("{} no longer synchronises this document. Sync for this client and document has also stopped here. Other documents remain connected.",name),&format!("Document: {}\nClient: {}",title,client),&["Understood"],0);
                     }
                     peer::Event::Received(o, a) => self.receive_shared(o, a)?,
                     peer::Event::Updated(id) => self.apply_shared(&id)?,

@@ -714,7 +714,7 @@ impl Service {
         }
         for doc in state.docs.values() {
             text.push_str(&format!(
-                "\nDokument: {} · {}\n",
+                "\nDocument: {} · {}\n",
                 doc.title,
                 if doc.active {
                     "Sync aktiv"

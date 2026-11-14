@@ -149,7 +149,7 @@ pub fn remove_files(root: &Path, selected: &[PathBuf]) -> io::Result<usize> {
         {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
-                "Unsicherer Bereinigungspfad.",
+                "Unsafe cleanup path.",
             ));
         }
         fs::remove_file(path)?;

@@ -1123,7 +1123,7 @@ impl EditorWindow {
             let mut add = Button::default();
             theme::button(&mut add, false, Some(theme::Icon::Plus));
             add.set_color(PANEL);
-            add.set_tooltip(crate::i18n::tr("Neuer Tab (Strg/Cmd+T)"));
+            add.set_tooltip(crate::i18n::tr("Neuer Tab (Ctrl/Cmd+T)"));
             add.emit(tx, (wid, Action::NewTab));
 
             self.bar.end();
@@ -1804,7 +1804,7 @@ impl EditorWindow {
                     &re.replace_all(&text, regex::NoExpand(&self.find.replacement.value())),
                 );
             }
-            d.report = format!("{count} Treffer ersetzt");
+            d.report = format!("Replaced {count} matches");
             return;
         }
         if matches!(action, Action::Replace) {

@@ -263,7 +263,7 @@ impl Clients {
                     crate::i18n::tr("Not connected")
                 },
                 if p.cert.is_empty() {
-                    " · Sharing service is missing"
+                    " · Approval required"
                 } else {
                     ""
                 }

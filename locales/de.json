@@ -810,5 +810,16 @@
   "This package requires Windows ARM64.": "Dieses Paket benötigt Windows ARM64.",
   "This package requires Windows x64 or ARM64 with x64 emulation.": "Dieses Paket benötigt Windows x64 oder ARM64 mit x64-Unterstützung.",
   "Edit text and images with EditorTool": "Text und Bilder mit EditorTool bearbeiten",
-  "Installation failed; see the update log.": "Installation fehlgeschlagen; siehe Update-Protokoll."
+  "Installation failed; see the update log.": "Installation fehlgeschlagen; siehe Update-Protokoll.",
+  "Replaced {count} matches": "{count} Treffer ersetzt",
+  "\nDocument: {} · {}\n": "\nDokument: {} · {}\n",
+  "New sync group": "Neue Sync-Gruppe",
+  "New group": "Neue Gruppe",
+  "Synchronise document": "Dokument synchronisieren",
+  "Receive document": "Dokument empfangen",
+  "Document: {}\n\nParticipants:\n{}": "Dokument: {}\n\nTeilnehmer:\n{}",
+  "Document: {}\nClient: {}": "Dokument: {}\nClient: {}",
+  "Understood": "Verstanden",
+  "Unsafe cleanup path.": "Unsicherer Bereinigungspfad.",
+  "Move to other view": "In andere Ansicht verschieben"
 }
