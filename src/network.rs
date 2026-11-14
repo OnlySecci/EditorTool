@@ -204,7 +204,7 @@ pub fn connect(
         let budget = remaining / (candidates.len() - index) as u32;
         crate::traffic::local(binding.address(0).to_string());
         crate::traffic::record("OUT", "interface attempt", 0);
-        let result = (|| {
+        let result: io::Result<TcpStream> = (|| {
             let s = socket(remote)?;
             select_interface(&s, binding)?;
             let mut destination = remote;
