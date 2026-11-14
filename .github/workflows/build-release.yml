@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Optionaler Release-Tag, z.B. V1.0 (leer: nur Pakete bauen)'
+        description: 'Optional release tag, for example V1.5.2 (empty: build packages only)'
         required: false
         type: string
         default: ''

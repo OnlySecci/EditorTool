@@ -7,3 +7,5 @@
 - Never commit session caches, personal documents, credentials, generated installers, build output or the temporary toolchain.
 - Update Cargo.toml, packaging metadata and the changelog together for a release.
 - Build native binaries for x64 and ARM64 on each target operating system. Windows installers use the NSIS cross-compiler on Linux, Linux uses Flatpak/RPM/DEB, macOS uses DMG.
+
+- Maintain repository documentation, code identifiers/comments, pull requests and GitHub release notes in English. User-facing translations belong in the embedded language catalogs.

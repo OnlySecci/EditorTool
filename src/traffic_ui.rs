@@ -17,9 +17,9 @@ impl Panel {
         win.set_color(PANEL);
         let mut root = Flex::new(20, 20, 760, 610, None).column();
         root.set_spacing(10);
-        let title = theme::heading("Senden / Sync – Kommunikationsprotokoll", 21);
+        let title = theme::heading("Send / Sync — Communication log", 21);
         root.fixed(&title, 32);
-        let mut hint=Frame::default().with_label("Protokolliert Geräte-/IP-Metadaten und Anwendungsnachrichten, keine Text- oder Bildinhalte.\nBytezahlen bezeichnen Anwendungsdaten, nicht sämtliche verschlüsselten Netzwerkpakete.");
+        let mut hint=Frame::default().with_label(crate::i18n::tr("Records device/IP metadata and application messages, not text or image contents.\nByte counts describe application data, not all encrypted network packets."));
         hint.set_label_size(12);
         hint.set_label_color(MUTED);
         hint.set_align(Align::Left | Align::Inside | Align::Wrap);
@@ -27,15 +27,17 @@ impl Panel {
         let mut filters = Flex::default().row();
         filters.set_spacing(8);
         let mut device = Choice::default();
-        device.add_choice("Alle Geräte");
+        device.add_choice(crate::i18n::tr("All devices"));
         device.set_value(0);
         let mut direction = Choice::default();
-        direction.add_choice("Alle Richtungen|TX|RX|OUT|IN|ERROR");
+        direction.add_choice(crate::i18n::tr("All directions|TX|RX|OUT|IN|ERROR"));
         direction.set_value(0);
         filters.fixed(&direction, 140);
         let mut search = Input::default();
         theme::input(&mut search);
-        search.set_tooltip("Nach IP, Nachrichtentyp oder Geräte-Fingerabdruck filtern");
+        search.set_tooltip(crate::i18n::tr(
+            "Filter by IP, message type or device fingerprint",
+        ));
         search.set_trigger(fltk::enums::CallbackTrigger::Changed);
         for choice in [&mut device, &mut direction] {
             choice.set_color(theme::SURFACE);
@@ -61,8 +63,8 @@ impl Panel {
         let mut row = Flex::default().row();
         row.set_spacing(8);
         for (label, action) in [
-            ("Aktualisieren", Action::TrafficFilter),
-            ("Gefiltertes Protokoll exportieren…", Action::TrafficExport),
+            ("Refresh", Action::TrafficFilter),
+            ("Export filtered log…", Action::TrafficExport),
         ] {
             let mut button = Button::default().with_label(label);
             theme::button(&mut button, false, None);
@@ -92,7 +94,7 @@ impl Panel {
                 .cloned()
                 .unwrap_or_default();
             self.device.clear();
-            self.device.add_choice("Alle Geräte");
+            self.device.add_choice(crate::i18n::tr("All devices"));
             self.keys = vec![String::new()];
             for p in peers {
                 let key = if p.id.is_empty() {
@@ -164,10 +166,9 @@ impl Panel {
             }
         }
         if !traffic::available() {
-            text =
-                "Protokollspeicher konnte nicht geöffnet werden. Diagnoseprotokoll prüfen.".into();
+            text = "Could not open communication log storage. Check the diagnostic log.".into();
         } else if text.is_empty() {
-            text = "Keine passenden Ereignisse. Es werden bis zu 1500 Ereignisse angezeigt.".into();
+            text = "No matching events. Up to 1500 events are shown.".into();
         }
         self.buffer.set_text(&text);
         self.generation = traffic::generation();
@@ -175,7 +176,9 @@ impl Panel {
     pub fn export(&self) -> std::io::Result<()> {
         let mut chooser =
             file_dialog::Chooser::new(fltk::dialog::NativeFileChooserType::BrowseSaveFile);
-        chooser.set_title("Kommunikationsprotokoll exportieren (enthält Geräteadressen)");
+        chooser.set_title(crate::i18n::tr(
+            "Export communication log (includes device addresses)",
+        ));
         chooser.set_preset_file("EditorTool-Communication.log");
         chooser.set_option(fltk::dialog::NativeFileChooserOptions::SaveAsConfirm);
         chooser.show();

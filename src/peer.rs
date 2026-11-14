@@ -47,7 +47,7 @@ impl DeadlineSocket {
         if self.epoch.load(Ordering::Relaxed) != self.generation {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::ConnectionAborted,
-                "Netzwerkeinstellungen wurden geändert.",
+                "Network settings changed.",
             ));
         }
         Duration::from_secs(45)
@@ -55,10 +55,7 @@ impl DeadlineSocket {
             .filter(|d| !d.is_zero())
             .map(|d| d.min(Duration::from_secs(10)))
             .ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    "Sync-Gesamtzeitlimit erreicht.",
-                )
+                std::io::Error::new(std::io::ErrorKind::TimedOut, "Sync total deadline reached.")
             })
     }
 }
@@ -124,9 +121,9 @@ pub fn address(host: &str, port: u16) -> Result<SocketAddr, String> {
         .trim()
         .trim_matches(['[', ']'])
         .parse()
-        .map_err(|_| "Bitte eine interne IPv4- oder IPv6-Adresse eingeben.")?;
+        .map_err(|_| "Enter a private IPv4 or IPv6 address.")?;
     if !private(ip) || port == 0 {
-        return Err("Nur interne Netze/VPN und ein Port zwischen 1 und 65535 sind erlaubt.".into());
+        return Err("Only private networks/VPN and ports from 1 to 65535 are allowed.".into());
     }
     Ok(SocketAddr::new(ip, port))
 }
@@ -439,13 +436,13 @@ impl Inner {
     }
     fn content_path(&self, hash: &str) -> Result<PathBuf, String> {
         if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err("Ungültige Inhaltskennung".into());
+            return Err("Invalid content identifier".into());
         }
         Ok(self.root.join("content").join(format!("{hash}.txt")))
     }
     fn put_content(&self, data: &str) -> Result<String, String> {
         if data.len() as u64 > MAX {
-            return Err("Dokument überschreitet 64 MiB.".into());
+            return Err("Document exceeds 64 MiB.".into());
         }
         crate::rich::validate_snapshot(data)?;
         let key = hash(data.as_bytes());
@@ -487,7 +484,7 @@ impl Inner {
         validate_revision(&revision)?;
         let mut s = self.state.lock().unwrap();
         let Some(d) = s.docs.get_mut(doc) else {
-            return Err("Dokument nicht freigegeben.".into());
+            return Err("Document is not shared.".into());
         };
         if same(&d.head, &revision) || d.conflicts.iter().any(|r| same(r, &revision)) {
             return Ok(());
@@ -563,7 +560,7 @@ fn validate_revision(r: &Revision) -> Result<(), String> {
             id.len() != 64 || !id.bytes().all(|b| b.is_ascii_hexdigit()) || *n > u64::MAX - 1024
         })
     {
-        return Err("Ungültige Versionsdaten.".into());
+        return Err("Invalid revision data.".into());
     }
     Ok(())
 }
@@ -583,7 +580,7 @@ impl Service {
             for entry in fs::read_dir(dir).map_err(err)? {
                 let entry = entry.map_err(err)?;
                 if crate::private_fs::is_link(&fs::symlink_metadata(entry.path()).map_err(err)?) {
-                    return Err("Verknüpfung im Freigabespeicher abgelehnt.".into());
+                    return Err("Link in sharing storage rejected.".into());
                 }
                 if entry.file_type().map_err(err)?.is_file() {
                     crate::private_fs::restrict(&entry.path(), false).map_err(err)?;
@@ -672,7 +669,7 @@ impl Service {
                 service.inner.save(&state)?;
             }
             service.inner.event(Event::Notice(format!(
-                "Senden/Sync ist pausiert. Schnittstellen-Einstellungen prüfen: {error}"
+                "Send/Sync is paused. Check interface settings: {error}"
             )));
         }
         {
@@ -699,21 +696,25 @@ impl Service {
     pub fn permissions(&self) -> String {
         let state = self.inner.state.lock().unwrap();
         let mut text = format!(
-            "Senden/Sync: {} · Port {}\nGerätefreigaben: {} · Ausstehende Sendungen: {}\n",
-            if state.config.enabled { "aktiv" } else { "aus" },
+            "Send/Sync: {} · Port {}\nDevice approvals: {} · Pending sends: {}\n",
+            if state.config.enabled {
+                "enabled"
+            } else {
+                "off"
+            },
             state.config.port,
             state.config.clients.len(),
             state.outbox.len()
         );
         for peer in &state.config.clients {
             text.push_str(&format!(
-                "\nGerät: {} · {}:{}\nFingerabdruck: {}\n",
+                "\nDevice: {} · {}:{}\nFingerprint: {}\n",
                 peer.name, peer.host, peer.port, peer.id
             ));
         }
         for doc in state.docs.values() {
             text.push_str(&format!(
-                "\nDokument: {} · {}\n",
+                "\nDocument: {} · {}\n",
                 doc.title,
                 if doc.active {
                     "Sync aktiv"
@@ -728,7 +729,7 @@ impl Service {
                     if doc.departed.contains(&member.id) {
                         "abgemeldet"
                     } else {
-                        "Teilnehmer – darf Änderungen abgleichen"
+                        "Participant — may synchronise changes"
                     }
                 ));
             }
@@ -765,16 +766,16 @@ impl Service {
     ) -> Result<(), String> {
         address(&host, port)?;
         if name.trim().is_empty() || name.len() > 128 {
-            return Err("Client-Name muss 1 bis 128 Zeichen enthalten.".into());
+            return Err("Client name must contain 1 to 128 characters.".into());
         }
         let mut c = self.config();
-        let old = c.clients.get(index).ok_or("Client auswählen.")?.clone();
+        let old = c.clients.get(index).ok_or("Select a client.")?.clone();
         if c.clients
             .iter()
             .enumerate()
             .any(|(i, p)| i != index && p.host == host && p.port == port)
         {
-            return Err("Adresse und Port sind bereits vorhanden.".into());
+            return Err("Address and port already exist.".into());
         }
         c.clients[index].name = name.trim().into();
         c.clients[index].host = host;
@@ -812,14 +813,12 @@ impl Service {
             || config.name.len() > 128
             || config.clients.len() > 32
         {
-            return Err("Gerätename, Port oder Anzahl der Clients ist ungültig.".into());
+            return Err("Invalid device name, port or number of clients.".into());
         }
         if config.interfaces.len() > 64
             || (!config.automatic_interfaces && config.interfaces.is_empty())
         {
-            return Err(
-                "Mindestens eine Schnittstelle/IP auswählen oder Automatisch aktivieren.".into(),
-            );
+            return Err("Select at least one interface/IP or enable Automatic.".into());
         }
         self.inner.network_epoch.fetch_add(1, Ordering::Relaxed);
         let old = self.config();
@@ -849,9 +848,7 @@ impl Service {
                     state.config.enabled = false;
                     self.inner.enabled.store(false, Ordering::Relaxed);
                     self.inner.save(&state)?;
-                    return Err(format!(
-                        "Gewählte Schnittstellen konnten nicht geöffnet werden: {e}"
-                    ));
+                    return Err(format!("Could not open selected interfaces: {e}"));
                 }
             };
             let mut poll = mio::Poll::new().map_err(err)?;
@@ -876,7 +873,7 @@ impl Service {
                         if error.kind() == std::io::ErrorKind::Interrupted {
                             continue;
                         }
-                        inner.event(Event::Notice("Netzwerk-Listener wurde beendet.".into()));
+                        inner.event(Event::Notice("Network listener stopped.".into()));
                         break;
                     }
                     for event in events.iter() {
@@ -983,7 +980,7 @@ impl Service {
         address(&host, port)?;
         let mut c = self.config();
         if c.clients.iter().any(|p| p.host == host && p.port == port) {
-            return Err("Client ist bereits vorhanden.".into());
+            return Err("Client already exists.".into());
         }
         c.clients.push(Peer {
             id: String::new(),
@@ -1024,7 +1021,7 @@ impl Service {
             return Ok(());
         }
         if !peer_valid(&peer) {
-            return Err("Geräteschlüssel oder Adresse ist ungültig.".into());
+            return Err("Invalid device key or address.".into());
         }
         let mut c = self.config();
         if let Some(p) = c.clients.iter_mut().find(|p| {
@@ -1093,7 +1090,7 @@ impl Service {
     }
     pub fn leave(&self, id: &str) -> Result<(), String> {
         let mut s = self.inner.state.lock().unwrap();
-        let d = s.docs.get_mut(id).ok_or("Sync-Dokument fehlt")?;
+        let d = s.docs.get_mut(id).ok_or("Sync document is missing")?;
         let targets: Vec<_> = d
             .members
             .iter()
@@ -1143,13 +1140,13 @@ impl Service {
         sync: bool,
     ) -> Result<(String, Revision), String> {
         if !self.config().enabled {
-            return Err("Senden/Sync ist nicht aktiviert.".into());
+            return Err("Send/Sync is not enabled.".into());
         }
         if peers.is_empty() || peers.len() > 31 || peers.iter().any(|p| !peer_valid(p)) {
-            return Err("Bitte mindestens einen freigegebenen Client auswählen.".into());
+            return Err("Select at least one approved client.".into());
         }
         if !sync && peers.len() != 1 {
-            return Err("Senden benötigt genau einen Client.".into());
+            return Err("Sending requires exactly one client.".into());
         }
         let key = self.inner.put_content(data)?;
         let id = session::new_key();
@@ -1164,7 +1161,7 @@ impl Service {
         members.push(own);
         let mut s = self.inner.state.lock().unwrap();
         if s.outbox.len() + peers.len() > 64 {
-            return Err("Zu viele ausstehende Anfragen.".into());
+            return Err("Too many pending requests.".into());
         }
         if sync {
             s.docs.insert(
@@ -1212,7 +1209,7 @@ impl Service {
             .offers
             .get(id)
             .cloned()
-            .ok_or("Anfrage ist nicht mehr vorhanden.")?;
+            .ok_or("Request no longer exists.")?;
         if !accepted {
             s.denied.insert(id.into());
             if s.denied.len() > 1024 {
@@ -1227,11 +1224,11 @@ impl Service {
         if accepted && offer.sync {
             for p in offer.members.iter().filter(|p| p.id != self.inner.id) {
                 if !peer_valid(p) {
-                    return Err("Ungültiger Teilnehmer in der Anfrage.".into());
+                    return Err("Invalid participant in request.".into());
                 }
                 if !s.config.clients.iter().any(|c| c.id == p.id) {
                     if s.config.clients.len() >= 32 {
-                        return Err("Client-Limit erreicht.".into());
+                        return Err("Client limit reached.".into());
                     }
                     s.config.clients.push(p.clone());
                 }
@@ -1255,7 +1252,7 @@ impl Service {
         let content = self.inner.put_content(data)?;
         let s = self.inner.state.lock().unwrap();
         let name = s.config.name.clone();
-        let d = s.docs.get(id).ok_or("Sync-Dokument fehlt.")?;
+        let d = s.docs.get(id).ok_or("Sync document is missing.")?;
         if d.head.hash == content && d.conflicts.is_empty() {
             return Ok(d.head.clone());
         }
@@ -1268,7 +1265,7 @@ impl Service {
             .max(clock.get(&self.inner.id).copied().unwrap_or(0));
         clock.insert(
             self.inner.id.clone(),
-            n.checked_add(1).ok_or("Versionszähler ist voll.")?,
+            n.checked_add(1).ok_or("Revision counter is full.")?,
         );
         let revision = Revision {
             clock,
@@ -1283,7 +1280,7 @@ impl Service {
     pub fn resolve(&self, id: &str, key: &str) -> Result<Revision, String> {
         let mut s = self.inner.state.lock().unwrap();
         let name = s.config.name.clone();
-        let d = s.docs.get_mut(id).ok_or("Dokument fehlt.")?;
+        let d = s.docs.get_mut(id).ok_or("Document is missing.")?;
         let heads: Vec<_> = std::iter::once(d.head.clone())
             .chain(d.conflicts.clone())
             .collect();
@@ -1291,7 +1288,7 @@ impl Service {
             .iter()
             .find(|r| r.key() == key)
             .cloned()
-            .ok_or("Version wurde inzwischen ersetzt. Bitte erneut auswählen.")?;
+            .ok_or("Revision has been replaced. Select it again.")?;
         let mut clock = Clock::new();
         for r in &heads {
             for (k, n) in &r.clock {
@@ -1300,7 +1297,7 @@ impl Service {
             }
         }
         let n = clock.entry(self.inner.id.clone()).or_default();
-        *n = n.checked_add(1).ok_or("Versionszähler ist voll.")?;
+        *n = n.checked_add(1).ok_or("Revision counter is full.")?;
         chosen.clock = clock;
         chosen.author = self.inner.id.clone();
         chosen.name = name;
@@ -1372,9 +1369,7 @@ impl ServerCertVerifier for Verifier {
         if self.inner.trusted(cert, &self.host, self.port) {
             Ok(ServerCertVerified::assertion())
         } else {
-            Err(rustls::Error::General(
-                "Gerät ist noch nicht freigegeben.".into(),
-            ))
+            Err(rustls::Error::General("Device is not approved yet.".into()))
         }
     }
     fn verify_tls12_signature(
@@ -1410,9 +1405,7 @@ impl ClientCertVerifier for Verifier {
         if self.inner.trusted(cert, &self.host, self.port) {
             Ok(ClientCertVerified::assertion())
         } else {
-            Err(rustls::Error::General(
-                "Gerät ist noch nicht freigegeben.".into(),
-            ))
+            Err(rustls::Error::General("Device is not approved yet.".into()))
         }
     }
     fn verify_tls12_signature(
@@ -1441,7 +1434,7 @@ fn write_header<T: Serialize + WireLabel>(
 ) -> Result<(), String> {
     let bytes = serde_json::to_vec(value).map_err(err)?;
     if bytes.len() > HEADER {
-        return Err("Protokollkopf zu gross.".into());
+        return Err("Protocol header is too large.".into());
     }
     stream
         .write_all(&(bytes.len() as u32).to_be_bytes())
@@ -1458,7 +1451,7 @@ fn read_header<T: serde::de::DeserializeOwned + WireLabel>(
     stream.read_exact(&mut size).map_err(err)?;
     let size = u32::from_be_bytes(size) as usize;
     if size > HEADER {
-        return Err("Protokollkopf zu gross.".into());
+        return Err("Protocol header is too large.".into());
     }
     let mut data = vec![0; size];
     stream.read_exact(&mut data).map_err(err)?;
@@ -1472,7 +1465,7 @@ fn send_body(inner: &Inner, stream: &mut impl Write, hash: &str) -> Result<(), S
     let mut buffer = [0; 65536];
     loop {
         if !inner.enabled.load(Ordering::Relaxed) {
-            return Err("Freigabe wurde deaktiviert.".into());
+            return Err("Sharing was disabled.".into());
         }
         let n = file.read(&mut buffer).map_err(err)?;
         if n == 0 {
@@ -1492,7 +1485,7 @@ fn read_body(
     len: u64,
 ) -> Result<(), String> {
     if len > MAX {
-        return Err("Dokument ist zu gross.".into());
+        return Err("Document is too large.".into());
     }
     validate_revision(revision)?;
     let path = inner.content_path(&revision.hash)?;
@@ -1507,13 +1500,13 @@ fn read_body(
     let result = (|| {
         while left > 0 {
             if !inner.enabled.load(Ordering::Relaxed) {
-                return Err("Freigabe wurde deaktiviert.".into());
+                return Err("Sharing was disabled.".into());
             }
             let n = stream
                 .read(&mut buffer[..(left as usize).min(65536)])
                 .map_err(err)?;
             if n == 0 {
-                return Err("Übertragung unterbrochen.".into());
+                return Err("Transfer interrupted.".into());
             }
             file.write_all(&buffer[..n]).map_err(err)?;
             hash.update(&buffer[..n]);
@@ -1525,7 +1518,7 @@ fn read_body(
         crate::rich::validate_snapshot(&content)?;
         drop(content);
         if format!("{:x}", hash.finalize()) != revision.hash {
-            return Err("Inhaltsprüfsumme stimmt nicht.".into());
+            return Err("Content checksum mismatch.".into());
         }
         crate::traffic::record("RX", "document body validated", len);
         if !path.exists() {
@@ -1581,21 +1574,21 @@ fn serve(
         connection
             .peer_certificates()
             .and_then(|c| c.first())
-            .ok_or("Geräteschlüssel fehlt.")?
+            .ok_or("Device key is missing.")?
             .as_ref(),
     );
     let mut stream = rustls::StreamOwned::new(connection, socket);
     crate::traffic::identify(&peer);
     crate::traffic::record("IN", "TLS authenticated", 0);
     if !inner.enabled.load(Ordering::Relaxed) {
-        return Err("Freigabe ist deaktiviert.".into());
+        return Err("Sharing is disabled.".into());
     }
     match read_header::<Request>(&mut stream)? {
         Request::Leave { doc } => {
             let mut s = inner.state.lock().unwrap();
             if !s.docs.contains_key(&doc) {
                 if doc.len() > 128 {
-                    return Err("Ungültige Dokumentkennung".into());
+                    return Err("Invalid document identifier".into());
                 }
                 s.departures
                     .entry(doc.clone())
@@ -1624,7 +1617,7 @@ fn serve(
                 return Ok(());
             };
             if !d.members.iter().any(|p| p.id == peer) {
-                return Err("Dokument nicht freigegeben".into());
+                return Err("Document is not shared".into());
             }
             let name = d
                 .members
@@ -1644,7 +1637,7 @@ fn serve(
         Request::Hello { mut info } => {
             info.host = remote.ip().to_canonical().to_string();
             if info.id != peer || !peer_valid(&info) {
-                return Err("Ungültige Gerätekennung.".into());
+                return Err("Invalid device identifier.".into());
             }
             let mut s = inner.state.lock().unwrap();
             if !s.locked_clients.contains(&peer) {
@@ -1685,7 +1678,7 @@ fn serve(
                 || !offer.members.iter().any(|p| p.id == peer)
                 || !offer.members.iter().any(|p| p.id == inner.id)
             {
-                return Err("Ungültige Freigabeanfrage.".into());
+                return Err("Invalid sharing request.".into());
             }
             validate_revision(&offer.revision)?;
             if offer
@@ -1694,14 +1687,14 @@ fn serve(
                 .keys()
                 .any(|id| !offer.members.iter().any(|p| &p.id == id))
             {
-                return Err("Versionsautor fehlt in der Freigabe.".into());
+                return Err("Revision author is missing from the offer.".into());
             }
             for p in &mut offer.members {
                 if p.id == peer {
                     p.host = remote.ip().to_canonical().to_string();
                 }
                 if !peer_valid(p) {
-                    return Err("Ungültiger Teilnehmer.".into());
+                    return Err("Invalid participant.".into());
                 }
             }
             let mut s = inner.state.lock().unwrap();
@@ -1718,7 +1711,7 @@ fn serve(
             let decision = s.decisions.get(&offer.id).cloned();
             if decision.is_none() && !s.offers.contains_key(&offer.id) {
                 if s.offers.len() >= 64 {
-                    return Err("Zu viele ausstehende Anfragen.".into());
+                    return Err("Too many pending requests.".into());
                 }
                 s.offers.insert(offer.id.clone(), offer.clone());
                 inner.save(&s)?;
@@ -1759,7 +1752,7 @@ fn serve(
             if !approved {
                 write_header(
                     &mut stream,
-                    &Reply::Error("Dokument wurde nicht freigegeben.".into()),
+                    &Reply::Error("Document has not been approved.".into()),
                 )?;
                 return Ok(());
             }
@@ -1799,14 +1792,14 @@ fn serve(
         Request::Get { doc, key } => {
             let s = inner.state.lock().unwrap();
             if !inner.allowed(&s, &doc, &peer) {
-                return Err("Dokument nicht freigegeben.".into());
+                return Err("Document is not shared.".into());
             }
             let d = &s.docs[&doc];
             let r = std::iter::once(&d.head)
                 .chain(&d.conflicts)
                 .find(|r| r.key() == key)
                 .cloned()
-                .ok_or("Version fehlt.")?;
+                .ok_or("Revision is missing.")?;
             drop(s);
             let len = fs::metadata(inner.content_path(&r.hash)?)
                 .map_err(err)?
@@ -1831,7 +1824,7 @@ fn connect(
     let remaining = Duration::from_secs(45)
         .checked_sub(started.elapsed())
         .filter(|d| !d.is_zero())
-        .ok_or("Sync-Gesamtzeitlimit je Gegenstelle erreicht.")?;
+        .ok_or("Sync total deadline per peer reached.")?;
     crate::traffic::context(
         &peer.id,
         format!("{}:{}", peer.host, peer.port),
@@ -1907,10 +1900,10 @@ fn sweep(inner: &Arc<Inner>) {
                 .to_string();
             write_header(&mut stream, &Request::Hello { info })?;
             let Reply::Hello { info, heads } = read_header(&mut stream)? else {
-                return Err("Kein kompatibler EditorTool-Client.".into());
+                return Err("No compatible EditorTool client.".into());
             };
             if info.id != peer.id && !peer.id.is_empty() {
-                return Err("Gerätekennung stimmt nicht überein.".into());
+                return Err("Device identifier mismatch.".into());
             }
             for (doc, revision) in &heads {
                 inner.confirmed(&info.id, doc, revision);
@@ -1965,7 +1958,7 @@ fn sweep(inner: &Arc<Inner>) {
                     )?;
                     if let Reply::Data { revision, len } = read_header(&mut stream)? {
                         if !same(&revision, remote) {
-                            return Err("Versionsantwort stimmt nicht überein.".into());
+                            return Err("Revision reply mismatch.".into());
                         }
                         read_body(inner, &mut stream, &revision, len)?;
                         inner.receive(&d.id, revision)?;
@@ -2059,7 +2052,7 @@ fn sweep(inner: &Arc<Inner>) {
                     }
                     Reply::Rejected => {
                         inner.event(Event::Notice(format!(
-                            "{} hat die Anfrage für {} abgelehnt.",
+                            "{} rejected the request for {}.",
                             peer.name, offer.title
                         )));
                         true

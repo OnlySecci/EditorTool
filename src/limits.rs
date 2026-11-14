@@ -13,7 +13,7 @@ pub fn read(path: &Path, max: u64) -> io::Result<Vec<u8>> {
     if !file.metadata()?.is_file() || file.metadata()?.len() > max {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "Datei ist zu gross oder keine reguläre Datei.",
+            "File is too large or is not a regular file.",
         ));
     }
     let mut bytes = Vec::new();
@@ -21,7 +21,7 @@ pub fn read(path: &Path, max: u64) -> io::Result<Vec<u8>> {
     if bytes.len() as u64 > max {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "Dateigrenze überschritten.",
+            "File size limit exceeded.",
         ));
     }
     Ok(bytes)
@@ -33,7 +33,7 @@ pub fn read_text(path: &Path) -> io::Result<String> {
 pub fn pixels(w: u32, h: u32) -> Result<u64, String> {
     let pixels = u64::from(w) * u64::from(h);
     if w == 0 || h == 0 || w > 32768 || h > 32768 || pixels > PIXELS {
-        return Err("Bild überschreitet die Grenzen (40 Megapixel, 32768 Pixel je Seite).".into());
+        return Err("Image exceeds the limits (40 megapixels, 32768 pixels per side).".into());
     }
     Ok(pixels)
 }

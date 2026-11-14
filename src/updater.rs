@@ -38,16 +38,16 @@ fn fetch_small(url: &str, limit: u64) -> Result<Vec<u8>, String> {
         .read_to_end(&mut bytes)
         .map_err(|e| e.to_string())?;
     if bytes.len() as u64 > limit {
-        return Err("Update-Metadaten sind zu gross.".into());
+        return Err("Update metadata is too large.".into());
     }
     Ok(bytes)
 }
 fn verify_metadata(bytes: &[u8], signature: &[u8]) -> Result<SignedMetadata, String> {
     let key = STANDARD
         .decode(include_str!("../assets/update-public-key.base64").trim())
-        .map_err(|_| "Ungültiger Update-Vertrauensschlüssel.")?;
+        .map_err(|_| "Invalid update trust key.")?;
     if key.len() != 32 {
-        return Err("Update-Vertrauensschlüssel ist noch nicht eingerichtet.".into());
+        return Err("Update trust key is not configured yet.".into());
     }
     let signature = STANDARD
         .decode(
@@ -57,24 +57,22 @@ fn verify_metadata(bytes: &[u8], signature: &[u8]) -> Result<SignedMetadata, Str
                 .filter(|b| !b.is_ascii_whitespace())
                 .collect::<Vec<_>>(),
         )
-        .map_err(|_| "Ungültige Update-Signatur.")?;
+        .map_err(|_| "Invalid update signature.")?;
     ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, key)
         .verify(bytes, &signature)
-        .map_err(|_| "Update-Signatur stimmt nicht. Installation gesperrt.")?;
+        .map_err(|_| "Update signature mismatch. Installation blocked.")?;
     let signed: SignedMetadata = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-    let latest = version(&signed.version).ok_or("Ungültige signierte Version.")?;
+    let latest = version(&signed.version).ok_or("Invalid signed version.")?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|_| "Systemzeit ungültig.")?
+        .map_err(|_| "Invalid system time.")?
         .as_secs();
     if signed.issued_at > now.saturating_add(300)
         || signed.expires_at <= now
         || signed.expires_at <= signed.issued_at
         || signed.expires_at - signed.issued_at > 366 * 86400
     {
-        return Err(
-            "Signierte Update-Metadaten sind abgelaufen oder die Systemzeit stimmt nicht.".into(),
-        );
+        return Err("Signed update metadata expired or the system time is incorrect.".into());
     }
     if signed.version != format!("{}.{}.{}", latest.0, latest.1, latest.2)
         || signed.schema != 1
@@ -82,7 +80,7 @@ fn verify_metadata(bytes: &[u8], signature: &[u8]) -> Result<SignedMetadata, Str
         || latest <= version(env!("CARGO_PKG_VERSION")).unwrap()
         || signed.assets.len() != 16
     {
-        return Err("Signierte Update-Version ist ungültig oder nicht neuer.".into());
+        return Err("Signed update version is invalid or not newer.".into());
     }
     let highwater = crate::settings_path()
         .parent()
@@ -90,13 +88,9 @@ fn verify_metadata(bytes: &[u8], signature: &[u8]) -> Result<SignedMetadata, Str
         .join("update-highest.txt");
     if highwater.exists() {
         let saved = crate::limits::read(&highwater, 128).map_err(|e| e.to_string())?;
-        let text =
-            std::str::from_utf8(&saved).map_err(|_| "Ungültiger Update-Versionsspeicher.")?;
-        if version(text).ok_or("Ungültiger Update-Versionsspeicher.")? > latest {
-            return Err(
-                "Älteres signiertes Update abgelehnt; eine höhere Version ist bereits bekannt."
-                    .into(),
-            );
+        let text = std::str::from_utf8(&saved).map_err(|_| "Invalid update version store.")?;
+        if version(text).ok_or("Invalid update version store.")? > latest {
+            return Err("Older signed update rejected; a higher version is already known.".into());
         }
     }
     let mut names = std::collections::BTreeSet::new();
@@ -116,7 +110,7 @@ fn verify_metadata(bytes: &[u8], signature: &[u8]) -> Result<SignedMetadata, Str
                 .bytes()
                 .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
         {
-            return Err("Ungültiger signierter Paketeintrag.".into());
+            return Err("Invalid signed package entry.".into());
         }
     }
     Ok(signed)
@@ -125,7 +119,7 @@ fn verify_payload(path: &Path, entry: &SignedAsset) -> Result<(), String> {
     let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
     let metadata = file.metadata().map_err(|e| e.to_string())?;
     if !metadata.is_file() || metadata.len() != entry.size || metadata.len() > LIMIT {
-        return Err("Update-Paketgrösse wurde verändert.".into());
+        return Err("Update package size changed.".into());
     }
     let mut hash = Sha256::new();
     let mut bytes = [0u8; 65536];
@@ -137,12 +131,12 @@ fn verify_payload(path: &Path, entry: &SignedAsset) -> Result<(), String> {
         }
         total += n as u64;
         if total > entry.size {
-            return Err("Update-Paket wurde verändert.".into());
+            return Err("Update package changed.".into());
         }
         hash.update(&bytes[..n]);
     }
     if total != entry.size || format!("{:x}", hash.finalize()) != entry.sha256 {
-        return Err("Erneute Update-Integritätsprüfung fehlgeschlagen.".into());
+        return Err("Repeated update integrity check failed.".into());
     }
     Ok(())
 }
@@ -254,7 +248,7 @@ fn target() -> Result<(Kind, String), String> {
         } else if Path::new("/usr/bin/rpm").exists() {
             Kind::Rpm
         } else {
-            return Err("Kein unterstützter Paketmanager gefunden.".into());
+            return Err("No supported package manager found.".into());
         }
     } else {
         Kind::LinuxPortable
@@ -262,7 +256,7 @@ fn target() -> Result<(Kind, String), String> {
     let architecture = match arch {
         "x86_64" => "x64",
         "aarch64" => "arm64",
-        _ => return Err("Architektur wird nicht unterstützt.".into()),
+        _ => return Err("Architecture is not supported.".into()),
     };
     Ok((kind, architecture.into()))
 }
@@ -271,7 +265,7 @@ pub fn check() -> Result<Option<Release>, String> {
     let response = request(&agent(), API)?;
     let data: Response = serde_json::from_reader(response.into_reader().take(4 * 1024 * 1024))
         .map_err(|e| e.to_string())?;
-    let latest = version(&data.tag_name).ok_or("Ungültige Versionsnummer im GitHub-Release.")?;
+    let latest = version(&data.tag_name).ok_or("Invalid version number in GitHub release.")?;
     if data.draft || data.prerelease || latest <= version(env!("CARGO_PKG_VERSION")).unwrap() {
         return Ok(None);
     }
@@ -304,17 +298,17 @@ pub fn check() -> Result<Option<Release>, String> {
         .iter()
         .find(|a| a.name == name)
         .cloned()
-        .ok_or("Für diese Installation fehlt das Update-Paket im Release.")?;
+        .ok_or("Release is missing an update package for this installation.")?;
     let metadata_asset = data
         .assets
         .iter()
         .find(|a| a.name == "update-metadata.json")
-        .ok_or("Signierte Update-Metadaten fehlen.")?;
+        .ok_or("Signed update metadata is missing.")?;
     let signature_asset = data
         .assets
         .iter()
         .find(|a| a.name == "update-metadata.sig")
-        .ok_or("Update-Signatur fehlt.")?;
+        .ok_or("Update signature is missing.")?;
     for item in [&asset, metadata_asset, signature_asset] {
         let expected_url = format!("{DOWNLOADS}{}/{}", data.tag_name, item.name);
         if item.browser_download_url != expected_url {
@@ -325,15 +319,15 @@ pub fn check() -> Result<Option<Release>, String> {
     let signature = fetch_small(&signature_asset.browser_download_url, 256)?;
     let signed = verify_metadata(&metadata, &signature)?;
     if signed.tag != data.tag_name || version(&signed.version) != Some(latest) {
-        return Err("Signierte Version und Release stimmen nicht überein.".into());
+        return Err("Signed version and release do not match.".into());
     }
     let entry = signed
         .assets
         .iter()
         .find(|a| a.name == name)
-        .ok_or("Paket fehlt in signierten Metadaten.")?;
+        .ok_or("Package is missing from signed metadata.")?;
     if entry.size != asset.size {
-        return Err("Signierte Paketgrösse stimmt nicht überein.".into());
+        return Err("Signed package size mismatch.".into());
     }
     let expected = entry.sha256.clone();
     // Remember authenticated observations, so an older release cannot replace
@@ -344,12 +338,10 @@ pub fn check() -> Result<Option<Release>, String> {
         .join("update-highest.txt");
     if highwater.exists() {
         let saved = crate::limits::read(&highwater, 128).map_err(|e| e.to_string())?;
-        let saved =
-            std::str::from_utf8(&saved).map_err(|_| "Ungültiger Update-Versionsspeicher.")?;
-        if version(saved).ok_or("Ungültiger Update-Versionsspeicher.")? > latest {
+        let saved = std::str::from_utf8(&saved).map_err(|_| "Invalid update version store.")?;
+        if version(saved).ok_or("Invalid update version store.")? > latest {
             return Err(
-                "Ein neueres signiertes Update wurde bereits gesehen. Älteres Angebot abgelehnt."
-                    .into(),
+                "A newer signed update has already been seen. Older offer rejected.".into(),
             );
         }
     }
@@ -381,16 +373,16 @@ pub fn download(
         .assets
         .iter()
         .find(|a| a.name == release.asset.name)
-        .ok_or("Signiertes Paket fehlt.")?;
+        .ok_or("Signed package is missing.")?;
     if signed.tag != release.tag
         || entry.size != release.asset.size
         || entry.sha256 != release.expected
     {
-        return Err("Update-Metadaten wurden verändert.".into());
+        return Err("Update metadata changed.".into());
     }
     let expected = &entry.sha256;
     if release.asset.size == 0 || release.asset.size > LIMIT {
-        return Err("Update-Paket hat eine unerwartete Grösse.".into());
+        return Err("Update package has an unexpected size.".into());
     }
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -416,7 +408,7 @@ pub fn download(
         }
         count += n as u64;
         if count > LIMIT || count > release.asset.size {
-            return Err("Update-Download ist grösser als angekündigt.".into());
+            return Err("Update download is larger than advertised.".into());
         }
         hash.update(&buffer[..n]);
         file.write_all(&buffer[..n]).map_err(|e| e.to_string())?;
@@ -428,7 +420,7 @@ pub fn download(
     }
     file.sync_all().map_err(|e| e.to_string())?;
     if count != release.asset.size || format!("{:x}", hash.finalize()) != *expected {
-        return Err("Update-Prüfsumme stimmt nicht. Das Paket wird nicht installiert.".into());
+        return Err("Update checksum mismatch. The package will not be installed.".into());
     }
     Ok(Download {
         payload,
@@ -448,7 +440,7 @@ pub fn install(download: &Download, directory: &Path) -> Result<(), String> {
         .assets
         .iter()
         .find(|a| a.name == download.name)
-        .ok_or("Signiertes Paket fehlt.")?;
+        .ok_or("Signed package is missing.")?;
     verify_payload(&download.payload, entry)?;
     let expected = &entry.sha256;
     crate::diagnostics::event(
@@ -514,11 +506,11 @@ try {
             .parent()
             .and_then(Path::parent)
             .and_then(Path::parent)
-            .ok_or("App-Bundle nicht gefunden.")?;
+            .ok_or("App bundle not found.")?;
         if bundle.extension().is_none_or(|e| e != "app")
             || !bundle.join("Contents/Info.plist").is_file()
         {
-            return Err("Bitte EditorTool aus seinem App-Bundle starten.".into());
+            return Err("Start EditorTool from its app bundle.".into());
         }
         let work = download.payload.parent().unwrap();
         let mount = work.join("mounted");
@@ -547,7 +539,7 @@ try {
         fs::write(&helper,r#"set -eu
 payload=$1; destination=$2; editor_pid=$3; result=$4; mount=$5; install_command=$6; expected=$7
 exec >>"$result.log" 2>&1
-trap 'printf "error: Installation fehlgeschlagen; siehe Update-Protokoll.\n" > "$result"; /usr/bin/hdiutil detach "$mount" >/dev/null 2>&1 || true; /usr/bin/open "$destination" || true' EXIT
+trap 'printf "error: Installation failed; see the update log.\n" > "$result"; /usr/bin/hdiutil detach "$mount" >/dev/null 2>&1 || true; /usr/bin/open "$destination" || true' EXIT
 while kill -0 "$editor_pid" 2>/dev/null; do sleep 1; done
 actual=$(/usr/bin/shasum -a 256 "$payload"); actual=${actual%% *}
 [ "$actual" = "$expected" ] || exit 1
@@ -578,7 +570,7 @@ trap - EXIT
 payload=$1; destination=$2; editor_pid=$3; mode=$4; result=$5; expected=$6
 exec >>"$result.log" 2>&1
 failed() {
-  printf "error: Installation fehlgeschlagen; siehe Update-Protokoll.\n" > "$result"
+  printf "error: Installation failed; see the update log.\n" > "$result"
   case "$mode" in
     flatpak-user) /usr/bin/flatpak run --user com.github.OnlySecci.EditorTool >/dev/null 2>&1 & ;;
     flatpak-system) /usr/bin/flatpak run --system com.github.OnlySecci.EditorTool >/dev/null 2>&1 & ;;
@@ -660,7 +652,7 @@ esac
             .arg(expected);
         if flatpak {
             if !command.status().map_err(|e| e.to_string())?.success() {
-                return Err("Der Flatpak-Host konnte die Aktualisierung nicht starten.".into());
+                return Err("The Flatpak host could not start the update.".into());
             }
         } else {
             command.spawn().map_err(|e| e.to_string())?;
@@ -677,11 +669,13 @@ pub fn previous_error(directory: &Path) -> Option<String> {
     }
     if text.starts_with("pending") {
         let _ = fs::remove_file(path);
-        return Some("Ein vorheriges Update wurde unterbrochen. Du kannst über Hilfe → Nach Updates suchen erneut aktualisieren.".into());
+        return Some(
+            "A previous update was interrupted. Try again using Help → Check for updates.".into(),
+        );
     }
     let _ = fs::remove_file(path);
     Some(format!(
-        "{}\nProtokoll: {}",
+        "{}\nLog: {}",
         text,
         directory.join("last-result.txt.log").display()
     ))

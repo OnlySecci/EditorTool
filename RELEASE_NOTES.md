@@ -1,33 +1,23 @@
-# EditorTool V1.5.1
+# EditorTool V1.5.2
 
-## Windows: lange Pfade und Speicherdiagnose
+## English project documentation
 
-- Windows-Aufrufe für Zugriffsrechte und atomare Dateiersetzung verwenden normalisierte absolute Langpfade. Temporäre Dateien haben kurze, vom Dokumentnamen unabhängige Namen. Damit scheitert die Dateihistorie nicht mehr an einem intern erzeugten Pfad über der klassischen Windows-Pfadgrenze (Fehler 123).
-- Diagnosemeldungen unterscheiden das Lesen der Datei, das Sichern der Historie, das Schreiben des Dokuments und das Setzen privater Zugriffsrechte. Logs enthalten Arbeitsschritt, Fehlerkategorie, Betriebssystem-Fehlernummer und Pfadlänge, keine Dokumentinhalte oder vollständigen privaten Dateipfade.
-- Falls automatisches Speichern in V1.5.0 wegen des Fehlers pausiert wurde: nach dem Update beim betroffenen Dokument im Sync-Dialog „Sync-Änderungen in meine lokale Datei speichern“ wieder aktivieren. Bereits bewusst deaktiviertes Autosave wird nicht ungefragt eingeschaltet.
+The repository description, documentation, source wording and release notes are maintained in English. Historical release descriptions have been translated without changing their tags, packages or signatures. The README has a centred title, logo and badges, a concise project introduction, download/support/contribution links, feature overview, screenshot and platform build instructions. Historical changes remain in the changelog and release pages.
 
-## Netzwerkadapter für Senden und Sync
+## Interface languages
 
-- Unter **Einstellungen → Clients und Sync** die automatische Auswahl ausschalten und gewünschte lokale IPs anhaken. LAN, WireGuard und andere vom Betriebssystem bereitgestellte VPN-Adapter erscheinen mit Namen, IP und verfügbarer MAC-Adresse; virtuelle Adapter besitzen nicht immer eine MAC.
-- Mehrere IPs sind wählbar. Empfangs-Ports binden nur an die gewählten Adressen; ausgehende Verbindungen werden an gewählte Quell-IP und Schnittstelle gebunden. Bei nicht verfügbarer Auswahl erfolgt kein stiller Rückfall auf andere Adapter. Die Funktion erstellt weder VPN-Tunnel noch Firewall-Regeln; das Betriebssystem muss eine passende Route besitzen.
-- Bei nicht verfügbarem VPN bleibt die Konfiguration erreichbar und Senden/Sync pausiert. Adapter lassen sich manuell neu einlesen. Im Modus „Automatisch“ gelten wie bisher das Betriebssystem-Routing und die privaten Netzbeschränkungen.
+Settings → General → Interface language offers English, German, French, Italian, Spanish, Portuguese, Dutch, Polish, Turkish and Ukrainian. The choice is saved for all windows. Restart EditorTool to apply it; changing the preference does not close documents or restart the app automatically. Existing settings without a language preference default to English.
 
-## Clients, Status und Hinweise
+The initial catalogs cover menus and common editing, file, search, comparison, sharing and settings controls. Detailed technical messages and untranslated text fall back to English; this is not a claim of complete translation of every message. Catalogs are embedded and require no translation service or network requests. Document text, filenames, paths, client names, keys, protocol identifiers and syntax-language choices are not translated. Release notes remain in English regardless of UI language.
 
-- Einen Client auswählen, Name/IP/Port bearbeiten und **Änderungen speichern** wählen. Zertifikat, Fingerabdruck und bestehende Freigabe bleiben erhalten. Ein Gerät mit anderem Schlüssel muss weiterhin ausdrücklich freigegeben werden. Manuell gepflegte Namen und Endpunkte werden nicht von empfangenen Hello-Nachrichten überschrieben; automatisch entdeckte Geräte können ihren tatsächlichen Port weiterhin mitteilen.
-- Beidseitige Gerätefreigabe bleibt erforderlich: Jede Seite entscheidet, welchem Gerät sie vertraut. Dokumentanfragen bleiben eine zusätzliche Zustimmung.
-- **Connected** wird grün, **Not connected** rot dargestellt, auch bei der Auswahl von Send-/Sync-Empfängern.
-- Nach einer Prüfrunde folgen normalerweise 10 Sekunden Pause, bei ausstehenden Sendungen 1 Sekunde. Verbindungsversuche und Übertragungen verlängern die Runde; dies ist kein garantiertes Zehn-Sekunden-Erkennungsintervall. Die letzte Prüfung wird angezeigt. **Verbindung prüfen** startet manuell eine Runde und prüft ausstehende Freigaben erneut.
-- Beim Wechsel eines zuvor verbundenen Geräts zu nicht verbunden erscheint unten rechts im Editor ein nicht blockierender Hinweis. Mit **X** quittieren; Hinweise bleiben bis dahin sichtbar. Keine System-Popups und kein Fokuswechsel. Der Status beschreibt den letzten vollständigen Abgleich, keine dauerhaft offene TCP-Verbindung.
+Translated menus use the same paths for custom shortcut lookup, and translation text cannot introduce unexpected submenu separators. The native Rust/FLTK architecture and event-driven idle behaviour remain in place.
 
-## Kommunikationsprotokoll
+## Packages and validation
 
-- **Log…** im Send-/Sync-Dialog oder **Kommunikationsprotokoll…** in den Client-Einstellungen öffnet einen Tab. Gerätefilter, Richtung und Textsuche grenzen die Einträge ein; die gefilterte Ansicht kann exportiert werden.
-- Angezeigt werden TCP-/TLS-Verbindungsereignisse, Protokolltypen wie Hello, Offer, Get/Put, Annahmen/Ablehnungen, Übertragungsgrössen und Fehlerkategorien. Bytezahlen sind Anwendungsdaten, kein vollständiger Paketmitschnitt. Inhalte, Bilder und Schlüssel werden nicht aufgezeichnet.
-- Dieses lokale Protokoll enthält zur Diagnose IP-Adressen und Geräte-Fingerabdrücke. Es wird getrennt vom allgemeinen Diagnoseexport gespeichert: höchstens 1500 Einträge im Viewer, zwei begrenzte Dateien unter `traffic`. Kein automatischer Upload.
+All 16 platform packages: Windows setup EXE/portable ZIP; Linux Flatpak/RPM/DEB/portable TAR.GZ; macOS DMG/app ZIP; each for x64 and ARM64. Also included: SHA256SUMS.txt, update-metadata.json and update-metadata.sig, using the existing V1.5.0 Ed25519 trust key.
 
-## Pakete und Validierung
+Source review, native release builds and packaging only. No automated, interactive or installation tests and no app launches, as requested. No Windows/Apple developer certificates; macOS bundles are ad-hoc signed and not notarised. The Unlicense applies to original code; dependency licences remain unchanged.
 
-Windows Setup-EXE und portables ZIP; Linux Flatpak, RPM, DEB und portables TAR.GZ; macOS DMG und App-ZIP. Jeweils x64 und ARM64. Dazu SHA256SUMS.txt, update-metadata.json und update-metadata.sig mit derselben Ed25519-Vertrauensbasis wie V1.5.0.
+## Scope
 
-Auf Wunsch nur Codeprüfung, native Release-Builds und Paketierung: keine automatisierten, interaktiven oder Installationstests und kein App-Start. Keine Windows-/Apple-Entwicklerzertifikate; macOS ad-hoc signiert, ohne Notarisierung. The Unlicense für eigenen Code, Drittanbieter-Lizenzen bleiben erhalten.
+V1.5.1's long-path fixes, interface selection and network diagnostics remain included. Transport remains TLS over TCP. UDP/QUIC preference with protected TCP fallback and further device-key security review are planned for V1.5.3 and are not part of this release.

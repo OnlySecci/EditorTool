@@ -12,16 +12,16 @@ fn items(page: u8, settings: bool, index: usize) -> Vec<Item> {
     if settings {
         return vec![
             Section("TAB"),
-            Action("Tab schliessen", "Strg/Cmd+W", crate::Action::CloseTab),
-            Action("Andere Tabs schliessen", "", crate::Action::CloseOtherTabs),
-            Action("Alle Tabs schliessen", "", crate::Action::CloseAllTabs),
+            Action("Close tab", "Ctrl/Cmd+W", crate::Action::CloseTab),
+            Action("Close other tabs", "", crate::Action::CloseOtherTabs),
+            Action("Close all tabs", "", crate::Action::CloseAllTabs),
         ];
     }
     match page {
         1 => vec![
-            Page("Zurück", 0),
-            Section("SPRACHE"),
-            Action("Automatisch erkennen", "", crate::Action::SetLanguage(None)),
+            Page("Back", 0),
+            Section("LANGUAGE"),
+            Action("Detect automatically", "", crate::Action::SetLanguage(None)),
         ]
         .into_iter()
         .chain(
@@ -44,35 +44,31 @@ fn items(page: u8, settings: bool, index: usize) -> Vec<Item> {
         )
         .collect(),
         2 => vec![
-            Page("Zurück", 0),
+            Page("Back", 0),
             Section("SPLIT VIEW"),
-            Action("Nebeneinander", "", crate::Action::Split(false)),
-            Action("Übereinander", "", crate::Action::Split(true)),
-            Action("Split zusammenführen", "", crate::Action::MergeSplit),
-            Action(
-                "In andere Ansicht verschieben",
-                "",
-                crate::Action::MoveTab(index),
-            ),
-            Action("Als zwei Fenster weiterführen", "", crate::Action::EndSplit),
+            Action("Side by side", "", crate::Action::Split(false)),
+            Action("Stacked", "", crate::Action::Split(true)),
+            Action("Merge split", "", crate::Action::MergeSplit),
+            Action("Move to other view", "", crate::Action::MoveTab(index)),
+            Action("Continue as two windows", "", crate::Action::EndSplit),
         ],
         _ => vec![
-            Section("DATEI"),
-            Action("Speichern", "Strg/Cmd+S", crate::Action::Save(false)),
-            Action("Speichern unter…", "", crate::Action::Save(true)),
-            Action("Dateipfad kopieren", "", crate::Action::CopyPath),
-            Action("Ältere Dateistände…", "", crate::Action::FileHistory),
-            Action("Im Dateimanager anzeigen", "", crate::Action::RevealFile),
-            Page("Sprache", 1),
-            Section("SENDEN UND SYNC"),
-            Action("Senden an Client…", "", crate::Action::Transfer(false)),
-            Action("Synchronisieren…", "", crate::Action::Transfer(true)),
-            Action("Versionen / Konflikte…", "", crate::Action::ShowConflicts),
+            Section("FILE"),
+            Action("Save", "Ctrl/Cmd+S", crate::Action::Save(false)),
+            Action("Save as…", "", crate::Action::Save(true)),
+            Action("Copy file path", "", crate::Action::CopyPath),
+            Action("Older file versions…", "", crate::Action::FileHistory),
+            Action("Reveal in file manager", "", crate::Action::RevealFile),
+            Page("Language", 1),
+            Section("SEND AND SYNC"),
+            Action("Send to client…", "", crate::Action::Transfer(false)),
+            Action("Synchronise…", "", crate::Action::Transfer(true)),
+            Action("Versions / Conflicts…", "", crate::Action::ShowConflicts),
             Page("Split View", 2),
             Section("TABS"),
-            Action("Tab schliessen", "Strg/Cmd+W", crate::Action::CloseTab),
-            Action("Andere Tabs schliessen", "", crate::Action::CloseOtherTabs),
-            Action("Alle Tabs schliessen", "", crate::Action::CloseAllTabs),
+            Action("Close tab", "Ctrl/Cmd+W", crate::Action::CloseTab),
+            Action("Close other tabs", "", crate::Action::CloseOtherTabs),
+            Action("Close all tabs", "", crate::Action::CloseAllTabs),
         ],
     }
 }
@@ -110,7 +106,8 @@ pub fn popup(owner: &Window, index: usize, settings: bool, x: i32, y: i32) -> Op
         let mut buttons = vec![];
         for (i, item) in entries.iter().enumerate() {
             if let Item::Section(label) = item {
-                let mut heading = Frame::new(14, row_y, width - 28, 24, Some(*label));
+                let mut heading =
+                    Frame::new(14, row_y, width - 28, 24, Some(crate::i18n::tr(label)));
                 heading.set_label_color(MUTED);
                 heading.set_label_size(10);
                 heading.set_align(Align::Left | Align::Inside);
@@ -142,7 +139,7 @@ pub fn popup(owner: &Window, index: usize, settings: bool, x: i32, y: i32) -> Op
                 draw::set_font(Font::Helvetica, 13);
                 draw::set_draw_color(if active { Color::White } else { FG });
                 draw::draw_text2(
-                    label,
+                    crate::i18n::tr(label),
                     b.x() + 12,
                     b.y(),
                     b.w() - 112,

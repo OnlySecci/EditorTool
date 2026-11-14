@@ -142,6 +142,8 @@ pub fn failure(error: &str) {
             "error: refused"
         } else if text.contains("certificate")
             || text.contains("freigegeben")
+            || text.contains("approved")
+            || text.contains("shared")
             || text.contains("cert")
             || text.contains("tls")
         {

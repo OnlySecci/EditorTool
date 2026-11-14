@@ -1,184 +1,168 @@
-# EditorTool
+<h1 align="center">EditorTool</h1>
+<h3 align="center">A lightweight native editor for text, code and images</h3>
 
-Ein schlanker nativer Rust-Editor für **Text, Code und Bilder** — für Windows, Linux und macOS, jeweils **x64 und ARM64**.
+---
 
-[Downloads](https://github.com/OnlySecci/EditorTool/releases) · [Release Notes](RELEASE_NOTES.md) · [Changelog](CHANGELOG.md) · [Entwicklung](CONTRIBUTING.md)
+<p align="center">
+  <img src="assets/editortool.png" width="96" height="96" alt="EditorTool logo" />
+  <br/><br/>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/OnlySecci/EditorTool" alt="License: The Unlicense" /></a>
+  <a href="https://github.com/OnlySecci/EditorTool/releases/latest"><img src="https://img.shields.io/github/v/release/OnlySecci/EditorTool" alt="Latest release" /></a>
+  <a href="https://github.com/OnlySecci/EditorTool/actions/workflows/build-release.yml"><img src="https://github.com/OnlySecci/EditorTool/actions/workflows/build-release.yml/badge.svg" alt="Native builds and packages" /></a>
+  <br/>
+  <a href="https://github.com/OnlySecci/EditorTool/issues"><img src="https://img.shields.io/badge/feedback-issues-0a84ff" alt="Report an issue or suggest a feature" /></a>
+  <a href="https://github.com/OnlySecci/EditorTool/releases.atom"><img src="https://img.shields.io/badge/RSS-releases-ffa500?logo=rss" alt="Release RSS feed" /></a>
+</p>
 
-![EditorTool mit kompakter dunkler Oberfläche und vertikalen Tabs](docs/images/editor-main.png)
+---
 
-*Hauptansicht aus V1.0 — vom Projektinhaber bereitgestellte Aufnahme.*
+EditorTool is a native desktop editor that brings plain text, source code and inline images into one workspace. It runs on Windows, Linux and macOS, with x64 and ARM64 packages for every platform. Built in Rust with FLTK, it uses no embedded browser runtime and waits for operating-system events while idle.
 
-## Neu in V1.5.1
+Keep several documents open in tabs, compare text side by side, or split the workspace into independent views. Paste text without carrying over fonts, colours or rich-text formatting. Add images when you need them, and share selected documents with devices on your local network or VPN.
 
-Windows-Langpfade werden auch bei Dateihistorie und Zugriffsrechten korrekt behandelt. Speicherfehler protokollieren jetzt Arbeitsschritt, OS-Fehlernummer und Pfadlänge, ohne Dokumentinhalte oder private Dateipfade zu speichern.
+EditorTool is free software released under [The Unlicense](LICENSE). No account or cloud service is required. Documentation and development discussions are maintained in English; the application's interface can be selected separately.
 
-Unter **Clients und Sync** können lokale LAN-/VPN-Adressen mit IP-/MAC-Anzeige angehakt werden. Die automatische Auswahl bleibt voreingestellt. Bestehende Clients lassen sich bearbeiten, ohne ihre Schlüsselfreigabe zu verlieren. **Connected** erscheint grün, **Not connected** rot; ein Verbindungsverlust erzeugt einen schliessbaren Hinweis im Editor. Letzte Prüfung und Prüfintervall sind sichtbar.
+**Get started**<br/>
+Download a package from [Releases](https://github.com/OnlySecci/EditorTool/releases/latest), follow the [installation instructions](#installation), or [build from source](#development).
 
-Der **Log…**-Button öffnet ein filterbares Kommunikationsprotokoll als Tab. Es enthält Geräte-/IP-Metadaten und Nachrichtentypen, keine Dokumentinhalte oder Schlüssel. Ein Export erfolgt nur auf ausdrücklichen Klick. Ausführliche Bedienung und Grenzen: [Release Notes](RELEASE_NOTES.md).
+**Report a problem**<br/>
+Open a [GitHub issue](https://github.com/OnlySecci/EditorTool/issues). Include your operating system, architecture, app version and the steps that led to the problem. You can export a diagnostic log from the Help menu; review it before uploading.
 
-## Neu in V1.5.0
+**Contribute**<br/>
+Read the [contribution guide](CONTRIBUTING.md). Improvements to code, documentation and packaging are welcome.
 
-- Updates verwenden Ed25519-signierte Metadaten mit einem fest eingebauten öffentlichen Schlüssel. Version, Paketname, Länge, SHA-256 und Ablaufdatum (180 Tage) werden geprüft; vor Installation erfolgt eine erneute Integritätsprüfung. Bereits bekannte höhere Versionen sperren ältere Angebote. Kein Rückfall auf unsignierte Prüfsummen. Der private Schlüssel liegt im Repository-Actions-Secret; die Workflows gehören deshalb zur Vertrauensgrenze. [Schlüsselverwaltung](docs/update-signing.md).
-- Dateien sind vor dem Einlesen auf 64 MiB begrenzt. Bilder: 32 MiB komprimiert, 40 Megapixel insgesamt je Dokument, 32768 Pixel je Seite und höchstens 64 Bilder. Auch empfangene Dokumente und Bild-Zwischenablagen werden vor weiteren Kopien und Decodierung geprüft. Die vom Betriebssystem bereits bereitgestellte Zwischenablage kann vorher ausserhalb der App decodiert worden sein.
-- Lokale Sitzung, Instanzdaten und Freigabespeicher erhalten restriktive Rechte; Instanz-Tokens stammen aus der kryptografischen Zufallsquelle. Sync-Verbindungen haben ein Gesamtzeitlimit von 45 Sekunden, höchstens zwei eingehende Übertragungen insgesamt und eine je Gegenstelle sowie 240 Verbindungsversuche je Minute und IP.
-- **Einstellungen → Speicher und Bereinigung** öffnet eine Einstellungsseite als Tab, zeigt die belegte Grösse und erlaubt getrenntes Entfernen verwaister Tabs, älterer Dateistände und Update-Dateien. Aktuelle und vorige Sitzung, geschlossene Fenster, Geräteidentität und Sync-Versionen bleiben erhalten. Löschen ist endgültig; es ist kein physisches Überschreiben von SSD-/Dateisystemdaten.
-- **Datei → Ältere Dateistände** öffnet eine lokale Sicherung als neuen Tab. Vor jedem manuellen oder automatischen Überschreiben wird der vorige Dateiinhalt gesichert (höchstens zehn Stände bzw. 256 MiB je Dateipfad). Externe Änderungen ohne anschliessendes Speichern und umbenannte/verschobene Dateien haben keinen automatisch durchgehenden Verlauf. Versionen liegen unverschlüsselt im Einstellungsordner unter `history`.
-- **Einstellungen → Freigaben und Berechtigungen** zeigt als Tab den Verbindungsschutz, lokale Datenrechte, Geräte, Fingerabdrücke, Sync-Teilnehmer und ausstehende Sendungen. Geräte- und Dokumentzustimmung bleiben getrennt; zum Beenden eines Syncs den Dokument-Tab auswählen. Entfernte Kopien werden dadurch nicht gelöscht.
-- Flatpak nutzt das Dateiauswahl-Portal für Öffnen, Speichern, Bildeinfügen und Diagnoseexport. Die pauschale Home-Freigabe entfällt. Bereits im Cache gespeicherte Pfade müssen gegebenenfalls erneut über das Portal ausgewählt werden. Der Host-Aufruf bleibt für native Flatpak-Updates erforderlich; Netzwerk, X11 und Tray bleiben wie bisher freigegeben.
+**Suggest an improvement**<br/>
+Describe the workflow and expected behaviour in a [feature request](https://github.com/OnlySecci/EditorTool/issues/new).
 
-Auf Wunsch ausschliesslich Codeprüfung, Release-Builds und Packaging, ohne automatisierte, interaktive oder Installationstests und ohne App-Start. GitHub Actions erstellt alle sechs Plattform-/Architektur-Kombinationen. Signierte Update-Metadaten ersetzen keine Windows-/Apple-Entwicklerzertifikate.
+---
 
-## Neu in V1.4.9
+![EditorTool with a dark interface and vertical document tabs](docs/images/editor-main.png)
 
-Geschlossene zusätzliche Fenster bleiben beim Neustart geschlossen und können über **Datei → Geschlossenes Fenster wiederherstellen** gezielt zurückgeholt werden. Das letzte Hauptfenster bleibt die Startsitzung. Systemweite Flatpak-Updates fragen Administratorrechte über Polkit ab.
+*Owner-provided screenshot from V1.0. Later versions include additional features and interface changes.*
 
-**Hilfe → Diagnoseprotokoll exportieren** erstellt eine lokale Log-Datei für Problemmeldungen ohne automatischen Upload. Technische Ereignisse enthalten keine Dokumentinhalte, Zwischenablage oder Schlüssel. Logs liegen grössenbegrenzt im Einstellungsordner unter `logs`.
+## EditorTool Desktop
 
-Gespeicherte Dateien zeigen ihren Pfad oberhalb des Textfelds. Das Tab-Menü bietet **Dateipfad kopieren** und **Im Dateimanager anzeigen**. **Rückgängig / Wiederholen** sind unter Bearbeiten und als anpassbare Tastenkürzel verfügbar: Windows/Linux **Strg+Z / Strg+Y**, macOS **Cmd+Z / Cmd+Shift+Z**.
+This repository contains the native desktop application, packaging scripts and release workflows. Each release provides Windows installers and portable archives, Linux Flatpak/DEB/RPM/portable packages, and macOS DMG/ZIP packages for both supported architectures.
 
-## Neu in V1.4.8
+### Features
 
-Die Menüleiste ist jetzt **Einstellungen, Datei, Bearbeiten, Ansicht, Hilfe**. Unter **Einstellungen → Tastenkürzel** lassen sich Befehle aufnehmen, zuweisen, entfernen und auf Standard zurücksetzen. Doppelte Kombinationen werden angezeigt. **Für alle Fenster übernehmen** speichert die Belegung lokal in `shortcuts.json` und aktualisiert die Menüs.
+- Multiple windows and tabs, horizontal or resizable vertical tab lists, and side-by-side or stacked split views.
+- Plain-text clipboard handling, optional line wrapping, syntax colours, line numbers and selection statistics.
+- Find and replace, undo and redo, text comparison, zoom and custom keyboard shortcuts.
+- Text and inline images in `.etdoc` documents; ordinary UTF-8 files for plain text and code. Resize images using their corner handles.
+- Session recovery for open tabs, unsaved content, images and cursor positions, plus local history before files are overwritten.
+- Explicitly approved document sending and synchronisation over private networks and VPNs, with conflict handling and a five-second writing pause before publishing local changes.
+- LAN/VPN interface selection, editable clients, connection status and filterable communication logs.
+- In-app updates using signed package metadata, storage cleanup and a permissions overview.
 
-Vergleich hat eine gestaltete Kopfzeile mit **Stopp** und **X**. Stopp beendet die Markierung/Berechnung; X blendet die rechte Ansicht aus. Die Texte bleiben erhalten. **Split View → Zusammenführen** verschiebt die Tabs beider Seiten zurück in eine gemeinsame Liste; **Als zwei Fenster weiterführen** bleibt separat verfügbar.
-
-Unter Linux stimmen Fensterkennung und Desktop-Launcher überein, damit die Taskleiste den Editor zuordnen und anheften kann. Portable Versionen erzeugen bei Bedarf einen Benutzer-Launcher. Nach dem Update den Editor neu starten und einen alten Taskleisten-Eintrag gegebenenfalls durch den neuen ersetzen. Details stehen in den [Release Notes](RELEASE_NOTES.md).
-
-## Neu in V1.4.5
-
-Sync-Änderungen verwenden vorhandene Bild- und Textansichten weiter und erhalten die sichtbare Scrollposition. Eine feste Umbruchbreite verhindert vorübergehende Layout-Sprünge bei gemischten Dokumenten. Neue oder entfernte Bilder werden ohne Zwischenansicht übernommen.
-
-Synchronisierte Dokumente zeigen unten einen **Countdown der fünf Sekunden Schreibpause**. Anschliessend stehen dort Freigabe-/Abgleichstatus, Offline-Warten, Pause, Konflikte oder die Bestätigung der aktuellen Revision durch die aktiven Clients. Der Countdown zeigt die lokale Schreibpause; die anschliessende Übertragung kann länger dauern. Ein Sekunden-Timer läuft nur während einer sichtbaren Schreibpause.
-
-Das **Tab-Kontextmenü** verwendet abgerundete Zeilen, Akzentfarbe, Gruppen und eigene Unterseiten für Sprache und Split View. Maus und Pfeiltasten wählen, Enter bestätigt, Escape oder ein Klick ausserhalb schliesst. Details stehen in den [Release Notes](RELEASE_NOTES.md).
-
-## Neu in V1.4.1
-
-**Einstellungen** steht neben **Bearbeiten** und öffnet **Allgemein** beziehungsweise **Clients und Sync** als Tabs in der Datei-Liste. Client-Name, IP-Adresse und Ports sind sichtbar beschriftet; Freigaben verwenden die Gestaltung der App. Der Textcursor blinkt. **Ansicht → Zoom**, **Strg/Cmd + Plus/Minus/0** und **Strg/Cmd + Mausrad** zoomen Textansichten zwischen 50 und 300 %. Zoom bleibt im Sitzungscache gespeichert. Bildabstände werden anhand der nativen Schriftmetriken berechnet, auch auf macOS.
-
-Senden und Sync verwenden jetzt verpflichtend **TLS 1.3 + AES-256-GCM** mit hybridem Schlüsselaustausch **X25519 + ML-KEM-768**. Die Einstellungen zeigen den Schutz an. Gerätesignaturen und Fingerabdruckfreigaben bleiben klassisch; die Hybridtechnik schützt den Schlüsselaustausch. **Alle beteiligten Geräte benötigen V1.4.1 oder neuer**, da kein stiller Rückfall auf klassische Verbindungen erlaubt ist. Geräteidentitäten und lokale Daten bleiben erhalten. [Technische Hintergründe bei Rustls](https://rustls.dev/docs/rustls/manual/_05_defaults/index.html).
-
-**Sync beenden** benachrichtigt die anderen Teilnehmer und beendet dort die Verbindung für diesen Client und dieses Dokument. Bei Gruppen bleiben die übrigen Teilnehmer verbunden. Offline-Abmeldungen werden nachgeholt, lokale Kopien bleiben erhalten. Alle Änderungen stehen in den [Release Notes](RELEASE_NOTES.md).
-
-## Neu in V1.4: Senden und Sync
-
-Unter **Einstellungen → Clients, Senden und Sync** interne IP-Adresse und Port anderer Geräte hinzufügen. Standard ist **TCP 51473**; der eigene Port und Client-Ports sind änderbar. Erst **Senden und Sync aktivieren** öffnet den Freigabe-Port. Verschlüsseltes gegenseitiges TLS mit beidseitig bestätigten Fingerabdrücken schützt die Verbindung. **Connected / Not connected** zeigt die Erreichbarkeit. Interne geroutete Netze und VPN sind möglich; öffentliche IP-Adressen werden abgelehnt. Firewalls müssen den gewählten TCP-Port erlauben. EditorTool ändert keine Firewall-Regeln.
-
-Über das **Tab-Kontextmenü** eine Datei an genau einen Client senden oder mit mehreren Clients synchronisieren. Jeder Empfänger nimmt die Anfrage selbst an oder lehnt sie ab. Text, Code und Bilder werden zusammen übertragen; lokale Pfade und rechte Vergleichstexte bleiben lokal. Änderungen werden nach **fünf Sekunden Schreibpause** bereitgestellt und im Hintergrund abgeglichen. Bei erneuter Erreichbarkeit werden Versionen nachgeholt. Versionszähler pro Gerät und Inhaltsprüfsummen erkennen konkurrierende Änderungen ohne Abhängigkeit von PC-Uhrzeiten. **Sync-Versionen / Konflikte** bietet Vorschau und manuelle Versionsauswahl; abweichende Inhalte bleiben im lokalen Versionsspeicher erhalten.
-
-**Automatisch in lokale Datei speichern** ist pro Dokument wählbar. Externe Dateiänderungen pausieren das automatische Speichern; bestehende Dateien werden dann nicht überschrieben. **Beim Schliessen im Tray weiterlaufen** ist separat wählbar, standardmässig aus. Ohne Linux-System-Tray bleibt das Fenster geöffnet; GNOME benötigt eventuell eine StatusNotifier-/AppIndicator-Erweiterung. Es gibt keinen installierten Systemdienst und keine Cloud.
-
-Maximal 64 MiB je Dokument und 32 Geräte je Sync-Gruppe. Geänderte Teilnehmerlisten starten eine neue Gruppe mit neuen Freigaben. Im lokalen `sharing`-Ordner liegen Geräteidentität, Anfragen und Inhaltsversionen unverschlüsselt auf der Festplatte; historische Inhalte werden nicht automatisch gelöscht. Details und Einrichtung stehen in den [Release Notes](RELEASE_NOTES.md).
-
-## Neu in V1.3: Bilder und Split View
-
-Bilder anklicken und an einer Ecke proportional kleiner oder grösser ziehen. Standardmässig werden neu eingefügte Bilder auf höchstens 50 % der Textfeldbreite verkleinert; unter Einstellungen lässt sich dies abschalten. Die Anzeigegrösse wird gespeichert, die Originalbilddaten bleiben erhalten. Per Rechtsklick lassen sich Bilder an das Textfeld anpassen oder entfernen.
-
-Rechtsklick auf einen Dokument-Tab öffnet Speichern, Speichern unter, Sprache, Dateipfad und Tab-Aktionen. Unter **Ansicht → Split View** lassen sich zwei unabhängige Ansichten **nebeneinander oder übereinander** öffnen. Jede hat ihre eigene Datei-/Tab-Liste; den Trenner kann man ziehen. Über das Tab-Menü lassen sich Dateien auf die andere Seite verschieben. **Als zwei Fenster weiterführen** löst die Teilung auf, ohne Dokumente oder Undo-Verläufe zu verwerfen. Die Sitzung speichert beide Ansichten und ihre Anordnung.
-
-## Neu in V1.2: Updates
-
-Unter **Hilfe → Nach Updates suchen** werden neue stabile GitHub-Versionen und deren Release Notes angezeigt. **Jetzt aktualisieren** lädt das passende Paket, prüft SHA-256, sichert die Sitzung und startet Installation und App-Neustart. In den Einstellungen: Startprüfung an/aus, automatische Installation an/aus. Standard: Startprüfung an, automatische Installation aus. Die manuelle Prüfung funktioniert unabhängig davon.
-
-V1.2 einmal manuell installieren; danach lassen sich zukünftige Versionen aus der App aktualisieren. Windows unterstützt Setup und portable Installationen, Linux RPM/DEB/Flatpak und portable Programmdateien, macOS das App-Bundle. Systempakete oder geschützte App-Ordner können eine Berechtigungsabfrage des Betriebssystems auslösen. Flatpak erlaubt Netzwerkzugriff und einen Host-Aufruf für die Paketinstallation. Es wird nur beim Start beziehungsweise auf Wunsch geprüft; die Update-Suche hat keinen ständig laufenden Dienst. Der optionale Tray-Modus gehört zur internen Dokumentfreigabe.
-
-Update-Pakete und Protokolle liegen unter `updates` im Einstellungsordner. macOS behält eine versteckte Sicherung des bisherigen App-Bundles im gleichen Ordner. Bei einem Fehler wird die bisherige App nach Möglichkeit erneut geöffnet; beim nächsten Start erscheint ein Hinweis. Bis V1.4.9 ersetzen Prüfsummen keine Herausgebersignatur. Ab V1.5.0 werden zusätzliche unabhängig signierte Update-Metadaten verlangt.
-
-## Neu in V1.1
-
-Zeilenumbruch, Farbschema (Dunkel/Hell/Graphit), Akzentfarbe und Textgrösse lassen sich in den Einstellungen ändern. **Datei → Alle Tabs schliessen** schliesst nach Speicherrückfragen alle Tabs des Fensters. Bilder lassen sich seit V1.3 direkt an ihren Ecken verkleinern und vergrössern; per Rechtsklick Bildaktionen öffnen. Die Bildgrösse bleibt im Dokument und im Sitzungscache erhalten. Nach dem Einfügen bleibt das Bild sichtbar.
-
-## Funktionen
-
-- Mehrere Fenster und Tabs; Tab-Leiste oben oder links. Die vertikale Leiste lässt sich am Trennstrich verbreitern. Ihre Breite bleibt gespeichert.
-- Gespeicherte Tabs heißen wie die Datei. Ungespeicherte Tabs verwenden die ersten sechs Wörter; leere Tabs heißen „Text 1“, „Text 2“ usw.
-- Text und Bilder untereinander. Bilder über **Bearbeiten → Bild einfügen**, **Strg/Cmd+Umschalt+I** oder die Bild-Zwischenablage einfügen.
-- Text und eingebettete Bilder gemeinsam als `.etdoc` speichern. Reine Text- und Code-Dateien bleiben normale UTF-8-Dateien.
-- Formatfreies Einfügen und Kopieren von Text; fremde Schriftarten, Farben und HTML-/RTF-Stile werden entfernt.
-- Zeilennummern und Statusleiste für Cursor, Zeilen, Zeichen, UTF-8-Bytes, Bilder und Auswahl.
-- Kompakte, leicht transparente Suche mit aufklappbarem Ersetzen, einzelnen Treffern und „Alle ersetzen“.
-- Textvergleich nebeneinander und lexikalische Syntaxfarben, unter anderem für Python, PowerShell, Rust, JavaScript/TypeScript und JSON.
-- Automatische Sitzungswiederherstellung für Fenster, Tabs, ungespeicherte Texte, Bilder, Vergleichstexte und Cursorpositionen.
-
-<details><summary>Suchansicht aus der Entwicklung</summary>
-
-![Suchfenster – ältere Entwicklungsaufnahme](docs/images/search-development.png)
-
-Diese bereitgestellte Aufnahme zeigt die Suche vor ihrer Verkleinerung. V1.0 verwendet ein kompakteres Fenster mit 95 % Deckkraft.
-
-</details>
+See the [release notes](RELEASE_NOTES.md) and [changelog](CHANGELOG.md) for version-specific changes and limitations.
 
 ## Installation
 
-Downloads unter [Releases](https://github.com/OnlySecci/EditorTool/releases). Das Repository und die Downloads sind **öffentlich** zugänglich.
+Download the package matching your operating system and processor from [the latest release](https://github.com/OnlySecci/EditorTool/releases/latest).
 
-| System | Pakete für x64 und ARM64 |
+| Platform | x64 and ARM64 packages |
 | --- | --- |
-| Windows | Setup-EXE und portables ZIP |
-| Fedora / Nobara | RPM oder Flatpak |
-| Ubuntu / Debian | DEB oder Flatpak |
-| Weitere Linux-Distributionen | Flatpak oder portables TAR.GZ |
-| macOS Intel / Apple Silicon | DMG oder ZIP mit App-Bundle |
+| Windows | Setup EXE or portable ZIP |
+| Fedora / Nobara | RPM or Flatpak |
+| Ubuntu / Debian | DEB or Flatpak |
+| Other Linux distributions | Flatpak or portable TAR.GZ |
+| macOS | DMG or ZIP containing the app bundle |
 
-**Windows:** Setup installiert für den aktuellen Benutzer unter `%LOCALAPPDATA%/Programs/EditorTool`. Die App erscheint unter **Einstellungen → Apps → Installierte Apps** und als mögliche Standard-App für `.etdoc`. Der Sitzungscache bleibt bei der Deinstallation erhalten.
+### Windows
 
-**Linux:** RPM beziehungsweise DEB über den Paketmanager installieren. Flatpak: `flatpak install --user ./EditorTool-*.flatpak`, danach `flatpak run com.github.OnlySecci.EditorTool`. Der Runtime-Zugang ist im Bundle hinterlegt; eine Veröffentlichung auf Flathub ist damit nicht verbunden. Die native Linux-Version nutzt X11 beziehungsweise XWayland.
+Run the setup EXE to install for the current user under `%LOCALAPPDATA%\Programs\EditorTool`. The app appears in Windows Settings under installed apps and can be associated with `.etdoc` files. Uninstalling leaves the session cache in place.
 
-**macOS:** DMG öffnen und die App in „Programme“ ziehen. Intel verwendet `x86_64`, Apple Silicon `arm64`.
+For portable use, extract the ZIP and keep `portable.txt` beside the executable. Settings and cached documents then live in the adjacent `Data` directory.
 
-Die Pakete sind **ohne Windows-/Apple-Entwicklerzertifikat** veröffentlicht. macOS-App-Bundles erhalten eine lokale Ad-hoc-Signatur und sind nicht notarisiert. `SHA256SUMS.txt` enthält die Prüfsummen.
+### Linux
 
-## Sitzung und Dokumente
+Install the RPM or DEB using your distribution's package manager. For Flatpak, run the following command with the downloaded bundle's actual filename:
 
-Änderungen gehen nach etwa 400 ms in einen Hintergrundschreibvorgang. Beim Schliessen eines Fensters wird auf die Sicherung gewartet. Noch offene Fenster beziehungsweise das zuletzt geschlossene Hauptfenster werden beim nächsten Start wiederhergestellt. Geschlossene zusätzliche Fenster stehen nur unter **Datei → Geschlossenes Fenster wiederherstellen** bereit (bis zu 20 Ansichten); ausdrücklich geschlossene Tabs werden nicht wieder geöffnet. Alte Caches können zusätzliche Fenster beim ersten Start noch einmal öffnen. Unter Windows lösen normales Herunterfahren und Abmelden zusätzlich eine Sicherung aus.
+```sh
+flatpak install --user ./EditorTool-VERSION-linux-ARCH.flatpak
+flatpak run com.github.OnlySecci.EditorTool
+```
 
-Der automatische Cache überschreibt keine Originaldateien. „Speichern“ schreibt den linken Text beziehungsweise sein Text-/Bild-Dokument in die gewählte Datei. Vergleichstexte bleiben im Cache erhalten. Bei einem erzwungenen Abbruch kann nur der zuletzt abgeschlossene Stand wiederhergestellt werden. Undo-Verläufe werden nicht gespeichert.
+The Flatpak bundle includes runtime repository information; the app is not published on Flathub. File selection uses desktop portals. Native Linux builds use X11 or XWayland.
 
-| Plattform | Einstellungen und Cache |
+### macOS
+
+Open the DMG and drag EditorTool into Applications. Choose `x64` for Intel Macs and `arm64` for Apple Silicon.
+
+### Package verification and updates
+
+Release packages do not currently have Windows or Apple developer certificates. macOS bundles have an ad-hoc signature and are not notarised. Signed update metadata is separate from operating-system code signing.
+
+Releases include `SHA256SUMS.txt`, `update-metadata.json` and `update-metadata.sig`. Since V1.5.0, the updater requires Ed25519-signed metadata matching its pinned public key, verifies package size and SHA-256, rejects expired metadata and blocks versions older than a higher version it has already seen. See [update signing](docs/update-signing.md).
+
+Use the Help menu to check manually for updates. Startup checks and automatic installation are separate settings; automatic installation is off by default. System-wide installations may require administrator approval.
+
+## Interface Languages
+
+Choose English, German, French, Italian, Spanish, Portuguese, Dutch, Polish, Turkish or Ukrainian in Settings → General → Interface language, then restart EditorTool. The initial catalogs translate menus and common controls; detailed technical messages and untranslated text fall back to English. Documents and file paths are never translated. Project documentation and release notes remain in English.
+
+## Documents and Local Data
+
+Plain-text and code files remain UTF-8 files. Use `.etdoc` to save text and embedded images together. Image resizing changes display dimensions while preserving the original image data.
+
+The session cache saves changes in the background after a short delay and restores open work on the next launch. It does not overwrite original files. Explicitly closed tabs stay closed, while closed extra windows can be restored from the File menu. Undo history is not saved across restarts. A forced shutdown can only recover the last completed cache write.
+
+| Platform | Settings and cached data |
 | --- | --- |
-| Windows | `%APPDATA%/EditorTool` |
-| Linux | `$XDG_CONFIG_HOME/EditorTool`, sonst `~/.config/EditorTool` |
+| Windows | `%APPDATA%\EditorTool` |
+| Linux | `$XDG_CONFIG_HOME/EditorTool`, or `~/.config/EditorTool` |
 | macOS | `~/Library/Application Support/EditorTool` |
-| Portable-Modus | `Data` neben der EXE, wenn dort `portable.txt` liegt |
+| Portable mode | `Data` beside the executable |
 
-Der Unterordner `session` enthält Klartext und eingebettete Bilddaten. Weitere Fenster öffnet man über **Datei → Neues Fenster**. Aus dem Dateimanager geöffnete Dateien werden an die bestehende Instanz übergeben.
+These locations contain document contents, embedded images, history and sharing state. They have restricted local permissions but are not encrypted vaults. Storage settings show usage and provide targeted cleanup; cleanup does not securely erase underlying storage media.
 
-## Bedienung
+## Sending and Synchronisation
 
-Windows/Linux: **Strg**, macOS: **Cmd**.
+Enable sending and sync in Settings, then add the other device's private IP address and port. The default is **TCP 51473**. Select local LAN/VPN interfaces if required. EditorTool supports routed private networks and VPNs, rejects public destination IPs, and does not configure routes or firewall rules.
 
-| Kürzel | Aktion |
-| --- | --- |
-| Strg/Cmd+T / +N / +W | Tab erstellen / Fenster erstellen / Tab schließen |
-| Strg/Cmd+O / +S / +Umschalt+S | Öffnen / Speichern / Speichern unter |
-| Strg/Cmd+F / +H | Suchen / Suchen mit Ersetzen |
-| F3 | Nächster Treffer |
-| Strg/Cmd+Tab / +Umschalt+Tab | Nächster / vorheriger Tab |
-| Strg/Cmd+Umschalt+I | Bild einfügen |
-| Strg/Cmd+, | Einstellungen |
-| Strg/Cmd+Z | Rückgängig |
-| Strg+Y (Windows/Linux), Cmd+Umschalt+Z (macOS) | Wiederholen |
+Devices approve each other's identity, and recipients separately accept document offers. A trusted device is not automatically granted access to every document. Sync uses per-device version counters and content hashes to detect concurrent changes without relying on matching system clocks. Automatic saving to a local file is selected per document.
 
-Suchen, Ersetzen und **Ansicht → Sprache** arbeiten im zuletzt aktiven Textbereich. Bildaktionen zum Entfernen sind per Rechtsklick erreichbar. Textabschnitte vor und nach Bildern besitzen eigene Undo-Verläufe.
+Connections require **TLS 1.3, AES-256-GCM and hybrid X25519 + ML-KEM-768 key exchange**. Device identity signatures remain classical. The persistent private device key is stored locally with restricted permissions, without additional encryption or automatic rotation. Copying the private identity and certificate can allow impersonation of that trusted device. Do not share or upload the `sharing` directory.
 
-## Selbst bauen
+Connection status reflects the last completed exchange. Checks normally wait ten seconds after a round, or one second while work is pending; slow peers and timeouts can extend this. Manual checking is available. Disconnect notices appear inside the editor. The communication log records message types, byte counts and device/network metadata, without document contents or private keys; export is explicit.
 
-[Rust Stable](https://rustup.rs/) ab Version 1.90 installieren. `Cargo.lock` fixiert die Abhängigkeiten. Erste Builds benötigen Netzwerkzugang. Windows mit MSVC baut FLTK aus Quellen und benötigt zusätzlich CMake, Git und die Visual-C++-Werkzeuge für x64 beziehungsweise ARM64. Dazu `CARGO_BUILD_TARGET` auf `x86_64-pc-windows-msvc` beziehungsweise `aarch64-pc-windows-msvc` setzen.
+## Development
 
-- Windows: `scripts/build-windows.ps1`, danach `scripts/package-windows.ps1 -PortableOnly`. Für lokale Setup-Builds einen vorhandenen NSIS-Compiler über `NSIS_COMPILER` angeben. GitHub erstellt Setup-EXEs mit dem NSIS-Cross-Compiler auf Linux.
-- Linux: C++-, X11-, Pango-, Cairo- und Fontconfig-Entwicklungspakete installieren; `bash scripts/build-linux.sh`, anschließend `package-linux.sh` beziehungsweise `package-flatpak.sh` aus `scripts/` ausführen. Die Paketwerkzeuge müssen vorhanden sein.
-- macOS: Xcode Command Line Tools und Rust installieren; `bash scripts/build-macos.sh` und `bash scripts/package-macos.sh` ausführen.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before making changes. Keep the native architecture, low idle overhead, plain-text clipboard behaviour and explicit sharing consent.
 
-Die GitHub-Matrix baut alle sechs System-/Architektur-Kombinationen. Auf Wunsch werden keine Test-Suites ausgeführt.
+### Prerequisites
 
-## Ressourcen und Grenzen
+- [Rust stable](https://rustup.rs/), version 1.90 or newer. `Cargo.lock` pins dependencies.
+- Windows: CMake, Git and Visual C++ tools for your target architecture when building FLTK from source. Set `CARGO_BUILD_TARGET` to `x86_64-pc-windows-msvc` or `aarch64-pc-windows-msvc`.
+- Linux: C++ compiler and X11, Pango, Cairo and Fontconfig development packages; packaging tools for the desired formats.
+- macOS: Xcode Command Line Tools and the Rust target matching the intended architecture.
 
-Rust und FLTK statt Browser-Laufzeit. Die Oberfläche wartet im Leerlauf auf Betriebssystem-Ereignisse. Zähler werden inkrementell aktualisiert; Sitzungssicherung und Syntaxfarben verwenden einmalige Timer nach Änderungen. Konkrete RAM-/CPU-Werte wurden nicht gemessen.
+### Clone the repository
 
-Syntaxfarben sind lexikalisch und bleiben über 4 MiB pro Textbereich aus. Der Textvergleich läuft auf Knopfdruck und wird über 16 MiB gröber; Bilder werden nicht visuell verglichen. Bilder werden als PNG eingebettet, maximal 40 Megapixel pro Bild. Bilder erhöhen RAM- und Cache-Bedarf. Zeichenstatistiken zählen Unicode-Codepoints.
+```sh
+git clone https://github.com/OnlySecci/EditorTool.git
+cd EditorTool
+```
 
-## Lizenz
+### Build and package
 
-Die eigenen Projektdateien stehen unter **[The Unlicense](LICENSE)**; der Text liegt auch in [UNLICENSE](UNLICENSE). Drittanbieter behalten ihre eigenen Lizenzen, die unter `third-party-licenses` und in den Paketen mitgeliefert werden.
+| Platform | Release build | Packaging |
+| --- | --- | --- |
+| Windows | `scripts/build-windows.ps1` | `scripts/package-windows.ps1 -PortableOnly` |
+| Linux | `bash scripts/build-linux.sh` | `bash scripts/package-linux.sh` and `bash scripts/package-flatpak.sh` |
+| macOS | `bash scripts/build-macos.sh` | `bash scripts/package-macos.sh` |
 
+For local Windows setup generation, point `NSIS_COMPILER` at an installed NSIS compiler. GitHub Actions creates setup EXEs with NSIS on Linux after the native Windows builds.
 
+The release workflow builds all six operating-system/architecture combinations and publishes only after the full package set is available. At the project owner's request, the current workflow performs builds and packaging without automated, interactive or installation tests.
+
+### Resource usage and limits
+
+EditorTool uses Rust and FLTK without a web runtime. UI updates are event-driven; background saving and syntax colouring are delayed after changes. No measured RAM or CPU benchmark is currently published.
+
+Documents are limited to 64 MiB. Image input is limited to 32 MiB compressed, 32,768 pixels per side, 64 images and a total of 40 megapixels per document. Images increase memory and cache usage. Syntax colouring is lexical and disabled above 4 MiB per text area. Large text comparisons become coarser above 16 MiB; images are not visually compared. Character counts use Unicode code points.
+
+## License
+
+Original project files are released under **[The Unlicense](LICENSE)**, also available as [UNLICENSE](UNLICENSE). Dependencies retain their own licences; their notices are included in [`third-party-licenses`](third-party-licenses) and distributed packages.

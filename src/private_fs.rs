@@ -12,7 +12,7 @@ pub fn windows_wide(path: &Path) -> io::Result<Vec<u16>> {
             .unwrap_or(Path::new("."));
         parent.canonicalize()?.join(
             path.file_name()
-                .ok_or_else(|| io::Error::other("Dateiname fehlt"))?,
+                .ok_or_else(|| io::Error::other("Filename is missing"))?,
         )
     };
     Ok(absolute.as_os_str().encode_wide().chain(Some(0)).collect())
@@ -35,7 +35,7 @@ pub fn restrict(path: &Path, directory: bool) -> io::Result<()> {
     {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            "Verknüpfung im privaten Speicher abgelehnt.",
+            "Link in private storage rejected.",
         ));
     }
     #[cfg(unix)]
@@ -47,7 +47,7 @@ pub fn restrict(path: &Path, directory: bool) -> io::Result<()> {
         if fs::symlink_metadata(path)?.uid() != unsafe { geteuid() } {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
-                "Privater Speicher gehört einem anderen Benutzer.",
+                "Private storage belongs to another user.",
             ));
         }
         fs::set_permissions(
@@ -143,6 +143,6 @@ pub fn random_token() -> io::Result<String> {
     let mut bytes = [0u8; 32];
     SystemRandom::new()
         .fill(&mut bytes)
-        .map_err(|_| io::Error::other("Sichere Zufallsquelle nicht verfügbar."))?;
+        .map_err(|_| io::Error::other("Secure random source is unavailable."))?;
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }

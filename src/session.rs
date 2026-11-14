@@ -159,7 +159,7 @@ impl Store {
                     serde_json::from_slice(&crate::limits::read(&path, 4 * 1024 * 1024)?)?;
                 if snapshot.version != 1 {
                     return Err(io::Error::other(
-                        "Unbekannte Sitzungsversion; Bereinigung gesperrt.",
+                        "Unknown session version; cleanup blocked.",
                     ));
                 }
                 remember(&snapshot);
@@ -189,7 +189,7 @@ impl Store {
             if crate::private_fs::is_link(
                 &fs::symlink_metadata(entry.path()).map_err(|e| e.to_string())?,
             ) {
-                return Err("Verknüpfung im Sitzungscache abgelehnt.".into());
+                return Err("Link in session cache rejected.".into());
             }
             if entry.file_type().map_err(|e| e.to_string())?.is_file() {
                 crate::private_fs::restrict(&entry.path(), false).map_err(|e| e.to_string())?;
@@ -202,7 +202,7 @@ impl Store {
             .truncate(false)
             .open(root.join("session.lock"))
             .map_err(|e| e.to_string())?;
-        lock.try_lock().map_err(|_|"Der Sitzungscache ist bereits geöffnet. Weitere Fenster öffnest du in EditorTool über Datei → Neues Fenster (Strg/Cmd+N).".to_owned())?;
+        lock.try_lock().map_err(|_|"The session cache is already open. Open additional windows using File → New window (Ctrl/Cmd+N).".to_owned())?;
         crate::private_fs::restrict(&root.join("session.lock"), false)
             .map_err(|e| e.to_string())?;
         let (tx, rx) = mpsc::channel();
@@ -272,16 +272,13 @@ impl Store {
                 }
             }
         }
-        Err(
-            "Sitzungscache konnte nicht gelesen werden; die vorhandenen Dateien bleiben erhalten."
-                .into(),
-        )
+        Err("Could not read the session cache; existing files are preserved.".into())
     }
     pub fn text(&self, key: &str, right: bool) -> io::Result<String> {
         if !valid_key(key) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Ungültiger Cache-Schlüssel",
+                "Invalid cache key",
             ));
         }
         crate::limits::read_text(&self.root.join(format!(

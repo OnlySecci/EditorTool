@@ -21,9 +21,7 @@ pub fn files(root: &Path) -> io::Result<Vec<PathBuf>> {
             let entry = entry?;
             entries += 1;
             if entries > 100_000 {
-                return Err(io::Error::other(
-                    "Zu viele Speicherdateien für eine sichere Bereinigung.",
-                ));
+                return Err(io::Error::other("Too many storage files for safe cleanup."));
             }
             let kind = entry.file_type()?;
             if crate::private_fs::is_link(&fs::symlink_metadata(entry.path())?) {
@@ -52,7 +50,7 @@ fn directory(root: &Path, path: &Path) -> io::Result<PathBuf> {
             .canonicalize()?
             .join(
                 path.file_name()
-                    .ok_or_else(|| io::Error::other("Dateiname fehlt"))?,
+                    .ok_or_else(|| io::Error::other("Filename is missing"))?,
             ),
         Err(e) => return Err(e),
     };
@@ -133,17 +131,15 @@ pub fn remove_files(root: &Path, selected: &[PathBuf]) -> io::Result<usize> {
     for path in selected {
         let relative = path
             .strip_prefix(root)
-            .map_err(|_| io::Error::other("Bereinigung ausserhalb des Speichers abgelehnt."))?;
+            .map_err(|_| io::Error::other("Cleanup outside storage rejected."))?;
         let mut component = root.to_owned();
         for part in relative.components() {
             if !matches!(part, std::path::Component::Normal(_)) {
-                return Err(io::Error::other("Ungültiger Bereinigungspfad."));
+                return Err(io::Error::other("Invalid cleanup path."));
             }
             component.push(part);
             if crate::private_fs::is_link(&fs::symlink_metadata(&component)?) {
-                return Err(io::Error::other(
-                    "Verknüpfung bei der Bereinigung abgelehnt.",
-                ));
+                return Err(io::Error::other("Link rejected during cleanup."));
             }
         }
         let meta = fs::symlink_metadata(path)?;
@@ -153,7 +149,7 @@ pub fn remove_files(root: &Path, selected: &[PathBuf]) -> io::Result<usize> {
         {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
-                "Unsicherer Bereinigungspfad.",
+                "Unsafe cleanup path.",
             ));
         }
         fs::remove_file(path)?;
@@ -166,7 +162,7 @@ pub fn remove_files(root: &Path, selected: &[PathBuf]) -> io::Result<usize> {
 pub fn write_document(path: &Path, bytes: &[u8]) -> io::Result<()> {
     use std::io::Write;
     if bytes.len() as u64 > crate::limits::DOCUMENT {
-        return Err(io::Error::other("Dokument ist zu gross (64 MiB)."));
+        return Err(io::Error::other("Document is too large (64 MiB)."));
     }
     let existing = match fs::metadata(path) {
         Ok(m) => Some(m),
@@ -179,7 +175,7 @@ pub fn write_document(path: &Path, bytes: &[u8]) -> io::Result<()> {
     {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            "Datei ist schreibgeschützt oder keine reguläre Datei.",
+            "File is read-only or is not a regular file.",
         ));
     }
     if crate::file_dialog::portal_required() {

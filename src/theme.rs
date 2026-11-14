@@ -259,6 +259,8 @@ pub fn icon(kind: Icon, x: i32, y: i32, color: Color) {
 }
 
 pub fn button(b: &mut Button, primary: bool, glyph: Option<Icon>) {
+    let label = b.label();
+    b.set_label(crate::i18n::tr(&label));
     b.set_frame(FrameType::NoBox);
     b.set_label_size(13);
     b.clear_visible_focus();
@@ -317,6 +319,8 @@ pub fn input(input: &mut Input) {
 }
 
 pub fn check(check: &mut CheckButton) {
+    let label = check.label();
+    check.set_label(crate::i18n::tr(&label));
     check.set_frame(FrameType::NoBox);
     check.set_label_color(SECONDARY);
     check.set_label_size(13);
@@ -353,7 +357,7 @@ pub fn check(check: &mut CheckButton) {
 }
 
 pub fn heading(label: &str, size: i32) -> Frame {
-    let mut f = Frame::default().with_label(label);
+    let mut f = Frame::default().with_label(crate::i18n::tr(label));
     f.set_label_font(Font::HelveticaBold);
     f.set_label_size(size);
     f.set_label_color(TEXT);

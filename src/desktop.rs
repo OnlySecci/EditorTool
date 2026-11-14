@@ -7,7 +7,7 @@ pub fn integrate() -> Result<(), String> {
     if env::var_os("FLATPAK_ID").is_some() || std::path::Path::new("/.flatpak-info").exists() {
         return Ok(());
     }
-    let home = env::var_os("HOME").ok_or("HOME fehlt")?;
+    let home = env::var_os("HOME").ok_or("HOME is missing")?;
     let data = env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(home).join(".local/share"));
@@ -38,9 +38,9 @@ pub fn integrate() -> Result<(), String> {
         }
     }
     let exe = env::current_exe().map_err(|e| e.to_string())?;
-    let exe = exe.to_str().ok_or("Programmpfad ist kein UTF-8")?;
+    let exe = exe.to_str().ok_or("Executable path is not UTF-8")?;
     if exe.contains(['\n', '\r']) {
-        return Err("Programmpfad enthält einen Zeilenumbruch".into());
+        return Err("Executable path contains a newline".into());
     }
     let icon = data
         .join("icons/hicolor/256x256/apps")
