@@ -1,6 +1,7 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod caret;
 mod chrome;
+mod colored_checks;
 mod core;
 #[cfg(target_os = "linux")]
 mod desktop;
@@ -8,6 +9,8 @@ mod diagnostics;
 mod file_dialog;
 mod ipc;
 mod limits;
+mod network;
+mod notices;
 mod peer;
 mod preferences;
 mod private_fs;
@@ -23,6 +26,8 @@ mod storage_ui;
 mod syntax;
 mod tab_menu;
 mod theme;
+mod traffic;
+mod traffic_ui;
 mod tray;
 mod updater;
 use rich::RichEditor;
@@ -69,6 +74,13 @@ enum Action {
     ApplySharing,
     KeepTray,
     AddClient,
+    EditClient,
+    SelectClient,
+    RefreshInterfaces,
+    Traffic,
+    TrafficFilter,
+    TrafficExport,
+    DismissNotice,
     RemoveClient,
     ProbeClients,
     Transfer(bool),
@@ -263,7 +275,8 @@ impl Document {
                 2 => "Clients und Sync",
                 3 => "Tastenkürzel",
                 4 => "Speicher und Dateistände",
-                _ => "Freigaben und Berechtigungen",
+                5 => "Freigaben und Berechtigungen",
+                _ => "Kommunikationsprotokoll",
             }
             .into();
         }
@@ -409,6 +422,7 @@ struct EditorWindow {
     sidebar_width: i32,
     bar: Group,
     area: Group,
+    notice: notices::Notice,
     find: chrome::SearchPanel,
     settings: chrome::SettingsPanel,
     menu: MenuBar,
@@ -803,7 +817,7 @@ impl EditorWindow {
             );
         });
         workspace.fixed(&divider, 5);
-        let area = Group::default();
+        let mut area = Group::default();
         area.end();
         workspace.end();
         root.end();
@@ -814,6 +828,7 @@ impl EditorWindow {
         let settings = chrome::SettingsPanel::new(wid, tx, vertical);
         let route = Rc::new(Cell::new(wid));
         split::wire_window(&mut win, route.clone(), tx);
+        let notice = notices::Notice::new(&mut area, route.clone(), tx);
         let mut result = Self {
             win,
             root,
@@ -823,6 +838,7 @@ impl EditorWindow {
             sidebar_width: 184,
             bar,
             area,
+            notice,
             find,
             settings,
             menu,
@@ -1090,6 +1106,7 @@ impl EditorWindow {
     fn refresh(&mut self, wid: usize, tx: app::Sender<Message>) {
         self.follow_focus(wid);
         self.resize_docs();
+        self.notice.layout(&self.area);
         if let Some(d) = self.docs.get_mut(self.active).filter(|d| d.page == 0) {
             d.left.reflow();
             d.right.reflow();
@@ -1329,7 +1346,16 @@ impl EditorWindow {
         }
         let history_root = settings_path().parent().unwrap().to_owned();
         let saved = storage::preserve(&history_root, &path)
-            .and_then(|_| storage::write_document(&path, content.as_bytes()));
+            .map_err(|e| {
+                diagnostics::io_failure("storage", "manual_history", &e, &path);
+                e
+            })
+            .and_then(|_| {
+                storage::write_document(&path, content.as_bytes()).map_err(|e| {
+                    diagnostics::io_failure("storage", "manual_write_document", &e, &path);
+                    e
+                })
+            });
         match saved {
             Ok(()) => {
                 if let Some(b) = &mut d.sharing {
@@ -1374,6 +1400,7 @@ impl EditorWindow {
             }
         }
         match action {
+            Action::DismissNotice => self.notice.dismiss(),
             Action::TabContext(index, x, y) => {
                 if index >= self.docs.len() {
                     return;
@@ -1886,7 +1913,7 @@ impl EditorWindow {
             let d = &mut self.docs[index];
             d.id = tab.id;
             d.cache_key = tab.key.clone();
-            d.page = tab.page.min(5);
+            d.page = tab.page.min(6);
             if d.page != 0 {
                 d.panes.hide();
                 d.status.hide();
@@ -2010,6 +2037,7 @@ struct Runtime {
     keyboard: shortcuts::Panel,
     storage_panel: storage_ui::Panel,
     permissions_panel: storage_ui::Panel,
+    traffic_panel: traffic_ui::Panel,
     transfer: sharing_ui::Transfer,
     conflicts: sharing_ui::Conflicts,
     share_timers: std::collections::HashMap<String, sharing_runtime::Pending>,
@@ -2083,6 +2111,20 @@ impl Runtime {
             }
         }
         self.mount_settings_pages();
+        let traffic_visible = self
+            .windows
+            .iter()
+            .flatten()
+            .any(|w| w.docs[w.active].page == 6);
+        traffic::VISIBLE.store(traffic_visible, std::sync::atomic::Ordering::Relaxed);
+        if traffic_visible && self.traffic_panel.generation != traffic::generation() {
+            let peers = self
+                .sharing
+                .as_ref()
+                .map(|s| s.config().clients)
+                .unwrap_or_default();
+            self.traffic_panel.refresh(&peers, false);
+        }
         if self.cache_enabled
             && !self.session_pending
             && self.fingerprint() != self.last_fingerprint
@@ -2438,6 +2480,28 @@ impl Runtime {
                     );
                 }
             },
+            Action::Traffic => {
+                self.open_management_tab(wid, 6);
+                let peers = self
+                    .sharing
+                    .as_ref()
+                    .map(|s| s.config().clients)
+                    .unwrap_or_default();
+                self.traffic_panel.refresh(&peers, true);
+            }
+            Action::TrafficFilter => {
+                let peers = self
+                    .sharing
+                    .as_ref()
+                    .map(|s| s.config().clients)
+                    .unwrap_or_default();
+                self.traffic_panel.refresh(&peers, false);
+            }
+            Action::TrafficExport => {
+                if let Err(e) = self.traffic_panel.export() {
+                    dialog::alert_default(&format!("Protokollexport fehlgeschlagen: {e}"));
+                }
+            }
             Action::Storage => self.open_management_tab(wid, 4),
             Action::StorageClean => {
                 self.storage_dialog();
@@ -2585,6 +2649,7 @@ fn main() {
         return;
     }
     diagnostics::init(config.parent().unwrap());
+    traffic::init(config.parent().unwrap());
     preferences::load(&config);
     if let Err(e) = shortcuts::load(&config) {
         dialog::alert_default(&format!("Tastenkürzel konnten nicht geladen werden: {e}"));
@@ -2683,6 +2748,7 @@ fn main() {
         keyboard: shortcuts::Panel::new(tx),
         storage_panel: storage_ui::Panel::new(tx, false),
         permissions_panel: storage_ui::Panel::new(tx, true),
+        traffic_panel: traffic_ui::Panel::new(tx),
         transfer: sharing_ui::Transfer::new(tx),
         conflicts: sharing_ui::Conflicts::new(tx),
         share_timers: Default::default(),
@@ -2695,7 +2761,8 @@ fn main() {
         let mut runtime = state.borrow_mut();
         runtime.weak_self = Rc::downgrade(&state);
         runtime.restore_splits();
-        for page in [4, 5] {
+        runtime.init_network_pages();
+        for page in [4, 5, 6] {
             if let Some(wid) = runtime
                 .windows
                 .iter()

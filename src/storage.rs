@@ -197,7 +197,10 @@ pub fn write_document(path: &Path, bytes: &[u8]) -> io::Result<()> {
     } else {
         path.to_owned()
     };
-    let tmp = target.with_extension(format!("{}.pending", crate::private_fs::random_token()?));
+    let tmp = target.with_file_name(format!(
+        ".et-{}.pending",
+        crate::private_fs::random_token()?
+    ));
     let result = (|| -> io::Result<()> {
         let mut file = fs::OpenOptions::new()
             .write(true)
@@ -224,7 +227,7 @@ pub fn write_document(path: &Path, bytes: &[u8]) -> io::Result<()> {
         drop(file);
         #[cfg(windows)]
         {
-            use std::{ffi::c_void, os::windows::ffi::OsStrExt, ptr};
+            use std::{ffi::c_void, ptr};
             #[link(name = "kernel32")]
             unsafe extern "system" {
                 fn ReplaceFileW(
@@ -237,8 +240,8 @@ pub fn write_document(path: &Path, bytes: &[u8]) -> io::Result<()> {
                 ) -> i32;
                 fn MoveFileExW(old: *const u16, new: *const u16, flags: u32) -> i32;
             }
-            let to: Vec<u16> = target.as_os_str().encode_wide().chain(Some(0)).collect();
-            let from: Vec<u16> = tmp.as_os_str().encode_wide().chain(Some(0)).collect();
+            let to = crate::private_fs::windows_wide(&target)?;
+            let from = crate::private_fs::windows_wide(&tmp)?;
             let ok = unsafe {
                 if existing.is_some() {
                     ReplaceFileW(

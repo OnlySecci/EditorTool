@@ -100,6 +100,21 @@ impl Runtime {
                 .open_settings_tab(page, wi, self.tx);
             wi
         };
+        if page == 6 {
+            let peers = self
+                .sharing
+                .as_ref()
+                .map(|s| s.config().clients)
+                .unwrap_or_default();
+            self.traffic_panel.refresh(&peers, true);
+            let w = self.windows[wi].as_mut().unwrap();
+            if !w.embedded {
+                w.win.show();
+                chrome::dark_title(&w.win);
+                shutdown::hook(&w.win, self.weak_self.clone());
+            }
+            return;
+        }
         let details = if page == 4 {
             (|| -> Result<String,String> {
                 self.persist(); self.store.flush()?;

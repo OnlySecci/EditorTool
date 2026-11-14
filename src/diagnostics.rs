@@ -118,6 +118,17 @@ pub fn failure(component: &str, phase: &str, error: &str) {
     };
     event(component, &format!("{phase} class={class}"));
 }
+pub fn io_failure(component: &str, phase: &str, error: &io::Error, path: &Path) {
+    event(
+        component,
+        &format!(
+            "{phase} kind={:?} os_error={:?} path_chars={}",
+            error.kind(),
+            error.raw_os_error(),
+            path.as_os_str().len()
+        ),
+    );
+}
 fn tail(path: &Path) -> io::Result<String> {
     let mut f = File::open(path)?;
     let len = f.metadata()?.len();

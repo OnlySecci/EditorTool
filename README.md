@@ -8,6 +8,14 @@ Ein schlanker nativer Rust-Editor für **Text, Code und Bilder** — für Window
 
 *Hauptansicht aus V1.0 — vom Projektinhaber bereitgestellte Aufnahme.*
 
+## Neu in V1.5.1
+
+Windows-Langpfade werden auch bei Dateihistorie und Zugriffsrechten korrekt behandelt. Speicherfehler protokollieren jetzt Arbeitsschritt, OS-Fehlernummer und Pfadlänge, ohne Dokumentinhalte oder private Dateipfade zu speichern.
+
+Unter **Clients und Sync** können lokale LAN-/VPN-Adressen mit IP-/MAC-Anzeige angehakt werden. Die automatische Auswahl bleibt voreingestellt. Bestehende Clients lassen sich bearbeiten, ohne ihre Schlüsselfreigabe zu verlieren. **Connected** erscheint grün, **Not connected** rot; ein Verbindungsverlust erzeugt einen schliessbaren Hinweis im Editor. Letzte Prüfung und Prüfintervall sind sichtbar.
+
+Der **Log…**-Button öffnet ein filterbares Kommunikationsprotokoll als Tab. Es enthält Geräte-/IP-Metadaten und Nachrichtentypen, keine Dokumentinhalte oder Schlüssel. Ein Export erfolgt nur auf ausdrücklichen Klick. Ausführliche Bedienung und Grenzen: [Release Notes](RELEASE_NOTES.md).
+
 ## Neu in V1.5.0
 
 - Updates verwenden Ed25519-signierte Metadaten mit einem fest eingebauten öffentlichen Schlüssel. Version, Paketname, Länge, SHA-256 und Ablaufdatum (180 Tage) werden geprüft; vor Installation erfolgt eine erneute Integritätsprüfung. Bereits bekannte höhere Versionen sperren ältere Angebote. Kein Rückfall auf unsignierte Prüfsummen. Der private Schlüssel liegt im Repository-Actions-Secret; die Workflows gehören deshalb zur Vertrauensgrenze. [Schlüsselverwaltung](docs/update-signing.md).

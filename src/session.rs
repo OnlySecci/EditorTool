@@ -98,7 +98,10 @@ fn valid_key(key: &str) -> bool {
 }
 
 pub(crate) fn atomic_write(path: &Path, data: &[u8]) -> io::Result<()> {
-    let tmp = path.with_extension(format!("{}.pending", crate::private_fs::random_token()?));
+    let tmp = path.with_file_name(format!(
+        ".et-{}.pending",
+        crate::private_fs::random_token()?
+    ));
     struct Pending(PathBuf);
     impl Drop for Pending {
         fn drop(&mut self) {
@@ -113,13 +116,12 @@ pub(crate) fn atomic_write(path: &Path, data: &[u8]) -> io::Result<()> {
     }
     #[cfg(windows)]
     {
-        use std::os::windows::ffi::OsStrExt;
         #[link(name = "kernel32")]
         extern "system" {
             fn MoveFileExW(from: *const u16, to: *const u16, flags: u32) -> i32;
         }
-        let from: Vec<u16> = tmp.as_os_str().encode_wide().chain(Some(0)).collect();
-        let to: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        let from = crate::private_fs::windows_wide(&tmp)?;
+        let to = crate::private_fs::windows_wide(path)?;
         if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), 1 | 8) } == 0 {
             return Err(io::Error::last_os_error());
         }

@@ -1,5 +1,15 @@
 # Changelog
 
+## V1.5.1 — 2026-11-14
+
+- Fix Windows long-path handling for ACLs, file history and atomic saves; shorten temporary filenames.
+- Log storage operation, OS error and path length without private file paths or document contents.
+- Select local LAN/VPN addresses, bind inbound listeners and outbound source interfaces, and fail closed when an explicit selection is unavailable.
+- Edit trusted client names/endpoints while retaining their keys and approvals.
+- Add a bounded, filterable application communication log with explicit metadata-only export.
+- Show green/red connection states, last-check time, actual scheduling rules and dismissible in-window disconnect notices.
+- Build/package only, no tests or application starts.
+
 ## V1.5.0 — 2026-11-13
 
 - Unabhängige Ed25519-Update-Metadaten mit fester Vertrauensbasis, Versionsbindung und erneuter Paketprüfung vor Installation. Release verlangt alle 16 Pakete und einen dauerhaft gespeicherten passenden Actions-Signierschlüssel.

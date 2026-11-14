@@ -108,11 +108,22 @@ impl Runtime {
         self.permissions_panel
             .page
             .park(&mut self.permissions_panel.win);
+        self.traffic_panel.page.park(&mut self.traffic_panel.win);
         for w in self.windows.iter_mut().flatten() {
             w.settings.page.park(&mut w.settings.win);
         }
     }
     pub fn mount_settings_pages(&mut self) {
+        if let Some(w) = self
+            .windows
+            .iter_mut()
+            .flatten()
+            .find(|w| w.docs[w.active].page == 6)
+        {
+            self.traffic_panel.page.mount(&mut w.docs[w.active].group);
+        } else {
+            self.traffic_panel.page.park(&mut self.traffic_panel.win);
+        }
         for page in [4, 5] {
             let panel = if page == 4 {
                 &mut self.storage_panel

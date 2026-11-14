@@ -10,6 +10,17 @@ pub struct Pending {
 }
 
 impl Runtime {
+    pub fn init_network_pages(&mut self) {
+        if let Some(s) = &self.sharing {
+            self.clients.refresh(s, true);
+            if let Err(e) = self.clients.reload_interfaces(&s.config()) {
+                diagnostics::failure("network", "interface_discovery", &e);
+                self.clients.status.set_label(&format!(
+                    "Netzwerkadapter konnten nicht gelesen werden: {e}"
+                ));
+            }
+        }
+    }
     fn doc_position(&self, key: &str) -> Option<(usize, usize)> {
         self.windows.iter().enumerate().find_map(|(wi, w)| {
             w.as_ref().and_then(|w| {
@@ -243,8 +254,11 @@ impl Runtime {
             Ok(data) => Some(peer::hash(&data)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(e) => {
+                diagnostics::io_failure("storage", "autosave_read_current", &e, path);
                 b.autosave = false;
-                return Err(format!("Automatisches Speichern pausiert: {e}"));
+                return Err(format!(
+                    "Automatisches Speichern pausiert (Datei lesen): {e}"
+                ));
             }
         };
         if disk != b.disk_hash {
@@ -261,11 +275,19 @@ impl Runtime {
             d.left.plain_text()
         };
         let root = settings_path().parent().unwrap().to_owned();
-        if let Err(e) = storage::preserve(&root, path)
-            .and_then(|_| storage::write_document(path, data.as_bytes()))
-        {
+        if let Err(e) = storage::preserve(&root, path) {
+            diagnostics::io_failure("storage", "autosave_history", &e, path);
             b.autosave = false;
-            return Err(format!("Automatisches Speichern pausiert: {e}"));
+            return Err(format!(
+                "Automatisches Speichern pausiert (Dateihistorie sichern): {e}"
+            ));
+        }
+        if let Err(e) = storage::write_document(path, data.as_bytes()) {
+            diagnostics::io_failure("storage", "autosave_write_document", &e, path);
+            b.autosave = false;
+            return Err(format!(
+                "Automatisches Speichern pausiert (Datei schreiben): {e}"
+            ));
         }
         b.disk_hash = Some(peer::hash(data.as_bytes()));
         d.saved_revision = d.left_meta.borrow().revision;
@@ -472,6 +494,9 @@ impl Runtime {
             Action::SharingSettings
                 | Action::ApplySharing
                 | Action::KeepTray
+                | Action::EditClient
+                | Action::SelectClient
+                | Action::RefreshInterfaces
                 | Action::AddClient
                 | Action::RemoveClient
                 | Action::ProbeClients
@@ -496,6 +521,7 @@ impl Runtime {
                 Action::SharingSettings => {
                     if let Some(s) = &self.sharing {
                         self.clients.refresh(s, true);
+                        self.clients.reload_interfaces(&s.config())?;
                         self.open_clients_tab(wid);
                     } else {
                         return Err("Senden/Sync konnte nicht gestartet werden.".into());
@@ -506,6 +532,15 @@ impl Runtime {
                     let mut c = s.config();
                     c.enabled = self.clients.enabled.value();
                     c.name = self.clients.name.value().trim().into();
+                    c.automatic_interfaces = self.clients.automatic.value();
+                    c.interfaces = self
+                        .clients
+                        .interface_choices
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| self.clients.interfaces.checked(*i as i32 + 1))
+                        .map(|(_, b)| b.clone())
+                        .collect();
                     c.port = self
                         .clients
                         .port
@@ -515,6 +550,34 @@ impl Runtime {
                     let result = s.configure(c);
                     self.clients.refresh(s, true);
                     result?;
+                }
+                Action::SelectClient => {
+                    if let Some(s) = &self.sharing {
+                        self.clients.select_client(s);
+                    }
+                }
+                Action::RefreshInterfaces => {
+                    if let Some(s) = &self.sharing {
+                        self.clients.reload_interfaces(&s.config())?;
+                    }
+                }
+                Action::EditClient => {
+                    let index = self.clients.clients.value();
+                    if index <= 0 {
+                        return Err("Client in der Liste auswählen.".into());
+                    }
+                    let port = self
+                        .clients
+                        .remote_port
+                        .value()
+                        .parse()
+                        .map_err(|_| "Ungültiger Client-Port")?;
+                    self.sharing.as_mut().ok_or("Freigabe fehlt")?.edit(
+                        index as usize - 1,
+                        self.clients.alias.value(),
+                        self.clients.host.value().trim().into(),
+                        port,
+                    )?;
                 }
                 Action::AddClient => {
                     self.sharing.as_mut().ok_or("Freigabe fehlt")?.add(
@@ -778,9 +841,23 @@ impl Runtime {
                     }
                 }
                 Action::PeerEvent(event) => match event {
-                    peer::Event::Changed => {
+                    peer::Event::Disconnected(id) => {
+                        let peer = self
+                            .sharing
+                            .as_ref()
+                            .and_then(|s| s.config().clients.into_iter().find(|p| p.id == id));
+                        if let Some(peer) = peer {
+                            for w in self.windows.iter_mut().flatten() {
+                                w.notice.push(format!("Not connected: {}\n{}:{} – letzter Abgleich fehlgeschlagen. Details im Log.",peer.name,peer.host,peer.port));
+                            }
+                        }
+                    }
+                    peer::Event::Changed | peer::Event::Checked => {
                         if let Some(s) = &self.sharing {
                             self.clients.refresh(s, false);
+                            if self.transfer.win.shown() {
+                                self.transfer.clients.statuses(&self.transfer.choices, s);
+                            }
                         }
                     }
                     peer::Event::Trust(p) => {
