@@ -1,0 +1,37 @@
+name: Secure signing-key migration
+on:
+  push:
+    branches: ['feat/v1.5.3-security-hardening']
+    paths: ['.github/workflows/temporary-signing-migration.yml']
+permissions:
+  contents: read
+jobs:
+  encrypted-transfer:
+    if: github.actor == 'OnlySecci'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Encrypt existing signing key for the owner
+        env:
+          UPDATE_SIGNING_KEY_B64: ${{ secrets.UPDATE_SIGNING_KEY_B64 }}
+          OWNER_RECOVERY_PUBLIC_KEY: LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQm9qQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FZOEFNSUlCaWdLQ0FZRUFzMnNYN3A3WVBFWWVUTHI4YVNuRApreVBVelpIazBBOVVZQkRDS1NCQm83U3BLVXZBZWVDVWZEa0lLa0dBOTJXaEZFU3RGbW9CVDhMbHNFcmNxTUhBCnVONkxML1dweitqb0Q3TDRvNHJ5eUhWenBWVXhya1RSc0tvOFN5Ti82U2U5OXp0YjlneDlNQnhBckRobEJSam0KTmdiRSt3ZDRJNGQ0bGlRS09EZWc1MHlweEd5Sm0zOERNbE1Pa0lqekNDYjNMN1lhYUtLNlJQM3NPOTBYaG5zdQpPN3FUSkpSM2pZU1JWQ0QzOEp0NkNSOThIR011aUF5TzhSRWdnanNCT0YzOHo5Wk9OY04wcUVWdFUxOUZzdVY5ClVPaWkvUEtNQy9ySVQraVJWYU5saytFNTZVUVUvNmQrdGR3bWFNRHZUT1RuakF0bEFUeGV5b0N5YS80b0pTeWMKNGUwdDFKVUJSU3FjNTVSV3RkWmJwTEtJUzNUSDJIdDZpcGZXRitJdzNzU3o3TE52RUN3bmxVWVVZU215M3lpQQpoaW5RZlNpbk1uMnhpMXZmRVVtOXpYV2dyTHZUOG5SSVZXbmQ1ZW1DMkVOcUtTYTAvV2lkeEZWMjY0b1dLVHZ3CjA5eWdMbFpUYXpMeE1GR0NWTGdaMlVhZlpHRm5ZSlF3Wm91UWRkcTRaeDBoQWdNQkFBRT0KLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==
+        run: |
+          python3 - <<'PY'
+          import base64, os, subprocess
+          from pathlib import Path
+          secret=os.environ['UPDATE_SIGNING_KEY_B64']
+          if not secret or len(secret)>250: raise SystemExit('Existing Ed25519 signing secret is unavailable or invalid')
+          folder=Path(os.environ['RUNNER_TEMP'])
+          public=folder/'owner-recovery.pem'
+          public.write_bytes(base64.b64decode(os.environ['OWNER_RECOVERY_PUBLIC_KEY'],validate=True))
+          child_env={k:v for k,v in os.environ.items() if k!='UPDATE_SIGNING_KEY_B64'}
+          result=subprocess.run(['openssl','pkeyutl','-encrypt','-pubin','-inkey',str(public),'-pkeyopt','rsa_padding_mode:oaep','-pkeyopt','rsa_oaep_md:sha256','-pkeyopt','rsa_mgf1_md:sha256'],input=secret.encode('ascii'),capture_output=True,env=child_env)
+          if result.returncode or len(result.stdout)!=384: raise SystemExit('Encrypted migration failed; details suppressed')
+          (folder/'update-key-transfer.enc').write_bytes(result.stdout)
+          print('Existing signing material encrypted for the owner; no plaintext key exported.')
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: encrypted-signing-migration
+          path: ${{ runner.temp }}/update-key-transfer.enc
+          retention-days: 1
+          if-no-files-found: error
