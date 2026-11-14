@@ -25,7 +25,7 @@ ureq = { version = "2.12", default-features = false, features = ["tls", "json"] 
 sha2 = "0.10"
 fltk = "=1.5.23"
 regex = "1"
-similar = "2.7"
+similar = "3.2"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 base64 = "0.22"
