@@ -416,5 +416,6 @@
   "Which revision should be used?": "Hangi sürüm kullanılsın?",
   "Use selected revision": "Seçili sürümü kullan",
   "Fit to text area": "Metin alanına sığdır",
-  "Security": "Güvenlik"
+  "Security": "Güvenlik",
+  "Force sync main": "Ana sürümü zorla"
 }

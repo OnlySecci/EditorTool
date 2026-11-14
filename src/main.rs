@@ -102,7 +102,7 @@ enum Action {
     StopSync,
     ShowConflicts,
     PreviewConflict,
-    ResolveConflict,
+    ForceSyncMain,
     PeerEvent(peer::Event),
     PublishDoc(String, u64),
     SyncCountdown,

@@ -416,5 +416,6 @@
   "Which revision should be used?": "Яку версію використати?",
   "Use selected revision": "Використати обрану версію",
   "Fit to text area": "Припасувати до текстової області",
-  "Security": "Безпека"
+  "Security": "Безпека",
+  "Force sync main": "Примусова основна версія"
 }

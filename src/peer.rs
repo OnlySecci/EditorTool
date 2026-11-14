@@ -170,6 +170,8 @@ impl Default for Config {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Revision {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub force: Option<crate::revision::ForceMain>,
     pub clock: Clock,
     pub hash: String,
     pub author: String,
@@ -200,6 +202,59 @@ fn dominates(a: &Clock, b: &Clock) -> bool {
 }
 fn same(a: &Revision, b: &Revision) -> bool {
     a.key() == b.key()
+}
+fn supersedes(a: &Revision, b: &Revision) -> bool {
+    if a.force != b.force {
+        return a.force > b.force;
+    }
+    dominates(&a.clock, &b.clock) && a.clock != b.clock
+}
+fn include_local_provenance(s: &State, doc: &str, author: &str, parents: &mut Vec<Revision>) {
+    // A forced winner may not know this device's discarded counters. Retain a
+    // signed causal parent so subsequent edits never reuse an author counter.
+    let own = s
+        .proofs
+        .values()
+        .filter(|r| r.doc == doc && r.author == author)
+        .max_by_key(|r| r.clock.get(author).copied().unwrap_or(0));
+    let authority = s
+        .proofs
+        .values()
+        .filter(|r| {
+            r.doc == doc
+                && !s.revoked.contains(&r.author)
+                && s.docs
+                    .get(doc)
+                    .is_some_and(|d| !d.departed.contains(&r.author))
+        })
+        .max_by(|a, b| a.force.cmp(&b.force));
+    let own = own.filter(|r| {
+        r.clock.get(author).copied().unwrap_or(0)
+            > parents
+                .iter()
+                .map(|p| p.clock.get(author).copied().unwrap_or(0))
+                .max()
+                .unwrap_or(0)
+    });
+    let authority = authority
+        .filter(|r| r.force.as_ref() > parents.iter().filter_map(|p| p.force.as_ref()).max());
+    for r in [own, authority].into_iter().flatten() {
+        if !parents.iter().any(|p| p.key() == r.key()) {
+            parents.push(r.clone());
+        }
+    }
+}
+fn parent_clock(parents: &[Revision], author: &str) -> Result<Clock, String> {
+    let mut clock = Clock::new();
+    for r in parents {
+        for (id, n) in &r.clock {
+            let value = clock.entry(id.clone()).or_default();
+            *value = (*value).max(*n);
+        }
+    }
+    let n = clock.entry(author.into()).or_default();
+    *n = n.checked_add(1).ok_or("Revision counter is full")?;
+    Ok(clock)
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Document {
@@ -285,6 +340,8 @@ pub enum Event {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Binding {
+    #[serde(default)]
+    pub force: Option<crate::revision::ForceMain>,
     pub doc: String,
     pub clock: Clock,
     pub hash: String,
@@ -434,6 +491,17 @@ impl Inner {
             .insert(key, value.clone())
             != Some(value);
         if changed {
+            if let Some(force) = &revision.force {
+                crate::traffic::force(
+                    doc,
+                    &format!(
+                        "Force sync main revision acknowledged by peer: generation {}",
+                        force.generation
+                    ),
+                    force,
+                    0,
+                );
+            }
             self.event(Event::Changed);
         }
     }
@@ -593,34 +661,42 @@ impl Inner {
             .keys()
             .any(|id| !d.members.iter().any(|p| &p.id == id))
         {
-            return Err("Unbekannter Versionsautor.".into());
+            return Err("Unknown revision author.".into());
         }
         if std::iter::once(&d.head)
             .chain(&d.conflicts)
-            .any(|r| dominates(&r.clock, &revision.clock) && r.clock != revision.clock)
+            .any(|r| supersedes(r, &revision))
         {
+            if d.head.force > revision.force {
+                crate::traffic::force(
+                    doc,
+                    "Force sync main: superseded revision ignored",
+                    d.head.force.as_ref().unwrap(),
+                    0,
+                );
+            }
             return Ok(());
         }
         let conflict;
+        let mut applied_force = None;
         if std::iter::once(&d.head)
             .chain(&d.conflicts)
-            .all(|r| dominates(&revision.clock, &r.clock) && revision.clock != r.clock)
+            .all(|r| supersedes(&revision, r))
         {
+            if revision.force > d.head.force {
+                applied_force = revision
+                    .force
+                    .clone()
+                    .map(|marker| (marker, revision.bytes));
+            }
             d.history.push(d.head.clone());
             d.history.append(&mut d.conflicts);
             d.head = revision;
             conflict = false;
-        } else if revision.hash == d.head.hash && d.conflicts.is_empty() {
-            for (id, n) in revision.clock {
-                let entry = d.head.clock.entry(id).or_default();
-                *entry = (*entry).max(n);
-            }
-            conflict = false;
         } else {
-            d.conflicts
-                .retain(|r| !dominates(&revision.clock, &r.clock) || revision.clock == r.clock);
+            d.conflicts.retain(|r| !supersedes(&revision, r));
             if d.conflicts.len() >= 32 {
-                return Err("Zu viele offene Versionskonflikte.".into());
+                return Err("Too many unresolved revision conflicts.".into());
             }
             d.conflicts.push(revision);
             conflict = true;
@@ -630,6 +706,9 @@ impl Inner {
         }
         self.save(&s)?;
         drop(s);
+        if let Some((marker, bytes)) = applied_force {
+            crate::traffic::force(doc, "Force sync main applied", &marker, bytes);
+        }
         self.event(if conflict {
             Event::Conflict(doc.into())
         } else {
@@ -702,7 +781,10 @@ impl Service {
         } else {
             State::default()
         };
-        let legacy = state.protocol != crate::revision::PROTOCOL;
+        if state.protocol > crate::revision::PROTOCOL {
+            return Err("This profile uses a newer sync protocol; downgrade refused".into());
+        }
+        let legacy = state.protocol < 153;
         if legacy {
             for doc in state.docs.values_mut() {
                 doc.active = false;
@@ -714,8 +796,8 @@ impl Service {
             for (_, acceptance) in state.inbox.values_mut() {
                 acceptance.autosave = false;
             }
-            state.protocol = crate::revision::PROTOCOL;
         }
+        state.protocol = crate::revision::PROTOCOL;
         let (wake, rx) = mpsc::channel();
         let inner = Arc::new(Inner {
             state: Mutex::new(state),
@@ -1285,6 +1367,7 @@ impl Service {
         let (key, _reservation) = self.inner.put_content(&id, data)?;
         let own = self.inner.own();
         let mut revision = Revision {
+            force: None,
             doc: id.clone(),
             group: crate::revision::group(
                 &peers
@@ -1416,10 +1499,17 @@ impl Service {
             .values()
             .find(|r| r.doc == id && &r.clock == base)
             .ok_or("The edited base revision is unavailable; select a current conflict version")?;
-        let mut clock = parent.clock.clone();
-        let n = clock.entry(self.inner.id.clone()).or_default();
-        *n = n.checked_add(1).ok_or("Revision counter is full")?;
+        if parent.force < d.head.force {
+            return Err("A force-main decision superseded this draft; keep it as a separate copy before editing the current main version".into());
+        }
+        let mut parents = vec![parent.clone()];
+        include_local_provenance(&s, id, &self.inner.id, &mut parents);
+        if parents.iter().any(|r| r.force > parent.force) {
+            return Err("A newer signed force-main decision is pending; synchronise its main version before publishing".into());
+        }
+        let clock = parent_clock(&parents, &self.inner.id)?;
         let mut revision = Revision {
+            force: parent.force.clone(),
             clock,
             hash: content,
             author: self.inner.id.clone(),
@@ -1427,7 +1517,7 @@ impl Service {
             doc: id.into(),
             group: parent.group.clone(),
             bytes: data.len() as u64,
-            parents: vec![parent.key()],
+            parents: parents.iter().map(Revision::key).collect(),
             signature: String::new(),
         };
         if s.proofs.values().any(|r| {
@@ -1449,7 +1539,7 @@ impl Service {
         )?;
         Ok(revision)
     }
-    pub fn resolve(&self, id: &str, key: &str) -> Result<Revision, String> {
+    pub fn force_main(&self, id: &str, key: &str) -> Result<Revision, String> {
         let mut s = self.inner.state.lock().unwrap();
         if s.proofs.len() >= crate::security::limits().proofs as usize {
             return Err(
@@ -1458,13 +1548,13 @@ impl Service {
             );
         }
         let name = s.config.name.clone();
-        let d = s.docs.get_mut(id).ok_or("Document is missing.")?;
+        let d = s.docs.get(id).ok_or("Document is missing.")?;
         if !d.active || d.head.signature.is_empty() {
             return Err(
                 "This archived group cannot publish revisions; share a fresh group first".into(),
             );
         }
-        let heads: Vec<_> = std::iter::once(d.head.clone())
+        let mut heads: Vec<_> = std::iter::once(d.head.clone())
             .chain(d.conflicts.clone())
             .collect();
         let mut chosen = heads
@@ -1472,21 +1562,29 @@ impl Service {
             .find(|r| r.key() == key)
             .cloned()
             .ok_or("Revision has been replaced. Select it again.")?;
-        let mut clock = Clock::new();
-        for r in &heads {
-            for (k, n) in &r.clock {
-                let e = clock.entry(k.clone()).or_default();
-                *e = (*e).max(*n);
-            }
-        }
-        let n = clock.entry(self.inner.id.clone()).or_default();
-        *n = n.checked_add(1).ok_or("Revision counter is full.")?;
-        chosen.clock = clock;
+        include_local_provenance(&s, id, &self.inner.id, &mut heads);
+        let generation = heads
+            .iter()
+            .filter_map(|r| r.force.as_ref())
+            .map(|f| f.generation)
+            .max()
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or("Force-main generation overflow")?;
+        chosen.force = Some(crate::revision::ForceMain {
+            generation,
+            author: self.inner.id.clone(),
+            nonce: crate::private_fs::random_token().map_err(err)?,
+            selected: key.into(),
+        });
+        chosen.clock = parent_clock(&heads, &self.inner.id)?;
         chosen.author = self.inner.id.clone();
         chosen.name = name;
         chosen.parents = heads.iter().map(Revision::key).collect();
         crate::revision::sign(&mut chosen, &self.inner.key)?;
+        crate::revision::causal(&chosen, &s.proofs)?;
         let chosen_proof = chosen.clone();
+        let d = s.docs.get_mut(id).ok_or("Document is missing.")?;
         d.history.extend(heads);
         if d.history.len() > 20 {
             d.history.drain(..d.history.len() - 20);
@@ -1496,6 +1594,12 @@ impl Service {
         s.proofs.insert(chosen_proof.key(), chosen_proof);
         self.inner.save(&s)?;
         drop(s);
+        crate::traffic::force(
+            id,
+            &format!("Force sync main created: generation {generation}"),
+            chosen.force.as_ref().unwrap(),
+            chosen.bytes,
+        );
         self.wake();
         self.inner.event(Event::Updated(id.into()));
         Ok(chosen)
@@ -1837,7 +1941,9 @@ fn serve(
         Request::Hello { mut info } => {
             info.host = remote.ip().to_canonical().to_string();
             if info.protocol != crate::revision::PROTOCOL {
-                return Err("All sharing devices must use EditorTool V1.5.3 or newer".into());
+                return Err(
+                    "All sharing devices must use compatible EditorTool V1.5.4 peers".into(),
+                );
             }
             if info.id != peer || !peer_valid(&info) {
                 return Err("Invalid device identifier.".into());
@@ -2190,7 +2296,9 @@ fn sweep(inner: &Arc<Inner>) {
                 return Err("No compatible EditorTool client.".into());
             };
             if info.protocol != crate::revision::PROTOCOL {
-                return Err("All sharing devices must use EditorTool V1.5.3 or newer".into());
+                return Err(
+                    "All sharing devices must use compatible EditorTool V1.5.4 peers".into(),
+                );
             }
             if info.id != peer.id && !peer.id.is_empty() {
                 return Err("Device identifier mismatch.".into());
@@ -2233,10 +2341,13 @@ fn sweep(inner: &Arc<Inner>) {
                 .collect::<Vec<_>>();
             for d in docs {
                 for (_, remote) in heads.iter().filter(|(id, _)| id == &d.id) {
-                    if std::iter::once(&d.head).chain(&d.conflicts).any(|r| {
-                        same(r, remote)
-                            || dominates(&r.clock, &remote.clock) && r.clock != remote.clock
-                    }) {
+                    if std::iter::once(&d.head)
+                        .chain(&d.conflicts)
+                        .any(|r| same(r, remote) || supersedes(r, remote))
+                    {
+                        if d.head.force > remote.force {
+                            crate::traffic::force(&d.id, &format!("Force sync main retained: generation {}; superseded peer generation {} ignored", d.head.force.as_ref().unwrap().generation, remote.force.as_ref().map_or(0, |f| f.generation)), d.head.force.as_ref().unwrap(), 0);
+                        }
                         continue;
                     }
                     let mut stream = connect(inner, &peer, started)?;
@@ -2265,10 +2376,10 @@ fn sweep(inner: &Arc<Inner>) {
                     .unwrap();
                 for local in std::iter::once(&fresh.head).chain(&fresh.conflicts) {
                     if !heads.iter().any(|(id, _)| id == &d.id)
-                        || heads.iter().filter(|(id, _)| id == &d.id).any(|(_, r)| {
-                            same(r, local)
-                                || dominates(&r.clock, &local.clock) && r.clock != local.clock
-                        })
+                        || heads
+                            .iter()
+                            .filter(|(id, _)| id == &d.id)
+                            .any(|(_, r)| same(r, local) || supersedes(r, local))
                     {
                         continue;
                     }

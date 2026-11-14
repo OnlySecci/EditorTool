@@ -32,6 +32,7 @@ impl Panel {
         device.set_value(0);
         let mut direction = Choice::default();
         direction.add_choice(crate::i18n::tr("All directions|TX|RX|OUT|IN|ERROR"));
+        direction.add_choice("SYNC");
         direction.set_value(0);
         filters.fixed(&direction, 140);
         let mut search = Input::default();
@@ -140,6 +141,7 @@ impl Panel {
             });
             if !device.is_empty()
                 && device != e.peer
+                && device != e.force_author
                 && device != e.remote
                 && !peer
                     .is_some_and(|p| device == p.id || device == format!("{}:{}", p.host, p.port))
@@ -151,7 +153,7 @@ impl Panel {
             }
             let t = time::OffsetDateTime::from_unix_timestamp(e.time as i64)
                 .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
-            let line = format!(
+            let mut line = format!(
                 "{:02}:{:02}:{:02} UTC  {:5}  {}  {} -> {}  {}  {} B\n",
                 t.hour(),
                 t.minute(),
@@ -163,6 +165,12 @@ impl Panel {
                 e.event,
                 e.bytes
             );
+            if !e.document.is_empty() {
+                line.push_str(&format!(
+                    "    Group {} · Force {} · Authority {}\n",
+                    e.document, e.force_generation, e.force_author
+                ));
+            }
             if query.is_empty()
                 || line.to_lowercase().contains(&query)
                 || e.peer.to_lowercase().contains(&query)

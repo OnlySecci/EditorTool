@@ -20,6 +20,26 @@ impl Runtime {
                     .set_label(&crate::tr_format!("Could not read network adapters: {e}"));
             }
         }
+        // A crash may leave the independently persisted session behind the
+        // signed sharing head. Reapply authority after restoration, preserving drafts.
+        let pending: BTreeSet<_> = self
+            .windows
+            .iter()
+            .flatten()
+            .flat_map(|w| &w.docs)
+            .filter_map(|d| d.sharing.as_ref())
+            .filter(|b| {
+                self.sharing
+                    .as_ref()
+                    .and_then(|s| s.document(&b.doc))
+                    .is_some_and(|d| d.head.force > b.force)
+            })
+            .map(|b| b.doc.clone())
+            .collect();
+        for id in pending {
+            self.tx
+                .send((0, Action::PeerEvent(peer::Event::Updated(id))));
+        }
     }
     fn doc_position(&self, key: &str) -> Option<(usize, usize)> {
         self.windows.iter().enumerate().find_map(|(wi, w)| {
@@ -223,6 +243,7 @@ impl Runtime {
             .publish(&binding.doc, &binding.clock, &data)?;
         let d = &mut self.windows[wi].as_mut().unwrap().docs[di];
         if let Some(b) = &mut d.sharing {
+            b.force = revision.force;
             b.clock = revision.clock;
             b.hash = revision.hash;
         }
@@ -345,16 +366,59 @@ impl Runtime {
             })
             .collect();
         let mut data = None;
+        let mut forced_any = false;
+        let mut save_error = None;
         for (wi, di) in positions {
+            let recovery = {
+                let d = &self.windows[wi].as_ref().unwrap().docs[di];
+                let forced = d
+                    .sharing
+                    .as_ref()
+                    .is_some_and(|b| b.force < document.head.force);
+                (forced && d.left_meta.borrow().revision != d.share_revision)
+                    .then(|| (d.left.cache_text(), d.title(), d.left_language))
+            };
+            let recovered_draft = recovery.is_some();
+            if let Some((draft, title, language)) = recovery {
+                if !self.cache_enabled {
+                    return Err("Force main received. Save the local draft first: protected session recovery is unavailable.".into());
+                }
+                let w = self.windows[wi].as_mut().unwrap();
+                let active = w.active;
+                w.add_tab(wi, self.tx);
+                let recovered = &mut w.docs[w.active];
+                recovered.left.set_cache_text(&draft)?;
+                recovered.display_name =
+                    Some(format!("Recovered before Force sync main — {title}"));
+                recovered.left_language = language;
+                recovered.report = "Local draft preserved; this copy is not synchronised".into();
+                w.action(Action::Select(active), wi, self.tx);
+                self.persist();
+                self.store.flush()?;
+                crate::traffic::force(
+                    id,
+                    "Force sync main: unsent local draft preserved in recovery tab",
+                    document.head.force.as_ref().unwrap(),
+                    0,
+                );
+            }
             let d = &mut self.windows[wi].as_mut().unwrap().docs[di];
-            if d.left_meta.borrow().revision != d.share_revision {
+            let forced = d
+                .sharing
+                .as_ref()
+                .is_some_and(|b| b.force < document.head.force);
+            forced_any |= forced;
+            if d.left_meta.borrow().revision != d.share_revision && !forced {
                 continue;
             }
             let b = d.sharing.as_ref().unwrap();
-            if b.hash == document.head.hash && b.clock == document.head.clock {
+            if b.hash == document.head.hash
+                && b.clock == document.head.clock
+                && b.force == document.head.force
+            {
                 continue;
             }
-            if b.hash != document.head.hash {
+            if b.hash != document.head.hash || recovered_draft {
                 if data.is_none() {
                     data = Some(self.sharing.as_ref().unwrap().body(&document.head.hash)?);
                 }
@@ -362,13 +426,30 @@ impl Runtime {
                 d.left.apply_sync_text(data.as_ref().unwrap())?;
             }
             let b = d.sharing.as_mut().unwrap();
+            b.force = document.head.force.clone();
             b.hash = document.head.hash.clone();
             b.clock = document.head.clock.clone();
             d.share_revision = d.left_meta.borrow().revision;
-            d.report = format!("Sync · {}", document.head.name);
-            Self::autosave_shared(d)?;
+            d.report = if forced {
+                format!(
+                    "Force sync main · generation {} · {}",
+                    document.head.force.as_ref().unwrap().generation,
+                    document.head.name
+                )
+            } else {
+                format!("Sync · {}", document.head.name)
+            };
+            if forced {
+                d.sync_error = None;
+            }
+            if let Err(error) = Self::autosave_shared(d) {
+                save_error.get_or_insert(error);
+            }
         }
-        Ok(())
+        if forced_any {
+            self.persist();
+        }
+        save_error.map_or(Ok(()), Err)
     }
     fn open_conflict(&mut self, id: &str) {
         if let Some(document) = self.sharing.as_ref().and_then(|s| s.document(id)) {
@@ -447,6 +528,7 @@ impl Runtime {
         d.left_language = Some(Language::detect(Some(std::path::Path::new(&offer.title))));
         if offer.sync {
             d.sharing = Some(peer::Binding {
+                force: offer.revision.force.clone(),
                 doc: offer.doc.clone(),
                 clock: offer.revision.clock,
                 hash: offer.revision.hash,
@@ -514,7 +596,7 @@ impl Runtime {
                 | Action::StopSync
                 | Action::ShowConflicts
                 | Action::PreviewConflict
-                | Action::ResolveConflict
+                | Action::ForceSyncMain
                 | Action::PeerEvent(_)
                 | Action::PublishDoc(..)
                 | Action::SyncCountdown
@@ -772,6 +854,7 @@ impl Runtime {
                                 s.leave(&binding.doc)?;
                             }
                             d.sharing = Some(peer::Binding {
+                                force: r.force,
                                 doc,
                                 clock: r.clock,
                                 hash: r.hash,
@@ -825,7 +908,7 @@ impl Runtime {
                     }
                 }
                 Action::PreviewConflict => self.preview_conflict(),
-                Action::ResolveConflict => {
+                Action::ForceSyncMain => {
                     let id = self.conflicts.doc.clone().ok_or("No conflict selected")?;
                     let i = self.conflicts.list.value();
                     if i < 1 {
@@ -837,31 +920,11 @@ impl Runtime {
                         .get(i as usize - 1)
                         .ok_or("Select a revision")?
                         .key();
-                    let pending: Vec<_> = self
-                        .windows
-                        .iter()
-                        .flatten()
-                        .flat_map(|w| {
-                            w.docs
-                                .iter()
-                                .filter(|d| {
-                                    d.sharing.as_ref().is_some_and(|b| b.doc == id)
-                                        && d.left_meta.borrow().revision != d.share_revision
-                                })
-                                .map(|d| (d.cache_key.clone(), d.left_meta.borrow().revision))
-                        })
-                        .collect();
-                    if !pending.is_empty() {
-                        for (k, r) in pending {
-                            self.publish_shared(&k, r)?;
-                        }
-                        self.open_conflict(&id);
-                        return Err("Recent local changes were saved as an additional revision. Select the revision to use now.".into());
-                    }
+                    if chrome::decision(None, "Force sync main", "Use the selected revision as the shared main version?", "Older force generations and offline edits based on them will not replace it. Unsent local drafts are preserved in separate recovery tabs. Later edits based on this main version can sync normally.", &["Cancel", "Force sync main"], 0) != Some(1) { return Ok(()); }
                     self.sharing
                         .as_ref()
                         .ok_or("Sharing service is missing")?
-                        .resolve(&id, &key)?;
+                        .force_main(&id, &key)?;
                     self.conflict_notified.remove(&id);
                     self.conflicts.win.hide();
                     self.apply_shared(&id)?;

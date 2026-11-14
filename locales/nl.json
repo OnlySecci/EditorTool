@@ -416,5 +416,6 @@
   "Which revision should be used?": "Welke versie gebruiken?",
   "Use selected revision": "Geselecteerde versie gebruiken",
   "Fit to text area": "Aan tekstgebied aanpassen",
-  "Security": "Beveiliging"
+  "Security": "Beveiliging",
+  "Force sync main": "Hoofdversie afdwingen"
 }
