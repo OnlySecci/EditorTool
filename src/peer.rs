@@ -1,7 +1,10 @@
 //! Opt-in private-network sharing. Pinned mutual TLS, immutable content blobs,
 //! explicit offers, persistent outbox and causal (not timestamp) version order.
 use crate::{session, Action, Message};
+#[path = "peer_security.rs"]
+mod protection;
 use base64::{engine::general_purpose::STANDARD, Engine};
+use protection::{fetch_proofs, push_proofs};
 use rustls::{
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
     pki_types::{CertificateDer, PrivatePkcs8KeyDer, ServerName, UnixTime},
@@ -134,6 +137,8 @@ pub struct Peer {
     pub host: String,
     pub port: u16,
     pub cert: String,
+    #[serde(default)]
+    pub protocol: u16,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -169,10 +174,24 @@ pub struct Revision {
     pub hash: String,
     pub author: String,
     pub name: String,
+    #[serde(default)]
+    pub doc: String,
+    #[serde(default)]
+    pub group: String,
+    #[serde(default)]
+    pub bytes: u64,
+    #[serde(default)]
+    pub parents: Vec<String>,
+    #[serde(default)]
+    pub signature: String,
 }
 impl Revision {
     pub fn key(&self) -> String {
-        hash(format!("{}{:?}", self.hash, self.clock).as_bytes())
+        if self.signature.is_empty() {
+            hash(format!("{}{:?}", self.hash, self.clock).as_bytes())
+        } else {
+            hash(&crate::revision::payload(self))
+        }
     }
 }
 fn dominates(a: &Clock, b: &Clock) -> bool {
@@ -180,7 +199,7 @@ fn dominates(a: &Clock, b: &Clock) -> bool {
         .all(|(id, n)| a.get(id).copied().unwrap_or(0) >= *n)
 }
 fn same(a: &Revision, b: &Revision) -> bool {
-    a.hash == b.hash && a.clock == b.clock
+    a.key() == b.key()
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Document {
@@ -193,6 +212,8 @@ pub struct Document {
     pub active: bool,
     #[serde(default)]
     pub departed: BTreeSet<String>,
+    #[serde(default)]
+    pub root: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Offer {
@@ -209,6 +230,8 @@ pub struct Acceptance {
     pub accepted: bool,
     pub path: Option<PathBuf>,
     pub autosave: bool,
+    #[serde(default)]
+    pub approved_target: Option<PathBuf>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Outbox {
@@ -217,6 +240,12 @@ struct Outbox {
 }
 #[derive(Default, Serialize, Deserialize)]
 struct State {
+    #[serde(default)]
+    protocol: u16,
+    #[serde(default)]
+    revoked: BTreeSet<String>,
+    #[serde(default)]
+    proofs: BTreeMap<String, Revision>,
     #[serde(default)]
     locked_clients: BTreeSet<String>,
     #[serde(default)]
@@ -261,6 +290,8 @@ pub struct Binding {
     pub hash: String,
     pub autosave: bool,
     #[serde(default)]
+    pub approved_target: Option<PathBuf>,
+    #[serde(default)]
     pub disk_hash: Option<String>,
 }
 #[derive(Default)]
@@ -287,6 +318,14 @@ enum Request {
         offer: Option<String>,
         len: u64,
     },
+    Proofs {
+        doc: String,
+        keys: Vec<String>,
+    },
+    ProofPush {
+        doc: String,
+        nodes: Vec<Revision>,
+    },
     Get {
         doc: String,
         key: String,
@@ -298,6 +337,7 @@ enum Reply {
         info: Peer,
         heads: Vec<(String, Revision)>,
     },
+    Proofs(Vec<Revision>),
     Pending,
     Accepted,
     Rejected,
@@ -320,6 +360,8 @@ impl WireLabel for Request {
             Self::Offer(_) => "request Offer",
             Self::Put { .. } => "request Put",
             Self::Get { .. } => "request Get",
+            Self::Proofs { .. } => "request Proofs",
+            Self::ProofPush { .. } => "request ProofPush",
         }
     }
 }
@@ -328,6 +370,7 @@ impl WireLabel for Reply {
         match self {
             Self::Hello { .. } => "reply Hello",
             Self::Pending => "reply Pending",
+            Self::Proofs(_) => "reply Proofs",
             Self::Accepted => "reply Accepted",
             Self::Rejected => "reply Rejected",
             Self::Ready => "reply Ready",
@@ -351,7 +394,7 @@ struct Inner {
     state: Mutex<State>,
     root: PathBuf,
     cert: Vec<u8>,
-    key: Vec<u8>,
+    key: zeroize::Zeroizing<Vec<u8>>,
     id: String,
     tx: fltk::app::Sender<Message>,
     enabled: AtomicBool,
@@ -413,11 +456,16 @@ impl Inner {
         self.tx.send((0, Action::PeerEvent(event)));
     }
     fn save(&self, s: &State) -> Result<(), String> {
-        let result = session::atomic_write(
-            &self.root.join("sharing.json"),
-            &serde_json::to_vec(s).map_err(err)?,
-        )
-        .map_err(err);
+        let bytes = serde_json::to_vec(s).map_err(err)?;
+        if bytes.len() > 32 * 1024 * 1024 {
+            self.enabled.store(false, Ordering::Relaxed);
+            self.network_epoch.fetch_add(1, Ordering::Relaxed);
+            self.event(Event::Fatal(
+                "Sharing metadata quota exceeded; last saved state preserved".into(),
+            ));
+            return Err("Sharing metadata quota exceeded".into());
+        }
+        let result = session::atomic_write(&self.root.join("sharing.json"), &bytes).map_err(err);
         if let Err(e) = &result {
             self.enabled.store(false, Ordering::Relaxed);
             self.event(Event::Fatal(e.clone()));
@@ -432,6 +480,7 @@ impl Inner {
             host: String::new(),
             port: s.config.port,
             cert: STANDARD.encode(&self.cert),
+            protocol: crate::revision::PROTOCOL,
         }
     }
     fn content_path(&self, hash: &str) -> Result<PathBuf, String> {
@@ -440,33 +489,48 @@ impl Inner {
         }
         Ok(self.root.join("content").join(format!("{hash}.txt")))
     }
-    fn put_content(&self, data: &str) -> Result<String, String> {
+    fn put_content(
+        &self,
+        doc: &str,
+        data: &str,
+    ) -> Result<(String, crate::security::Reservation), String> {
         if data.len() as u64 > MAX {
             return Err("Document exceeds 64 MiB.".into());
         }
         crate::rich::validate_snapshot(data)?;
         let key = hash(data.as_bytes());
         let path = self.content_path(&key)?;
+        // Reserve the full attribution even when another group already owns the
+        // same CAS body; deduplication must not bypass document/author quotas.
+        let reservation = self.reserve(doc, &self.id, data.len() as u64)?;
         if !path.exists() {
             session::atomic_write(&path, data.as_bytes()).map_err(err)?;
         }
-        Ok(key)
+        Ok((key, reservation))
     }
     fn trusted(&self, cert: &CertificateDer<'_>, host: &str, port: u16) -> bool {
         let id = hash(cert.as_ref());
         if cert.len() > 16384 || id == self.id {
             return false;
         }
-        if self
-            .state
-            .lock()
-            .unwrap()
-            .config
-            .clients
-            .iter()
-            .any(|p| p.id == id && p.cert == STANDARD.encode(cert.as_ref()))
         {
-            return true;
+            let state = self.state.lock().unwrap();
+            if state.revoked.contains(&id) {
+                return false;
+            }
+            let matches = |p: &Peer| p.id == id && p.cert == STANDARD.encode(cert.as_ref());
+            if state.config.clients.iter().any(matches)
+                || state
+                    .docs
+                    .values()
+                    .any(|d| self.allowed(&state, &d.id, &id) && d.members.iter().any(matches))
+                || state.offers.values().any(|o| {
+                    state.decisions.get(&o.id).is_some_and(|a| a.accepted)
+                        && o.members.iter().any(matches)
+                })
+            {
+                return true;
+            }
         }
         let mut seen = self.seen.lock().unwrap();
         if seen.len() < 32 && seen.insert(id.clone()) {
@@ -476,13 +540,48 @@ impl Inner {
                 host: host.into(),
                 port,
                 cert: STANDARD.encode(cert.as_ref()),
+                protocol: 0,
             }));
         }
         false
     }
-    fn receive(&self, doc: &str, revision: Revision) -> Result<(), String> {
+    fn receive(
+        &self,
+        doc: &str,
+        revision: Revision,
+        source: &str,
+        epoch: u64,
+    ) -> Result<(), String> {
         validate_revision(&revision)?;
         let mut s = self.state.lock().unwrap();
+        if self.network_epoch.load(Ordering::Relaxed) != epoch || !self.allowed(&s, doc, source) {
+            return Err("Document permission changed; revision refused".into());
+        }
+        let document = s.docs.get(doc).ok_or("Unknown document")?;
+        if s.revoked.contains(&revision.author) || document.departed.contains(&revision.author) {
+            return Err("Revision author is revoked or has left this document".into());
+        }
+        crate::revision::verify(&revision, doc, &document.members)?;
+        if revision.parents.is_empty() && revision.key() != document.root {
+            return Err("Unapproved revision root".into());
+        }
+        crate::revision::causal(&revision, &s.proofs)?;
+        if s.proofs.len() >= crate::security::limits().proofs as usize
+            && !s.proofs.contains_key(&revision.key())
+        {
+            return Err(
+                "Signed history quota reached; share a fresh group or increase its limit".into(),
+            );
+        }
+        if s.proofs.values().any(|known| {
+            known.doc == doc
+                && known.author == revision.author
+                && known.clock.get(&revision.author) == revision.clock.get(&revision.author)
+                && known.key() != revision.key()
+        }) {
+            return Err("Signed device revision fork detected".into());
+        }
+        s.proofs.insert(revision.key(), revision.clone());
         let Some(d) = s.docs.get_mut(doc) else {
             return Err("Document is not shared.".into());
         };
@@ -540,9 +639,13 @@ impl Inner {
         Ok(())
     }
     fn allowed(&self, s: &State, doc: &str, peer: &str) -> bool {
-        s.config.clients.iter().any(|p| p.id == peer)
+        self.enabled.load(Ordering::Relaxed)
+            && !s.revoked.contains(peer)
             && s.docs.get(doc).is_some_and(|d| {
                 d.active
+                    && !d.head.signature.is_empty()
+                    && d.head.doc == d.id
+                    && !d.root.is_empty()
                     && !d.departed.contains(peer)
                     && !d.departed.contains(&self.id)
                     && d.members.iter().any(|p| p.id == peer)
@@ -574,6 +677,9 @@ fn peer_valid(p: &Peer) -> bool {
 }
 impl Service {
     pub fn new(root: PathBuf, tx: fltk::app::Sender<Message>) -> Result<Self, String> {
+        if !crate::security::ready() {
+            return Err("Security limits could not be loaded; repair settings and restart".into());
+        }
         crate::private_fs::directory(&root).map_err(err)?;
         crate::private_fs::directory(&root.join("content")).map_err(err)?;
         for dir in [&root, &root.join("content")] {
@@ -587,31 +693,29 @@ impl Service {
                 }
             }
         }
-        let (cert, key) = if root.join("identity.der").exists() {
-            (
-                crate::limits::read(&root.join("identity.der"), 16384).map_err(err)?,
-                crate::limits::read(&root.join("identity.key"), 16384).map_err(err)?,
-            )
-        } else {
-            let identity =
-                rcgen::generate_simple_self_signed(vec!["editortool.local".into()]).map_err(err)?;
-            let cert = identity.cert.der().to_vec();
-            let key = identity.key_pair.serialize_der();
-            for (name, data) in [("identity.der", &cert), ("identity.key", &key)] {
-                let mut file = crate::private_fs::create(&root.join(name)).map_err(err)?;
-                file.write_all(data).map_err(err)?;
-                file.sync_all().map_err(err)?;
-            }
-            (cert, key)
-        };
-        let state = if root.join("sharing.json").exists() {
+        let (cert, key) = crate::identity::load(&root)?;
+        let mut state: State = if root.join("sharing.json").exists() {
             serde_json::from_slice(
-                &crate::limits::read(&root.join("sharing.json"), 8 * 1024 * 1024).map_err(err)?,
+                &crate::limits::read(&root.join("sharing.json"), 32 * 1024 * 1024).map_err(err)?,
             )
             .map_err(err)?
         } else {
             State::default()
         };
+        let legacy = state.protocol != crate::revision::PROTOCOL;
+        if legacy {
+            for doc in state.docs.values_mut() {
+                doc.active = false;
+            }
+            state.outbox.clear();
+            state.offers.clear();
+            state.decisions.clear();
+            state.leaves.clear();
+            for (_, acceptance) in state.inbox.values_mut() {
+                acceptance.autosave = false;
+            }
+            state.protocol = crate::revision::PROTOCOL;
+        }
         let (wake, rx) = mpsc::channel();
         let inner = Arc::new(Inner {
             state: Mutex::new(state),
@@ -631,6 +735,13 @@ impl Service {
             acknowledgements: Mutex::new(BTreeMap::new()),
             wake: wake.clone(),
         });
+        {
+            let state = inner.state.lock().unwrap();
+            inner.save(&state)?;
+        }
+        if legacy {
+            inner.event(Event::Notice("V1.5.3 protects revision provenance. Existing unsigned groups are paused; update all peers and share a fresh group. Documents and device identities are preserved.".into()));
+        }
         let worker = inner.clone();
         thread::spawn(move || loop {
             let pending = {
@@ -992,6 +1103,7 @@ impl Service {
             host,
             port,
             cert: String::new(),
+            protocol: 0,
         });
         self.configure(c)
     }
@@ -1000,6 +1112,9 @@ impl Service {
         if index < c.clients.len() {
             let removed = c.clients.remove(index);
             let mut s = self.inner.state.lock().unwrap();
+            if !removed.id.is_empty() {
+                s.revoked.insert(removed.id.clone());
+            }
             s.outbox.retain(|o| o.target != removed.id);
             s.leaves.retain(|(_, target)| target != &removed.id);
             let offers: Vec<_> = s
@@ -1023,6 +1138,12 @@ impl Service {
         if !peer_valid(&peer) {
             return Err("Invalid device key or address.".into());
         }
+        if self.inner.state.lock().unwrap().revoked.contains(&peer.id) {
+            return Err(
+                "This fingerprint is revoked. Unblock it explicitly in Security before pairing."
+                    .into(),
+            );
+        }
         let mut c = self.config();
         if let Some(p) = c.clients.iter_mut().find(|p| {
             p.host == peer.host && (p.port == peer.port || p.cert.is_empty()) || p.id == peer.id
@@ -1034,6 +1155,14 @@ impl Service {
                 peer.port = p.port;
                 state.locked_clients.insert(peer.id.clone());
                 self.inner.save(&state)?;
+            }
+            if !p.id.is_empty() && p.id != peer.id {
+                self.inner
+                    .state
+                    .lock()
+                    .unwrap()
+                    .revoked
+                    .insert(p.id.clone());
             }
             *p = peer;
         } else {
@@ -1118,7 +1247,11 @@ impl Service {
         let mut s = self.inner.state.lock().unwrap();
         let mut changed = false;
         for d in s.docs.values_mut() {
-            let active = ids.contains(&d.id) && !d.departed.contains(&self.inner.id);
+            let active = ids.contains(&d.id)
+                && !d.head.signature.is_empty()
+                && d.head.doc == d.id
+                && d.members.iter().any(|p| p.id == self.inner.id)
+                && !d.departed.contains(&self.inner.id);
             if d.active != active {
                 d.active = active;
                 changed = true;
@@ -1148,26 +1281,52 @@ impl Service {
         if !sync && peers.len() != 1 {
             return Err("Sending requires exactly one client.".into());
         }
-        let key = self.inner.put_content(data)?;
-        let id = session::new_key();
+        let id = crate::private_fs::random_token().map_err(err)?;
+        let (key, _reservation) = self.inner.put_content(&id, data)?;
         let own = self.inner.own();
-        let revision = Revision {
+        let mut revision = Revision {
+            doc: id.clone(),
+            group: crate::revision::group(
+                &peers
+                    .iter()
+                    .cloned()
+                    .chain(std::iter::once(own.clone()))
+                    .collect::<Vec<_>>(),
+            ),
+            bytes: data.len() as u64,
+            parents: vec![],
+            signature: String::new(),
             clock: BTreeMap::from([(own.id.clone(), 1)]),
             hash: key,
             author: own.id.clone(),
             name: own.name.clone(),
         };
+        crate::revision::sign(&mut revision, &self.inner.key)?;
         let mut members = peers.clone();
         members.push(own);
         let mut s = self.inner.state.lock().unwrap();
+        if peers.iter().any(|p| s.revoked.contains(&p.id)) {
+            return Err("A selected device is revoked".into());
+        }
+        if s.docs.len() >= crate::security::limits().documents as usize {
+            return Err("Document quota reached; remove an inactive group first".into());
+        }
+        if s.proofs.len() >= crate::security::limits().proofs as usize {
+            return Err(
+                "Signed history quota reached; clean retired groups or adjust Security limits"
+                    .into(),
+            );
+        }
         if s.outbox.len() + peers.len() > 64 {
             return Err("Too many pending requests.".into());
         }
+        s.proofs.insert(revision.key(), revision.clone());
         if sync {
             s.docs.insert(
                 id.clone(),
                 Document {
                     id: id.clone(),
+                    root: revision.key(),
                     title: title.clone(),
                     head: revision.clone(),
                     conflicts: vec![],
@@ -1203,6 +1362,7 @@ impl Service {
         accepted: bool,
         path: Option<PathBuf>,
         autosave: bool,
+        approved_target: Option<PathBuf>,
     ) -> Result<(), String> {
         let mut s = self.inner.state.lock().unwrap();
         let offer = s
@@ -1221,18 +1381,12 @@ impl Service {
             self.inner.save(&s)?;
             return Ok(());
         }
-        if accepted && offer.sync {
-            for p in offer.members.iter().filter(|p| p.id != self.inner.id) {
-                if !peer_valid(p) {
-                    return Err("Invalid participant in request.".into());
-                }
-                if !s.config.clients.iter().any(|c| c.id == p.id) {
-                    if s.config.clients.len() >= 32 {
-                        return Err("Client limit reached.".into());
-                    }
-                    s.config.clients.push(p.clone());
-                }
-            }
+        if offer.members.iter().any(|p| s.revoked.contains(&p.id)) {
+            return Err("This offer includes a revoked identity".into());
+        }
+        if accepted {
+            crate::revision::verify(&offer.revision, &offer.doc, &offer.members)?;
+            crate::revision::causal(&offer.revision, &BTreeMap::new())?;
         }
         s.decisions.insert(
             id.into(),
@@ -1240,6 +1394,7 @@ impl Service {
                 accepted,
                 path,
                 autosave,
+                approved_target,
             },
         );
         self.inner.save(&s)?;
@@ -1249,38 +1404,66 @@ impl Service {
         Ok(())
     }
     pub fn publish(&self, id: &str, base: &Clock, data: &str) -> Result<Revision, String> {
-        let content = self.inner.put_content(data)?;
+        let (content, _reservation) = self.inner.put_content(id, data)?;
         let s = self.inner.state.lock().unwrap();
         let name = s.config.name.clone();
         let d = s.docs.get(id).ok_or("Sync document is missing.")?;
         if d.head.hash == content && d.conflicts.is_empty() {
             return Ok(d.head.clone());
         }
-        let mut clock = base.clone();
-        let n = std::iter::once(&d.head)
-            .chain(d.conflicts.iter())
-            .map(|r| r.clock.get(&self.inner.id).copied().unwrap_or(0))
-            .max()
-            .unwrap_or(0)
-            .max(clock.get(&self.inner.id).copied().unwrap_or(0));
-        clock.insert(
-            self.inner.id.clone(),
-            n.checked_add(1).ok_or("Revision counter is full.")?,
-        );
-        let revision = Revision {
+        let parent = s
+            .proofs
+            .values()
+            .find(|r| r.doc == id && &r.clock == base)
+            .ok_or("The edited base revision is unavailable; select a current conflict version")?;
+        let mut clock = parent.clock.clone();
+        let n = clock.entry(self.inner.id.clone()).or_default();
+        *n = n.checked_add(1).ok_or("Revision counter is full")?;
+        let mut revision = Revision {
             clock,
             hash: content,
             author: self.inner.id.clone(),
             name,
+            doc: id.into(),
+            group: parent.group.clone(),
+            bytes: data.len() as u64,
+            parents: vec![parent.key()],
+            signature: String::new(),
         };
+        if s.proofs.values().any(|r| {
+            r.doc == id
+                && r.author == self.inner.id
+                && r.clock.get(&self.inner.id) >= revision.clock.get(&self.inner.id)
+        }) {
+            return Err(
+                "A newer local revision exists; resolve the versions before publishing".into(),
+            );
+        }
+        crate::revision::sign(&mut revision, &self.inner.key)?;
         drop(s);
-        self.inner.receive(id, revision.clone())?;
+        self.inner.receive(
+            id,
+            revision.clone(),
+            &self.inner.id,
+            self.inner.network_epoch.load(Ordering::Relaxed),
+        )?;
         Ok(revision)
     }
     pub fn resolve(&self, id: &str, key: &str) -> Result<Revision, String> {
         let mut s = self.inner.state.lock().unwrap();
+        if s.proofs.len() >= crate::security::limits().proofs as usize {
+            return Err(
+                "Signed history quota reached; clean retired groups or adjust Security limits"
+                    .into(),
+            );
+        }
         let name = s.config.name.clone();
         let d = s.docs.get_mut(id).ok_or("Document is missing.")?;
+        if !d.active || d.head.signature.is_empty() {
+            return Err(
+                "This archived group cannot publish revisions; share a fresh group first".into(),
+            );
+        }
         let heads: Vec<_> = std::iter::once(d.head.clone())
             .chain(d.conflicts.clone())
             .collect();
@@ -1301,12 +1484,16 @@ impl Service {
         chosen.clock = clock;
         chosen.author = self.inner.id.clone();
         chosen.name = name;
+        chosen.parents = heads.iter().map(Revision::key).collect();
+        crate::revision::sign(&mut chosen, &self.inner.key)?;
+        let chosen_proof = chosen.clone();
         d.history.extend(heads);
         if d.history.len() > 20 {
             d.history.drain(..d.history.len() - 20);
         }
         d.head = chosen.clone();
         d.conflicts.clear();
+        s.proofs.insert(chosen_proof.key(), chosen_proof);
         self.inner.save(&s)?;
         drop(s);
         self.wake();
@@ -1459,20 +1646,31 @@ fn read_header<T: serde::de::DeserializeOwned + WireLabel>(
     crate::traffic::record("RX", value.label(), size as u64 + 4);
     Ok(value)
 }
-fn send_body(inner: &Inner, stream: &mut impl Write, hash: &str) -> Result<(), String> {
-    let mut file = fs::File::open(inner.content_path(hash)?).map_err(err)?;
+fn send_body(
+    inner: &Inner,
+    stream: &mut impl Write,
+    hash: &str,
+    doc: &str,
+    peer: &str,
+    epoch: u64,
+) -> Result<(), String> {
+    let path = inner.content_path(hash)?;
+    let mut reader = crate::vault::Reader::new(&path, &path, MAX).map_err(err)?;
     let mut transferred = 0;
-    let mut buffer = [0; 65536];
+    let mut bytes = [0u8; 65536];
     loop {
-        if !inner.enabled.load(Ordering::Relaxed) {
-            return Err("Sharing was disabled.".into());
+        if !inner.still_authorized(doc, peer, epoch) {
+            return Err("Document transfer permission changed".into());
         }
-        let n = file.read(&mut buffer).map_err(err)?;
-        if n == 0 {
+        let count = reader.read(&mut bytes).map_err(err)?;
+        if count == 0 {
             break;
         }
-        stream.write_all(&buffer[..n]).map_err(err)?;
-        transferred += n as u64;
+        stream.write_all(&bytes[..count]).map_err(err)?;
+        transferred += count as u64;
+    }
+    if !inner.still_authorized(doc, peer, epoch) {
+        return Err("Document transfer permission changed".into());
     }
     stream.flush().map_err(err)?;
     crate::traffic::record("TX", "document body completed", transferred);
@@ -1483,17 +1681,19 @@ fn read_body(
     stream: &mut impl Read,
     revision: &Revision,
     len: u64,
-) -> Result<(), String> {
-    if len > MAX {
+) -> Result<crate::security::Reservation, String> {
+    if len > MAX || len != revision.bytes {
         return Err("Document is too large.".into());
     }
     validate_revision(revision)?;
+    let reservation = inner.reserve(&revision.doc, &revision.author, len)?;
     let path = inner.content_path(&revision.hash)?;
     let temp = inner
         .root
         .join("content")
         .join(format!("{}.pending", session::new_key()));
-    let mut file = crate::private_fs::create(&temp).map_err(err)?;
+    let file = crate::private_fs::create(&temp).map_err(err)?;
+    let mut file = crate::vault::Writer::new(file, &path).map_err(err)?;
     let mut hash = Sha256::new();
     let mut left = len;
     let mut buffer = [0u8; 65536];
@@ -1512,9 +1712,9 @@ fn read_body(
             hash.update(&buffer[..n]);
             left -= n as u64;
         }
-        file.sync_all().map_err(err)?;
-        drop(file);
-        let content = crate::limits::read_text(&temp).map_err(err)?;
+        file.finish().map_err(err)?;
+        let content =
+            String::from_utf8(crate::vault::read(&temp, &path, MAX).map_err(err)?).map_err(err)?;
         crate::rich::validate_snapshot(&content)?;
         drop(content);
         if format!("{:x}", hash.finalize()) != revision.hash {
@@ -1531,7 +1731,7 @@ fn read_body(
     if result.is_err() {
         let _ = fs::remove_file(temp);
     }
-    result
+    result.map(|_| reservation)
 }
 fn serve(
     inner: &Arc<Inner>,
@@ -1563,7 +1763,7 @@ fn serve(
         }))
         .with_single_cert(
             vec![CertificateDer::from(inner.cert.clone())],
-            PrivatePkcs8KeyDer::from(inner.key.clone()).into(),
+            PrivatePkcs8KeyDer::from(inner.key.to_vec()).into(),
         )
         .map_err(err)?;
     let mut connection = rustls::ServerConnection::new(Arc::new(config)).map_err(err)?;
@@ -1636,6 +1836,9 @@ fn serve(
         }
         Request::Hello { mut info } => {
             info.host = remote.ip().to_canonical().to_string();
+            if info.protocol != crate::revision::PROTOCOL {
+                return Err("All sharing devices must use EditorTool V1.5.3 or newer".into());
+            }
             if info.id != peer || !peer_valid(&info) {
                 return Err("Invalid device identifier.".into());
             }
@@ -1697,7 +1900,17 @@ fn serve(
                     return Err("Invalid participant.".into());
                 }
             }
+            crate::revision::verify(&offer.revision, &offer.doc, &offer.members)?;
+            crate::revision::causal(&offer.revision, &BTreeMap::new())?;
             let mut s = inner.state.lock().unwrap();
+            if !s.config.clients.iter().any(|p| p.id == peer)
+                || s.revoked.contains(&peer)
+                || s.revoked
+                    .iter()
+                    .any(|id| offer.members.iter().any(|p| &p.id == id))
+            {
+                return Err("Device may not invite new documents".into());
+            }
             if s.denied.contains(&offer.id) {
                 drop(s);
                 write_header(&mut stream, &Reply::Rejected)?;
@@ -1756,14 +1969,41 @@ fn serve(
                 )?;
                 return Ok(());
             }
+            if acceptance.is_none() {
+                let s = inner.state.lock().unwrap();
+                let d = s.docs.get(&doc).ok_or("Unknown document")?;
+                crate::revision::verify(&revision, &doc, &d.members)?;
+                if !s.proofs.contains_key(&revision.key()) {
+                    return Err("Send signed provenance before a document body".into());
+                }
+            } else {
+                let (_, o) = acceptance.as_ref().unwrap();
+                crate::revision::verify(&revision, &doc, &o.members)?;
+            }
             write_header(&mut stream, &Reply::Ready)?;
-            read_body(inner, &mut stream, &revision, len)?;
+            let _reservation = read_body(inner, &mut stream, &revision, len)?;
             if let Some((a, o)) = acceptance {
                 let mut s = inner.state.lock().unwrap();
+                if inner.network_epoch.load(Ordering::Relaxed) != generation
+                    || s.revoked.contains(&peer)
+                    || !s.decisions.get(&o.id).is_some_and(|a| a.accepted)
+                {
+                    return Err("Consent changed during transfer".into());
+                }
+                if (!s.proofs.contains_key(&revision.key())
+                    && s.proofs.len() >= crate::security::limits().proofs as usize)
+                    || (o.sync
+                        && !s.docs.contains_key(&doc)
+                        && s.docs.len() >= crate::security::limits().documents as usize)
+                {
+                    return Err("Sharing quota reached before transfer commit".into());
+                }
+                s.proofs.insert(revision.key(), revision.clone());
                 if o.sync {
                     let departed = s.departures.remove(&doc).unwrap_or_default();
                     s.docs.entry(doc.clone()).or_insert(Document {
                         id: doc.clone(),
+                        root: revision.key(),
                         title: o.title.clone(),
                         head: revision,
                         conflicts: vec![],
@@ -1785,8 +2025,30 @@ fn serve(
                 drop(s);
                 inner.event(Event::Received(o, a));
             } else {
-                inner.receive(&doc, revision)?;
+                inner.receive(&doc, revision, &peer, generation)?;
             }
+            write_header(&mut stream, &Reply::Done)?;
+        }
+        Request::Proofs { doc, keys } => {
+            let s = inner.state.lock().unwrap();
+            if keys.len() > 32 || !inner.allowed(&s, &doc, &peer) {
+                return Err("Proof access denied".into());
+            }
+            let nodes = keys
+                .iter()
+                .map(|key| {
+                    s.proofs
+                        .get(key)
+                        .filter(|r| r.doc == doc)
+                        .cloned()
+                        .ok_or("Signed parent unavailable; share a fresh group")
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            drop(s);
+            write_header(&mut stream, &Reply::Proofs(nodes))?;
+        }
+        Request::ProofPush { doc, nodes } => {
+            inner.accept_proofs(&doc, nodes, &peer, generation)?;
             write_header(&mut stream, &Reply::Done)?;
         }
         Request::Get { doc, key } => {
@@ -1801,9 +2063,7 @@ fn serve(
                 .cloned()
                 .ok_or("Revision is missing.")?;
             drop(s);
-            let len = fs::metadata(inner.content_path(&r.hash)?)
-                .map_err(err)?
-                .len();
+            let len = r.bytes;
             write_header(
                 &mut stream,
                 &Reply::Data {
@@ -1811,7 +2071,7 @@ fn serve(
                     len,
                 },
             )?;
-            send_body(inner, &mut stream, &r.hash)?;
+            send_body(inner, &mut stream, &r.hash, &doc, &peer, generation)?;
         }
     }
     Ok(())
@@ -1862,7 +2122,7 @@ fn connect(
         }))
         .with_client_auth_cert(
             vec![CertificateDer::from(inner.cert.clone())],
-            PrivatePkcs8KeyDer::from(inner.key.clone()).into(),
+            PrivatePkcs8KeyDer::from(inner.key.to_vec()).into(),
         )
         .map_err(err)?;
     let connection = rustls::ClientConnection::new(
@@ -1881,7 +2141,34 @@ fn connect(
     ))
 }
 fn sweep(inner: &Arc<Inner>) {
-    let clients = inner.state.lock().unwrap().config.clients.clone();
+    let clients = {
+        let s = inner.state.lock().unwrap();
+        let mut clients = BTreeMap::new();
+        for peer in s
+            .config
+            .clients
+            .iter()
+            .chain(
+                s.docs
+                    .values()
+                    .filter(|d| d.active)
+                    .flat_map(|d| d.members.iter()),
+            )
+            .chain(
+                s.offers
+                    .values()
+                    .filter(|o| s.decisions.get(&o.id).is_some_and(|a| a.accepted))
+                    .flat_map(|o| o.members.iter()),
+            )
+        {
+            if peer.id != inner.id && !s.revoked.contains(&peer.id) {
+                clients
+                    .entry(peer.id.clone())
+                    .or_insert_with(|| peer.clone());
+            }
+        }
+        clients.into_values().collect::<Vec<_>>()
+    };
     for peer in clients {
         if !inner.enabled.load(Ordering::Relaxed) || inner.stop.load(Ordering::Relaxed) {
             break;
@@ -1902,10 +2189,14 @@ fn sweep(inner: &Arc<Inner>) {
             let Reply::Hello { info, heads } = read_header(&mut stream)? else {
                 return Err("No compatible EditorTool client.".into());
             };
+            if info.protocol != crate::revision::PROTOCOL {
+                return Err("All sharing devices must use EditorTool V1.5.3 or newer".into());
+            }
             if info.id != peer.id && !peer.id.is_empty() {
                 return Err("Device identifier mismatch.".into());
             }
             for (doc, revision) in &heads {
+                fetch_proofs(inner, &peer, doc, revision, started, checked_generation)?;
                 inner.confirmed(&info.id, doc, revision);
             }
             let leaves = inner
@@ -1960,8 +2251,8 @@ fn sweep(inner: &Arc<Inner>) {
                         if !same(&revision, remote) {
                             return Err("Revision reply mismatch.".into());
                         }
-                        read_body(inner, &mut stream, &revision, len)?;
-                        inner.receive(&d.id, revision)?;
+                        let _reservation = read_body(inner, &mut stream, &revision, len)?;
+                        inner.receive(&d.id, revision, &info.id, checked_generation)?;
                     }
                 }
                 let fresh = inner
@@ -1981,10 +2272,9 @@ fn sweep(inner: &Arc<Inner>) {
                     {
                         continue;
                     }
+                    push_proofs(inner, &peer, &d.id, local, started)?;
                     let mut stream = connect(inner, &peer, started)?;
-                    let len = fs::metadata(inner.content_path(&local.hash)?)
-                        .map_err(err)?
-                        .len();
+                    let len = local.bytes;
                     write_header(
                         &mut stream,
                         &Request::Put {
@@ -1995,7 +2285,14 @@ fn sweep(inner: &Arc<Inner>) {
                         },
                     )?;
                     if matches!(read_header(&mut stream)?, Reply::Ready) {
-                        send_body(inner, &mut stream, &local.hash)?;
+                        send_body(
+                            inner,
+                            &mut stream,
+                            &local.hash,
+                            &d.id,
+                            &info.id,
+                            checked_generation,
+                        )?;
                         if matches!(read_header(&mut stream)?, Reply::Done) {
                             inner.confirmed(&info.id, &d.id, local);
                         }
@@ -2044,7 +2341,14 @@ fn sweep(inner: &Arc<Inner>) {
                             },
                         )?;
                         if matches!(read_header(&mut stream)?, Reply::Ready) {
-                            send_body(inner, &mut stream, &offer.revision.hash)?;
+                            send_body(
+                                inner,
+                                &mut stream,
+                                &offer.revision.hash,
+                                &offer.doc,
+                                &info.id,
+                                checked_generation,
+                            )?;
                             matches!(read_header(&mut stream)?, Reply::Done)
                         } else {
                             false

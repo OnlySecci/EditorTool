@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -11,8 +12,11 @@ import time
 import tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
-VERSION = tomllib.loads((ROOT / "Cargo.toml").read_text())["package"]["version"]
 TAG = os.environ["RELEASE_TAG"]
+RENEW = os.environ.get("RENEW_EXISTING") == "1"
+if not re.fullmatch(r"V[0-9]+\.[0-9]+\.[0-9]+", TAG):
+    raise SystemExit("An exact stable Vmajor.minor.patch tag is required")
+VERSION = TAG[1:] if RENEW else tomllib.loads((ROOT / "Cargo.toml").read_text())["package"]["version"]
 if TAG != f"V{VERSION}":
     raise SystemExit("Release tag must exactly match Cargo.toml")
 PACKAGES = ROOT / "packages"
@@ -34,13 +38,39 @@ for name in sorted(expected):
     with path.open("rb") as stream:
         digest = hashlib.file_digest(stream, "sha256").hexdigest()
     assets.append({"name": name, "size": path.stat().st_size, "sha256": digest})
-metadata = PACKAGES / "update-metadata.json"
-issued = int(time.time())
-metadata.write_bytes(json.dumps({"schema": 1, "issued_at": issued, "expires_at": issued + 180 * 86400, "version": VERSION, "tag": TAG, "assets": assets}, sort_keys=True, separators=(",", ":")).encode())
-(PACKAGES / "SHA256SUMS.txt").write_text("".join(f"{a['sha256']}  {a['name']}\n" for a in assets))
 public = base64.b64decode((ROOT / "assets/update-public-key.base64").read_text().strip(), validate=True)
 if len(public) != 32:
     raise SystemExit("Pinned Ed25519 public key has not been provisioned; release blocked")
+metadata = PACKAGES / "update-metadata.json"
+if RENEW:
+    # Expiry is deliberately allowed here: renewal authenticates the original
+    # exact package set before extending validity. Never bless replaced assets.
+    old_bytes = metadata.read_bytes()
+    if len(old_bytes) > 65536:
+        raise SystemExit("Previous metadata is oversized")
+    signature_file = PACKAGES / "update-metadata.sig"
+    if signature_file.stat().st_size > 256:
+        raise SystemExit("Previous signature exceeds size limit")
+    old_signature = base64.b64decode(signature_file.read_text().strip(), validate=True)
+    if len(old_signature) != 64:
+        raise SystemExit("Invalid previous signature")
+    with tempfile.TemporaryDirectory(prefix="editortool-verify-") as tmp:
+        folder = Path(tmp)
+        (folder / "public.der").write_bytes(bytes.fromhex("302a300506032b6570032100") + public)
+        (folder / "signature").write_bytes(old_signature)
+        subprocess.run(["openssl", "pkeyutl", "-verify", "-pubin", "-keyform", "DER", "-inkey", str(folder / "public.der"), "-rawin", "-in", str(metadata), "-sigfile", str(folder / "signature")], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    old = json.loads(old_bytes)
+    if (set(old) != {"schema", "issued_at", "expires_at", "version", "tag", "assets"}
+        or old["schema"] != 1 or old["version"] != VERSION or old["tag"] != TAG
+        or old["expires_at"] <= old["issued_at"]
+        or sorted(old["assets"], key=lambda a: a["name"]) != assets):
+        raise SystemExit("Renewal refused: original signed inventory does not match the downloaded packages")
+if os.environ.get("VERIFY_ONLY") == "1":
+    print("Existing signature and all 16 package hashes verified; no signing key used.")
+    raise SystemExit(0)
+issued = int(time.time())
+metadata.write_bytes(json.dumps({"schema": 1, "issued_at": issued, "expires_at": issued + 180 * 86400, "version": VERSION, "tag": TAG, "assets": assets}, sort_keys=True, separators=(",", ":")).encode())
+(PACKAGES / "SHA256SUMS.txt").write_text("".join(f"{a['sha256']}  {a['name']}\n" for a in assets))
 encoded = os.environ.get("UPDATE_SIGNING_KEY_B64", "")
 if not encoded:
     raise SystemExit("Durable UPDATE_SIGNING_KEY_B64 Actions secret is required")

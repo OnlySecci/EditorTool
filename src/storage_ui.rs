@@ -100,6 +100,16 @@ impl Runtime {
                 .open_settings_tab(page, wi, self.tx);
             wi
         };
+        if page == 7 {
+            self.security_panel.refresh(self.sharing.as_ref());
+            let w = self.windows[wi].as_mut().unwrap();
+            if !w.embedded {
+                w.win.show();
+                chrome::dark_title(&w.win);
+                shutdown::hook(&w.win, self.weak_self.clone());
+            }
+            return;
+        }
         if page == 6 {
             let peers = self
                 .sharing
@@ -125,7 +135,7 @@ impl Runtime {
                 text.push_str("Previous file contents are backed up before saving (up to 10 versions / 256 MiB per file).\nFile → Older file versions opens a version as a new tab.\n\nCleanup is permanent and does not promise secure physical erasure. Personal files are not deleted."); Ok(text)
             })().unwrap_or_else(|e|crate::tr_format!("Could not calculate all storage:\n{e}"))
         } else {
-            let mut text=String::from("Connection protection\nTLS 1.3 · AES-256-GCM · X25519 + ML-KEM-768\nDevice identities: classical signatures with fingerprint approval.\n\nUpdates\nEd25519-signed metadata with expiry and version protection.\n\nLocal data\nSessions and history are unencrypted, protected by user permissions. No automatic diagnostic uploads.\n\n");
+            let mut text=String::from("Connection protection\nTLS 1.3 · AES-256-GCM · X25519 + ML-KEM-768\nDevice identities: classical signatures with fingerprint approval.\n\nUpdates\nEd25519-signed metadata with expiry and version protection.\n\nLocal data\nSessions, history and sharing data use authenticated local encryption with an OS- or password-protected key. No automatic diagnostic uploads.\n\n");
             if file_dialog::portal_required() {
                 text.push_str("Flatpak\nFile access through individual portal grants. Network, X11, tray and the host call for updates remain enabled.\n\n");
             }

@@ -821,5 +821,6 @@
   "Document: {}\nClient: {}": "Dokument: {}\nClient: {}",
   "Understood": "Verstanden",
   "Unsafe cleanup path.": "Unsicherer Bereinigungspfad.",
-  "Move to other view": "In andere Ansicht verschieben"
+  "Move to other view": "In andere Ansicht verschieben",
+  "Security": "Sicherheit"
 }

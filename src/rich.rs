@@ -35,7 +35,33 @@ fn full_size() -> u16 {
 struct FileDocument {
     format: String,
     text: String,
+    #[serde(deserialize_with = "bounded_assets")]
     images: Vec<Asset>,
+}
+fn bounded_assets<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<Asset>, D::Error> {
+    struct Assets;
+    impl<'de> serde::de::Visitor<'de> for Assets {
+        type Value = Vec<Asset>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(f, "at most 64 embedded images")
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut sequence: A,
+        ) -> Result<Self::Value, A::Error> {
+            let mut assets = Vec::new();
+            while let Some(asset) = sequence.next_element::<Asset>()? {
+                if assets.len() >= crate::limits::IMAGES {
+                    return Err(serde::de::Error::custom("Too many embedded images"));
+                }
+                assets.push(asset);
+            }
+            Ok(assets)
+        }
+    }
+    deserializer.deserialize_seq(Assets)
 }
 struct TextPart {
     editor: TextEditor,
