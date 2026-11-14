@@ -144,10 +144,34 @@ impl Runtime {
             {
                 continue;
             }
-            let data = self.sharing.as_ref().unwrap().body(&draft.hash)?;
-            if peer::hash(data.as_bytes()) != draft.hash || data.len() as u64 != draft.bytes {
-                return Err("Pending draft integrity recovery is required; stored contents were not modified".into());
-            }
+            let data = match self.sharing.as_ref().unwrap().body(&draft.hash) {
+                Ok(data)
+                    if peer::hash(data.as_bytes()) == draft.hash
+                        && data.len() as u64 == draft.bytes =>
+                {
+                    data
+                }
+                _ => {
+                    // Do not let an older cached tab overwrite the retained draft
+                    // record when its newer snapshot cannot currently be read.
+                    for w in self.windows.iter_mut().flatten() {
+                        for d in &mut w.docs {
+                            if d.cache_key == draft.key {
+                                d.cache_key = session::new_key();
+                                d.sharing = None;
+                                d.display_name =
+                                    Some(format!("Cached recovery copy - {}", d.title()));
+                                d.report = "Newer pending draft needs integrity recovery; its original record was preserved. This cached copy is unsynchronised.".into();
+                            }
+                        }
+                    }
+                    diagnostics::event(
+                        "sharing",
+                        "pending_draft_unavailable_record_preserved_cached_copy_detached",
+                    );
+                    continue;
+                }
+            };
             let existing = self.windows.iter().enumerate().find_map(|(wi, w)| {
                 w.as_ref().and_then(|w| {
                     w.docs
