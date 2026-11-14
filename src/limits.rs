@@ -1,30 +1,11 @@
 //! Bounds are enforced on the opened file, before parsing or allocating decoded pixels.
-use std::{
-    fs::File,
-    io::{self, Read},
-    path::Path,
-};
+use std::{io, path::Path};
 pub const DOCUMENT: u64 = 64 * 1024 * 1024;
 pub const IMAGE_BYTES: u64 = 32 * 1024 * 1024;
 pub const PIXELS: u64 = 40_000_000;
 pub const IMAGES: usize = 64;
 pub fn read(path: &Path, max: u64) -> io::Result<Vec<u8>> {
-    let file = File::open(path)?;
-    if !file.metadata()?.is_file() || file.metadata()?.len() > max {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "File is too large or is not a regular file.",
-        ));
-    }
-    let mut bytes = Vec::new();
-    file.take(max + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > max {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "File size limit exceeded.",
-        ));
-    }
-    Ok(bytes)
+    crate::vault::read(path, path, max)
 }
 pub fn read_text(path: &Path) -> io::Result<String> {
     String::from_utf8(read(path, DOCUMENT)?)

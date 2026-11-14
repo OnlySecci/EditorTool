@@ -1,18 +1,16 @@
 # GitHub workflow
 
-The canonical repository is public: https://github.com/OnlySecci/EditorTool.
+The canonical public repository is https://github.com/OnlySecci/EditorTool.
 
-1. Branch from `main`, e.g. `feat/image-flow` or `fix/tab-scroll`.
-2. Commit the source change and update the relevant documentation.
-3. Push the branch and open a pull request. GitHub Actions builds Windows, Linux, macOS Intel and macOS Apple Silicon. No tests are run.
-4. Merge the pull request after review.
-5. Update `Cargo.toml` and `CHANGELOG.md`, commit, and tag the release with `V<version>`.
-6. Push the tag. The release workflow builds installation packages, collects SHA-256 checksums, and publishes a public GitHub Release.
+1. Branch from `main`, for example `feat/image-flow` or `fix/tab-scroll`.
+2. Update source, version/packaging metadata, documentation, changelog and English release notes together. Retain third-party notices.
+3. Push and open a pull request. Actions builds all six OS/architecture combinations and creates the Windows setup executables. At the owner's request, do not run automated, interactive or installation tests, or launch the app.
+4. Review and merge after required builds finish. CODEOWNERS assigns the repository owner; administrators retain bypass access, so this is not a claim of independent two-person approval.
+5. From **main**, dispatch **Build and release** with `release_tag=V<version>`. Do not publish by pushing a tag: the protected signing environment only accepts main. The workflow creates the release tag at its built commit.
+6. Confirm all 16 installers/archives and three verification files are published, then verify the signature, package hashes, sizes and exact inventory.
 
-Release downloads are publicly accessible without repository membership. Installers are unsigned until platform signing identities are supplied. macOS bundles receive a local ad-hoc signature; they are not notarized.
+The `release-signing` environment contains `UPDATE_SIGNING_KEY_B64`; it permits only main deployments. Build jobs and pull requests do not receive that secret. Renewal uses trusted main code and authenticates old metadata and original packages before re-signing. See [update signing](docs/update-signing.md). Administrators and anyone able to modify trusted signing code remain in the security boundary.
 
-Build instructions are in README.md. Package scripts are in `scripts/` and `packaging/`. The GitHub Actions workflow uses repository-scoped `GITHUB_TOKEN` access; no personal token is stored in this project.
+Release downloads are public. Windows developer certificates are not configured. macOS bundles receive an ad-hoc signature and are not notarised. Update metadata signing is independent of platform code signing.
 
-The first release tag is `V1.0`, corresponding to package version `1.0.0`. Releases can also be triggered using the workflow input `release_tag`; publishing creates that tag at the built commit. All six native builds and the Windows installer job must succeed first.
-
-The project uses The Unlicense. Submit original contributions under the same terms and retain third-party notices.
+Documentation, code identifiers/comments, pull requests and release notes are English. UI translations belong in embedded catalogs. Preserve Rust/FLTK, low idle resource use, plain-text clipboard output and explicit sharing consent. No private keys, tokens, caches, documents, installers or toolchains belong in Git. Original contributions use The Unlicense; third-party licence terms remain unchanged.

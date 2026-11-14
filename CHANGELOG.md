@@ -1,5 +1,16 @@
 # Changelog
 
+## V1.5.3 — 2026-11-14
+
+- Encrypt session/history/sharing storage and device identities with OS-protected or password-protected keys; add authenticated migration and encrypted recovery-key export/import.
+- Separate pairing from document consent, persist revoked fingerprints, and recheck transfer permissions before commits.
+- Sign revision provenance and validate causal parents/counters; require V1.5.3 peers and fresh groups after upgrade.
+- Require target-specific consent for automatic writes to recognised code and startup-sensitive paths.
+- Add adjustable content/group/proof quotas, explicit retired-group cleanup and pseudonymised traffic exports.
+- Scope the existing update signing key to a main-only environment; authenticate previous metadata and exact package hashes before renewal.
+- Add CODEOWNERS, dependency update configuration and recurring advisory reports. Retain TCP and hybrid TLS key exchange; no UDP/QUIC.
+- Native builds and packaging only, without tests or app launches.
+
 ## V1.5.2 — 2026-11-14
 
 - English repository documentation, source wording and historical GitHub release notes.

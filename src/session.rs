@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fs::{self, File, OpenOptions},
-    io::{self, Write},
+    io,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -110,9 +110,8 @@ pub(crate) fn atomic_write(path: &Path, data: &[u8]) -> io::Result<()> {
     }
     let _cleanup = Pending(tmp.clone());
     {
-        let mut file = crate::private_fs::create(&tmp)?;
-        file.write_all(data)?;
-        file.sync_all()?;
+        let file = crate::private_fs::create(&tmp)?;
+        crate::vault::write(file, path, data)?;
     }
     #[cfg(windows)]
     {

@@ -53,7 +53,7 @@ This repository contains the native desktop application, packaging scripts and r
 - Session recovery for open tabs, unsaved content, images and cursor positions, plus local history before files are overwritten.
 - Explicitly approved document sending and synchronisation over private networks and VPNs, with conflict handling and a five-second writing pause before publishing local changes.
 - LAN/VPN interface selection, editable clients, connection status and filterable communication logs.
-- In-app updates using signed package metadata, storage cleanup and a permissions overview.
+- In-app updates using signed package metadata, encrypted local content, recovery-key export, adjustable sync quotas, storage cleanup and a permissions overview.
 
 See the [release notes](RELEASE_NOTES.md) and [changelog](CHANGELOG.md) for version-specific changes and limitations.
 
@@ -115,17 +115,19 @@ The session cache saves changes in the background after a short delay and restor
 | macOS | `~/Library/Application Support/EditorTool` |
 | Portable mode | `Data` beside the executable |
 
-These locations contain document contents, embedded images, history and sharing state. They have restricted local permissions but are not encrypted vaults. Storage settings show usage and provide targeted cleanup; cleanup does not securely erase underlying storage media.
+From V1.5.3, session contents, local history, sharing metadata/content and device keys are encrypted with authenticated AES-256-GCM. Installed profiles protect their master key with Windows DPAPI, macOS Keychain or Linux Secret Service. Portable profiles use a password; an unavailable credential service offers an explicit password option. Settings and diagnostic logs are outside the encrypted content vault and still require care when sharing.
+
+Migration runs after a successful unlock and preserves the device identity. Unlock failure leaves protected data locked rather than replacing keys or using plaintext. Export a password-encrypted recovery key from Settings → Security and keep it outside the profile. Copying the data directory alone is insufficient to recover an OS-bound key. Older app versions cannot read migrated storage. Original saved documents retain their normal format; cleanup does not securely erase filesystem blocks or old backups. See [security and recovery](docs/security.md).
 
 ## Sending and Synchronisation
 
 Enable sending and sync in Settings, then add the other device's private IP address and port. The default is **TCP 51473**. Select local LAN/VPN interfaces if required. EditorTool supports routed private networks and VPNs, rejects public destination IPs, and does not configure routes or firewall rules.
 
-Devices approve each other's identity, and recipients separately accept document offers. A trusted device is not automatically granted access to every document. Sync uses per-device version counters and content hashes to detect concurrent changes without relying on matching system clocks. Automatic saving to a local file is selected per document.
+Devices approve each other's identity, and recipients separately accept document offers. A trusted device is not automatically granted access to every document. Sync uses signed revision provenance, verified parent counters and content hashes to detect concurrent changes without relying on matching system clocks. Automatic saving is selected per document; recognised code and startup-sensitive targets require separate, exact-target consent. Upgrade all peers to V1.5.3 and share old documents as fresh groups. Old groups are archived without deleting cached editor contents.
 
-Connections require **TLS 1.3, AES-256-GCM and hybrid X25519 + ML-KEM-768 key exchange**. Device identity signatures remain classical. The persistent private device key is stored locally with restricted permissions, without additional encryption or automatic rotation. Copying the private identity and certificate can allow impersonation of that trusted device. Do not share or upload the `sharing` directory.
+Connections require **TLS 1.3, AES-256-GCM and hybrid X25519 + ML-KEM-768 key exchange**. Device identity and revision signatures remain classical ECDSA P-256. The persistent private key is encrypted under the protected local master key. Its identity remains stable across ordinary reconnects; fresh TLS key exchange protects connections. Explicit identity replacement is available in Security settings and requires restart and renewed approval. A stolen, unlocked private identity can still permit impersonation until the old fingerprint is revoked on every peer. OS protection cannot prevent access by an attacker controlling the same unlocked user account.
 
-Connection status reflects the last completed exchange. Checks normally wait ten seconds after a round, or one second while work is pending; slow peers and timeouts can extend this. Manual checking is available. Disconnect notices appear inside the editor. The communication log records message types, byte counts and device/network metadata, without document contents or private keys; export is explicit.
+Connection status reflects the last completed exchange. Checks normally wait ten seconds after a round, or one second while work is pending; slow peers and timeouts can extend this. Manual checking is available. Disconnect notices appear inside the editor. The communication log records message types, byte counts and device/network metadata, without document contents or private keys; export is explicit. A pseudonymised export removes device names, addresses and fingerprints while retaining timestamps and traffic sizes.
 
 ## Development
 

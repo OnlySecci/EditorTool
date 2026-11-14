@@ -9,6 +9,7 @@ pub struct Panel {
     buffer: TextBuffer,
     keys: Vec<String>,
     pub generation: u64,
+    anonymous: String,
 }
 impl Panel {
     pub fn new(tx: app::Sender<Message>) -> Self {
@@ -65,6 +66,7 @@ impl Panel {
         for (label, action) in [
             ("Refresh", Action::TrafficFilter),
             ("Export filtered log…", Action::TrafficExport),
+            ("Anonymized export…", Action::TrafficExportAnonymous),
         ] {
             let mut button = Button::default().with_label(label);
             theme::button(&mut button, false, None);
@@ -84,6 +86,7 @@ impl Panel {
             buffer,
             keys: vec![String::new()],
             generation: 0,
+            anonymous: String::new(),
         }
     }
     pub fn refresh(&mut self, peers: &[peer::Peer], reset: bool) {
@@ -121,6 +124,8 @@ impl Panel {
         let direction = self.direction.choice().unwrap_or_default();
         let query = self.search.value().to_lowercase();
         let mut text = String::new();
+        let mut anonymous=String::from("Pseudonymized communication log. Names, addresses and fingerprints removed. Timestamps and traffic sizes remain.\n");
+        let mut aliases = std::collections::BTreeMap::<String, usize>::new();
         for e in traffic::entries() {
             let peer = peers.iter().find(|p| {
                 (!e.peer.is_empty() && p.id == e.peer)
@@ -141,7 +146,7 @@ impl Panel {
             {
                 continue;
             }
-            if direction != "Alle Richtungen" && direction != e.direction {
+            if self.direction.value() > 0 && direction != e.direction {
                 continue;
             }
             let t = time::OffsetDateTime::from_unix_timestamp(e.time as i64)
@@ -163,6 +168,23 @@ impl Panel {
                 || e.peer.to_lowercase().contains(&query)
             {
                 text.push_str(&line);
+                let identity = if e.peer.is_empty() {
+                    e.remote.clone()
+                } else {
+                    e.peer.clone()
+                };
+                let next = aliases.len() + 1;
+                let id = *aliases.entry(identity).or_insert(next);
+                anonymous.push_str(&format!(
+                    "{:02}:{:02}:{:02} UTC  {}  Device {}  {}  {} B\n",
+                    t.hour(),
+                    t.minute(),
+                    t.second(),
+                    e.direction,
+                    id,
+                    e.event,
+                    e.bytes
+                ));
             }
         }
         if !traffic::available() {
@@ -171,20 +193,32 @@ impl Panel {
             text = "No matching events. Up to 1500 events are shown.".into();
         }
         self.buffer.set_text(&text);
+        self.anonymous = anonymous;
         self.generation = traffic::generation();
     }
-    pub fn export(&self) -> std::io::Result<()> {
+    pub fn export(&self, anonymized: bool) -> std::io::Result<()> {
         let mut chooser =
             file_dialog::Chooser::new(fltk::dialog::NativeFileChooserType::BrowseSaveFile);
         chooser.set_title(crate::i18n::tr(
             "Export communication log (includes device addresses)",
         ));
-        chooser.set_preset_file("EditorTool-Communication.log");
+        chooser.set_preset_file(if anonymized {
+            "EditorTool-Communication-anonymized.log"
+        } else {
+            "EditorTool-Communication.log"
+        });
         chooser.set_option(fltk::dialog::NativeFileChooserOptions::SaveAsConfirm);
         chooser.show();
         let path = chooser.filename();
         if !path.as_os_str().is_empty() {
-            std::fs::write(path, self.buffer.text())?;
+            std::fs::write(
+                path,
+                if anonymized {
+                    self.anonymous.clone()
+                } else {
+                    self.buffer.text()
+                },
+            )?;
         }
         Ok(())
     }

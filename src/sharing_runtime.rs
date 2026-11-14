@@ -250,6 +250,16 @@ impl Runtime {
             b.autosave = false;
             return Err("Autosave paused: save to a local file first.".into());
         };
+        let target = security::target(path).map_err(|e| e.to_string())?;
+        if (security::risky_autosave(path) || security::risky_autosave(&target))
+            && b.approved_target.as_ref() != Some(&target)
+            || b.approved_target
+                .as_ref()
+                .is_some_and(|approved| approved != &target)
+        {
+            b.autosave = false;
+            return Err("Autosave paused: this code/startup target needs explicit approval in the document's Sync dialog.".into());
+        }
         let disk = match crate::limits::read(path, crate::limits::DOCUMENT) {
             Ok(data) => Some(peer::hash(&data)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -441,6 +451,7 @@ impl Runtime {
                 clock: offer.revision.clock,
                 hash: offer.revision.hash,
                 autosave: a.autosave,
+                approved_target: a.approved_target.clone(),
                 disk_hash: a.path.as_ref().and_then(|p| {
                     crate::limits::read(p, crate::limits::DOCUMENT)
                         .ok()
@@ -698,25 +709,51 @@ impl Runtime {
                         .iter()
                         .position(|d| d.id == id)
                         .ok_or("Tab was closed")?;
-                    let autosave = sync && self.transfer.autosave.value();
+                    let mut autosave = sync && self.transfer.autosave.value();
                     if autosave && w.docs[di].path.is_none() && !w.save(di, true) {
                         return Ok(());
+                    }
+                    let mut approved_target = None;
+                    if autosave {
+                        if let Some(path) = &w.docs[di].path {
+                            let target = security::target(path).map_err(|e| e.to_string())?;
+                            let previously_approved = w.docs[di]
+                                .sharing
+                                .as_ref()
+                                .and_then(|b| b.approved_target.as_ref())
+                                == Some(&target);
+                            if !previously_approved
+                                && (security::risky_autosave(path)
+                                    || security::risky_autosave(&target))
+                            {
+                                autosave=chrome::decision(Some(&w.win),"Allow remote writes to executable code?","A trusted or compromised peer can change this code. Another program may execute it later.",&target.to_string_lossy(),&["Keep changes in editor only","Allow autosave for this target"],0)==Some(1);
+                            }
+                            if autosave {
+                                approved_target = Some(target);
+                            }
+                        }
                     }
                     let d = &mut w.docs[di];
                     let s = self.sharing.as_ref().ok_or("Sharing service is missing")?;
                     let old = d.sharing.as_ref().and_then(|b| s.document(&b.doc));
                     let same = sync
                         && old.is_some_and(|doc| {
-                            doc.members
-                                .iter()
-                                .filter(|p| p.id != s.identity() && !doc.departed.contains(&p.id))
-                                .map(|p| p.id.clone())
-                                .collect::<BTreeSet<_>>()
-                                == peers.iter().map(|p| p.id.clone()).collect()
+                            doc.active
+                                && !doc.head.signature.is_empty()
+                                && doc
+                                    .members
+                                    .iter()
+                                    .filter(|p| {
+                                        p.id != s.identity() && !doc.departed.contains(&p.id)
+                                    })
+                                    .map(|p| p.id.clone())
+                                    .collect::<BTreeSet<_>>()
+                                    == peers.iter().map(|p| p.id.clone()).collect()
                         });
                     if same {
                         let b = d.sharing.as_mut().unwrap();
                         b.autosave = autosave;
+                        b.approved_target = approved_target.clone();
                         b.disk_hash = d.path.as_ref().and_then(|p| {
                             crate::limits::read(p, crate::limits::DOCUMENT)
                                 .ok()
@@ -739,6 +776,7 @@ impl Runtime {
                                 clock: r.clock,
                                 hash: r.hash,
                                 autosave,
+                                approved_target,
                                 disk_hash: d.path.as_ref().and_then(|p| {
                                     crate::limits::read(p, crate::limits::DOCUMENT)
                                         .ok()
@@ -920,10 +958,22 @@ impl Runtime {
                                 path = Some(p);
                             }
                         }
+                        let mut approved_target = None;
+                        if let Some(selected) = &path {
+                            let target = security::target(selected).map_err(|e| e.to_string())?;
+                            if (security::risky_autosave(selected)||security::risky_autosave(&target)) && chrome::decision(owner.as_ref(),"Save received executable code?","This file may be executed by another program. Sync can later replace its contents.",&target.to_string_lossy(),&["Keep in editor only","Allow this target"],0)!=Some(1) {path=None;}
+                            else {approved_target=Some(target);}
+                        }
                         self.sharing
                             .as_ref()
                             .ok_or("Sharing service is missing")?
-                            .approve(&o.id, accepted, path.clone(), o.sync && path.is_some())?;
+                            .approve(
+                                &o.id,
+                                accepted,
+                                path.clone(),
+                                o.sync && path.is_some(),
+                                approved_target,
+                            )?;
                     }
                     peer::Event::Left(id, client, name) => {
                         let title = self

@@ -8,6 +8,7 @@ mod desktop;
 mod diagnostics;
 mod file_dialog;
 mod i18n;
+mod identity;
 mod ipc;
 mod limits;
 mod network;
@@ -15,7 +16,10 @@ mod notices;
 mod peer;
 mod preferences;
 mod private_fs;
+mod revision;
 mod rich;
+mod security;
+mod security_ui;
 mod session;
 mod settings_page;
 mod sharing_runtime;
@@ -31,6 +35,8 @@ mod traffic;
 mod traffic_ui;
 mod tray;
 mod updater;
+mod vault;
+mod vault_ui;
 use rich::RichEditor;
 use syntax::Language;
 type SyntaxKey = (u64, u64, Language, Language);
@@ -67,6 +73,13 @@ const ADD_TAB_SIZE: i32 = 30;
 
 #[derive(Clone)]
 enum Action {
+    Security,
+    SecuritySave,
+    SecurityRecovery,
+    SecurityRotate,
+    SecurityClean,
+    SecurityUnblock,
+    TrafficExportAnonymous,
     Storage,
     StorageClean,
     FileHistory,
@@ -278,6 +291,7 @@ impl Document {
                 3 => "Keyboard shortcuts",
                 4 => "Storage and File History",
                 5 => "Sharing and Permissions",
+                7 => "Security",
                 _ => "Communication log",
             })
             .into();
@@ -517,6 +531,7 @@ impl EditorWindow {
         menu.set_text_size(13);
         menu.set_text_color(MUTED);
         let entries = [
+            ("&Settings/Security…", Shortcut::None, Action::Security),
             (
                 "&Settings/Storage and cleanup…",
                 Shortcut::None,
@@ -1322,7 +1337,10 @@ impl EditorWindow {
             return false;
         }
         let history_root = settings_path().parent().unwrap().to_owned();
-        let saved = storage::preserve(&history_root, &path)
+        let history = if vault::unlocked() { storage::preserve(&history_root, &path) }
+            else if !path.exists() || chrome::decision(Some(&self.win), "Protected history is locked", "Save this file without a local history backup? Existing protected session data remains unchanged.", &path.to_string_lossy(), &["Cancel", "Save without history"], 0) == Some(1) { Ok(()) }
+            else { return false; };
+        let saved = history
             .map_err(|e| {
                 diagnostics::io_failure("storage", "manual_history", &e, &path);
                 e
@@ -2014,6 +2032,7 @@ struct Runtime {
     storage_panel: storage_ui::Panel,
     permissions_panel: storage_ui::Panel,
     traffic_panel: traffic_ui::Panel,
+    security_panel: security_ui::Panel,
     transfer: sharing_ui::Transfer,
     conflicts: sharing_ui::Conflicts,
     share_timers: std::collections::HashMap<String, sharing_runtime::Pending>,
@@ -2483,7 +2502,7 @@ impl Runtime {
                 self.traffic_panel.refresh(&peers, false);
             }
             Action::TrafficExport => {
-                if let Err(e) = self.traffic_panel.export() {
+                if let Err(e) = self.traffic_panel.export(false) {
                     dialog::alert_default(&format!("Log export failed: {e}"));
                 }
             }
@@ -2493,6 +2512,21 @@ impl Runtime {
                 self.open_management_tab(wid, 4);
             }
             Action::FileHistory => self.history_dialog(wid),
+            Action::Security => self.open_management_tab(wid, 7),
+            Action::SecuritySave
+            | Action::SecurityRecovery
+            | Action::SecurityRotate
+            | Action::SecurityClean
+            | Action::SecurityUnblock => {
+                if let Err(error) = self.security_action(action) {
+                    chrome::decision(None, "Security", &error, "", &["Close"], 0);
+                }
+            }
+            Action::TrafficExportAnonymous => {
+                if let Err(error) = self.traffic_panel.export(true) {
+                    dialog::alert_default(&error.to_string());
+                }
+            }
             Action::Permissions => self.open_management_tab(wid, 5),
             Action::RelayoutSplit => self.layout_splits(),
             Action::ExportDiagnostics => {
@@ -2677,7 +2711,16 @@ fn main() {
         app::raw_open_callback(Some(mac_open_file));
     }
     let mut cache_enabled = true;
-    let saved = match store.load() {
+    let protection = vault::initialize(config.parent().unwrap());
+    if protection.is_ok() {
+        if let Err(error) = security::load(config.parent().unwrap()) {
+            dialog::alert_default(&error.to_string());
+        }
+    }
+    let saved = match protection
+        .map_err(|e| e.to_string())
+        .and_then(|_| store.load())
+    {
         Ok(saved) => saved,
         Err(e) => {
             dialog::alert_default(&e);
@@ -2738,6 +2781,7 @@ fn main() {
         storage_panel: storage_ui::Panel::new(tx, false),
         permissions_panel: storage_ui::Panel::new(tx, true),
         traffic_panel: traffic_ui::Panel::new(tx),
+        security_panel: security_ui::Panel::new(tx),
         transfer: sharing_ui::Transfer::new(tx),
         conflicts: sharing_ui::Conflicts::new(tx),
         share_timers: Default::default(),
@@ -2751,7 +2795,7 @@ fn main() {
         runtime.weak_self = Rc::downgrade(&state);
         runtime.restore_splits();
         runtime.init_network_pages();
-        for page in [4, 5, 6] {
+        for page in [4, 5, 6, 7] {
             if let Some(wid) = runtime
                 .windows
                 .iter()

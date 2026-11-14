@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Optional release tag, for example V1.5.2 (empty: build packages only)'
+        description: 'Optional release tag, for example V1.5.3 (empty: build packages only)'
         required: false
         type: string
         default: ''
@@ -24,14 +24,14 @@ jobs:
       - name: Require durable signing configuration for releases
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         env:
-          HAS_UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY_B64 != '' }}
+          RELEASE_REF: ${{ github.ref }}
         run: |
           python3 - <<'PY'
           import base64, os
           from pathlib import Path
           key = base64.b64decode(Path('assets/update-public-key.base64').read_text().strip(), validate=True)
-          if len(key) != 32 or os.environ['HAS_UPDATE_SIGNING_KEY'] != 'true':
-              raise SystemExit('Pinned public key and durable Actions signing secret are required before release builds')
+          if len(key) != 32 or os.environ['RELEASE_REF'] != 'refs/heads/main':
+              raise SystemExit('Release builds must be dispatched from main with a pinned public key')
           PY
   package:
     needs: configuration
@@ -139,6 +139,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     needs: [package, installers]
     runs-on: ubuntu-24.04
+    environment: release-signing
     permissions:
       contents: write
     steps:

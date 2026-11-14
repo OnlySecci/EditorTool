@@ -2,7 +2,7 @@ Unicode true
 !include "MUI2.nsh"
 !include "x64.nsh"
 !ifndef VERSION
-!define VERSION "1.5.2"
+!define VERSION "1.5.3"
 !endif
 !ifndef ARCH
 !define ARCH "x64"
