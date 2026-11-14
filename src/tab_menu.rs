@@ -64,6 +64,7 @@ fn items(page: u8, settings: bool, index: usize) -> Vec<Item> {
             Action("Send to client…", "", crate::Action::Transfer(false)),
             Action("Synchronise…", "", crate::Action::Transfer(true)),
             Action("Versions / Conflicts…", "", crate::Action::ShowConflicts),
+            Action("Repair document sync…", "", crate::Action::RepairSync),
             Page("Split View", 2),
             Section("TABS"),
             Action("Close tab", "Ctrl/Cmd+W", crate::Action::CloseTab),

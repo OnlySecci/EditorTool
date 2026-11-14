@@ -30,9 +30,11 @@ Settings can schedule identity replacement for restart, after stopping local sha
 
 ## Signed revisions
 
-Protocol 153 requires all peers on V1.5.3 or newer compatible implementations. Pre-upgrade groups remain archived; share the cached document as a fresh group after upgrading every peer. Signed revisions bind a random document ID, immutable participant-fingerprint set, content hash and length, author, name, causal counters and parent revision IDs. Recipients verify the author's pinned certificate and derive the expected counters from verified parents. New author counters must advance exactly one; missing parents, conflicting same-author counters, wrong roots or substituted groups are rejected. Peers do not resolve concurrent edits solely by wall-clock time.
+Protocol 155 requires compatible V1.5.5 peers. Valid V1.5.3/V1.5.4 signatures are revalidated and retained; unverifiable older groups remain paused until explicit repair/new-group consent. Signed tree commits bind document/group, contents, author/name/counters, actual content parents, separate counter provenance and commit type. Resolutions bind the chosen version or explicitly merged contents. Recovered branches name the approved root without fabricating content ancestry. Legacy signatures retain their original payload domain; force priority is not a winner rule.
 
-Proof requests are scoped to approved groups, limited to batches of 32 and a maximum of 512 unseen nodes in one catch-up. A peer farther behind may require a fresh sharing group. Proof metadata remains while active groups exist; changing group membership requires a new root/group. These signatures establish which approved identity signed an edit, not whether an approved author is honest or whether a document is safe.
+Recipients verify the pinned author certificate, approved root, membership, exact counter derivation and duplicate author counters before promotion. Missing/unverifiable proofs remain staged or quarantined. Valid ancestry determines fast-forward; concurrent contents/decisions require user review. Neither timestamps nor counters alone establish a winner.
+
+Proofs are group-scoped, at most 32 nodes per message and 512 unseen nodes per resumable round. Retained graph nodes keep available bodies, subject to quotas and explicit retired-group cleanup. Root recovery is limited to already paired approved document members and requires confirmation; new groups always require recipient consent. See [Sync history and recovery](sync-history.md) for backups, missing bases and limits. Signatures establish who signed an edit, not whether the author or document is safe.
 
 ## Automatic saving and quotas
 
@@ -40,7 +42,7 @@ Automatic writes to recognised code extensions, Unix executable files and known 
 
 Default retained sync content limits are 1 GiB total, 512 MiB per author and 256 MiB per document, with 256 groups and 8,192 signed proof nodes. Settings → Security can adjust them within bounded ranges. Sharing metadata has an independent 32-MiB ceiling. Concurrent uploads/local writes reserve space; total accounting includes stored encrypted bodies and pending reservations and is intentionally conservative. Shared content can count against more than one author/document attribution. Reducing a limit does not automatically delete existing data. A quota failure refuses further writes, and a metadata persistence failure stops sharing.
 
-Explicit cleanup removes retired sync groups and their no-longer-needed proof records, then unreferenced retained bodies. Active heads, conflicts, recent history and pending offers/inbox/outbox remain referenced. Open tabs/session cache and original saved files are separate and preserved. Cleanup is refused during reserved content transfers. It does not securely erase storage media and discards retired sync-only history, so review the confirmation first.
+Explicit cleanup removes retired sync groups and their no-longer-needed proof records, then unreferenced retained bodies. Active graph history, staged/quarantined records, pending drafts and pending offers/inbox/outbox remain referenced while their groups are retained. Open tabs/session cache and original saved files are separate and preserved. Cleanup is refused during reserved content transfers. It does not securely erase storage media and discards retired sync-only history, so review the confirmation first.
 
 ## Logs and dependency advisories
 

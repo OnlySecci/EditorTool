@@ -11,6 +11,19 @@ pub struct Pending {
 
 impl Runtime {
     pub fn init_network_pages(&mut self) {
+        if let Err(error) = self.restore_pending_drafts() {
+            diagnostics::failure("sharing", "pending_draft_restore", &error);
+        }
+        let replacements = self
+            .sharing
+            .as_ref()
+            .map(|s| s.own_replacements())
+            .unwrap_or_default();
+        for offer in replacements {
+            if let Err(error) = self.repaired_offer(&offer, "") {
+                diagnostics::failure("sharing", "interrupted_repair_relink", &error);
+            }
+        }
         if let Some(s) = &self.sharing {
             self.clients.refresh(s, true);
             if let Err(e) = self.clients.reload_interfaces(&s.config()) {
@@ -20,27 +33,28 @@ impl Runtime {
                     .set_label(&crate::tr_format!("Could not read network adapters: {e}"));
             }
         }
-        // A crash may leave the independently persisted session behind the
-        // signed sharing head. Reapply authority after restoration, preserving drafts.
+        for proposal in self
+            .sharing
+            .as_ref()
+            .map(|s| s.pending_roots())
+            .unwrap_or_default()
+        {
+            self.tx
+                .send((0, Action::PeerEvent(peer::Event::RestoreRoot(proposal))));
+        }
         let pending: BTreeSet<_> = self
             .windows
             .iter()
             .flatten()
             .flat_map(|w| &w.docs)
-            .filter_map(|d| d.sharing.as_ref())
-            .filter(|b| {
-                self.sharing
-                    .as_ref()
-                    .and_then(|s| s.document(&b.doc))
-                    .is_some_and(|d| d.head.force > b.force)
-            })
-            .map(|b| b.doc.clone())
+            .filter_map(|d| d.sharing.as_ref().map(|b| b.doc.clone()))
             .collect();
         for id in pending {
             self.tx
                 .send((0, Action::PeerEvent(peer::Event::Updated(id))));
         }
     }
+
     fn doc_position(&self, key: &str) -> Option<(usize, usize)> {
         self.windows.iter().enumerate().find_map(|(wi, w)| {
             w.as_ref().and_then(|w| {
@@ -120,8 +134,10 @@ impl Runtime {
                 let note = if let Some(binding) = &d.sharing {
                     if let Some(service) = &self.sharing {
                         let progress = service.progress(&binding.doc);
-                        if d.sync_error == Some(revision) {
-                            "Sync failed · Edit or check the connection again".into()
+                        if let Some(issue) = &progress.issue {
+                            sharing_repair::status(issue).into()
+                        } else if d.sync_error == Some(revision) {
+                            "Sync paused · Open document history or Repair sync".into()
                         } else if let Some(p) = self.share_timers.get(&d.cache_key) {
                             if d.group.visible_r() {
                                 visible_countdown = true;
@@ -142,6 +158,8 @@ impl Runtime {
                             }
                         } else if !progress.enabled {
                             "Sync paused · Send/Sync is disabled".into()
+                        } else if progress.same_contents {
+                            "Contents match · History joins automatically on the next edit or when the merge signer is online".into()
                         } else if progress.conflict {
                             "Sync conflict · Select a revision".into()
                         } else if progress.clients == 0 {
@@ -215,7 +233,7 @@ impl Runtime {
             }
         }
     }
-    fn publish_shared(&mut self, key: &str, expected: u64) -> Result<(), String> {
+    pub(super) fn publish_shared(&mut self, key: &str, expected: u64) -> Result<(), String> {
         let Some((wi, di)) = self.doc_position(key) else {
             return Ok(());
         };
@@ -236,16 +254,20 @@ impl Runtime {
             }
         }
         let data = d.left.cache_text();
-        let revision = self
+        let published = self
             .sharing
             .as_ref()
-            .ok_or("Send/Sync is unavailable.")?
-            .publish(&binding.doc, &binding.clock, &data)?;
+            .ok_or("Send/Sync is unavailable")?
+            .tree_publish(&binding, &data, key)?;
         let d = &mut self.windows[wi].as_mut().unwrap().docs[di];
+        let Some(revision) = published else {
+            d.sync_error = Some(expected);
+            d.report="Sync link is being restored; local text is preserved. Use Repair sync for recovery options.".into();
+            self.persist();
+            return Ok(());
+        };
         if let Some(b) = &mut d.sharing {
-            b.force = revision.force;
-            b.clock = revision.clock;
-            b.hash = revision.hash;
+            b.point_to(&revision);
         }
         d.share_revision = expected;
         d.sync_error = None;
@@ -322,36 +344,41 @@ impl Runtime {
         d.saved_revision = d.left_meta.borrow().revision;
         Ok(())
     }
-    fn apply_shared(&mut self, id: &str) -> Result<(), String> {
+    pub(super) fn apply_shared(&mut self, id: &str) -> Result<(), String> {
         let Some(document) = self.sharing.as_ref().and_then(|s| s.document(id)) else {
+            self.sync_status(id, "new_history_required");
             return Ok(());
         };
+        if self.sharing.as_ref().unwrap().needs_new_history(id) {
+            self.sync_status(id, "new_history_required");
+            return Ok(());
+        }
         let own = self.sharing.as_ref().unwrap().identity();
-        if document.departed.contains(&own)
-            || !document
-                .members
-                .iter()
-                .any(|p| p.id != own && !document.departed.contains(&p.id))
-        {
+        if document.departed.contains(&own) {
             for w in self.windows.iter_mut().flatten() {
                 for d in &mut w.docs {
                     if d.sharing.as_ref().is_some_and(|b| b.doc == id) {
                         d.sharing = None;
-                        d.report = "Sync stopped for this document".into();
+                        d.report =
+                            "This device left the document; local contents were retained".into();
                     }
                 }
             }
             return Ok(());
         }
-        if !document.conflicts.is_empty() {
-            self.open_conflict(id);
+        let conflict = !document.conflicts.is_empty()
+            && document
+                .conflicts
+                .iter()
+                .any(|r| r.hash != document.head.hash);
+        if conflict {
+            if self.conflict_notified.insert(id.into()) {
+                self.open_conflict(id);
+            }
             return Ok(());
         }
         self.conflict_notified.remove(id);
-        if self.conflicts.doc.as_deref() == Some(id) && self.conflicts.versions.len() > 1 {
-            self.conflicts.win.hide();
-        }
-        let positions: Vec<_> = self
+        let positions = self
             .windows
             .iter()
             .enumerate()
@@ -364,96 +391,108 @@ impl Runtime {
                         .map(move |(di, _)| (wi, di))
                 })
             })
-            .collect();
-        let mut data = None;
-        let mut forced_any = false;
-        let mut save_error = None;
+            .collect::<Vec<_>>();
         for (wi, di) in positions {
-            let recovery = {
-                let d = &self.windows[wi].as_ref().unwrap().docs[di];
-                let forced = d
-                    .sharing
-                    .as_ref()
-                    .is_some_and(|b| b.force < document.head.force);
-                (forced && d.left_meta.borrow().revision != d.share_revision)
-                    .then(|| (d.left.cache_text(), d.title(), d.left_language))
+            let binding = self.windows[wi].as_ref().unwrap().docs[di]
+                .sharing
+                .clone()
+                .unwrap();
+            let Some(base) = self.sharing.as_ref().unwrap().base_revision(&binding) else {
+                self.sharing.as_ref().unwrap().queue_base(&binding)?;
+                let d = &mut self.windows[wi].as_mut().unwrap().docs[di];
+                d.sync_error = Some(d.left_meta.borrow().revision);
+                d.report = sharing_repair::status("waiting_base").into();
+                continue;
             };
-            let recovered_draft = recovery.is_some();
-            if let Some((draft, title, language)) = recovery {
-                if !self.cache_enabled {
-                    return Err("Force main received. Save the local draft first: protected session recovery is unavailable.".into());
-                }
-                let w = self.windows[wi].as_mut().unwrap();
-                let active = w.active;
-                w.add_tab(wi, self.tx);
-                let recovered = &mut w.docs[w.active];
-                recovered.left.set_cache_text(&draft)?;
-                recovered.display_name =
-                    Some(format!("Recovered before Force sync main — {title}"));
-                recovered.left_language = language;
-                recovered.report = "Local draft preserved; this copy is not synchronised".into();
-                w.action(Action::Select(active), wi, self.tx);
-                self.persist();
-                self.store.flush()?;
-                crate::traffic::force(
-                    id,
-                    "Force sync main: unsent local draft preserved in recovery tab",
-                    document.head.force.as_ref().unwrap(),
-                    0,
-                );
-            }
             let d = &mut self.windows[wi].as_mut().unwrap().docs[di];
-            let forced = d
+            d.sharing.as_mut().unwrap().point_to(&base);
+            // Unpublished edits are a potential independent branch. Keep them
+            // in place until the writing pause publishes their actual parent.
+            if d.left_meta.borrow().revision != d.share_revision {
+                continue;
+            }
+            if !self
                 .sharing
                 .as_ref()
-                .is_some_and(|b| b.force < document.head.force);
-            forced_any |= forced;
-            if d.left_meta.borrow().revision != d.share_revision && !forced {
-                continue;
-            }
-            let b = d.sharing.as_ref().unwrap();
-            if b.hash == document.head.hash
-                && b.clock == document.head.clock
-                && b.force == document.head.force
+                .unwrap()
+                .advances(&document.head, &base)
             {
+                let data = d.left.cache_text();
+                self.sharing
+                    .as_ref()
+                    .unwrap()
+                    .register_base(&binding, &data)?;
                 continue;
             }
-            if b.hash != document.head.hash || recovered_draft {
-                if data.is_none() {
-                    data = Some(self.sharing.as_ref().unwrap().body(&document.head.hash)?);
+            if base.key() == document.head.key() {
+                if !self.sharing.as_ref().unwrap().has_body(&document.head) {
+                    self.sharing
+                        .as_ref()
+                        .unwrap()
+                        .require_body(&document.head)?;
+                    if peer::hash(d.left.cache_text().as_bytes()) == document.head.hash {
+                        self.tx.send((
+                            0,
+                            Action::PublishDoc(d.cache_key.clone(), d.left_meta.borrow().revision),
+                        ));
+                    }
                 }
-                d.clear_styles();
-                d.left.apply_sync_text(data.as_ref().unwrap())?;
+                continue;
             }
-            let b = d.sharing.as_mut().unwrap();
-            b.force = document.head.force.clone();
-            b.hash = document.head.hash.clone();
-            b.clock = document.head.clock.clone();
-            d.share_revision = d.left_meta.borrow().revision;
-            d.report = if forced {
-                format!(
-                    "Force sync main · generation {} · {}",
-                    document.head.force.as_ref().unwrap().generation,
-                    document.head.name
-                )
-            } else {
-                format!("Sync · {}", document.head.name)
+            let body = match self.sharing.as_ref().unwrap().revision_body(&document.head) {
+                Ok(body) => body,
+                Err(_) => {
+                    self.sharing
+                        .as_ref()
+                        .unwrap()
+                        .require_body(&document.head)?;
+                    self.sync_status(id, "waiting_history");
+                    continue;
+                }
             };
-            if forced {
-                d.sync_error = None;
+            let d = &mut self.windows[wi].as_mut().unwrap().docs[di];
+            if binding.hash != document.head.hash {
+                d.clear_styles();
+                d.left.apply_sync_text(&body)?;
             }
+            d.sharing.as_mut().unwrap().point_to(&document.head);
+            d.share_revision = d.left_meta.borrow().revision;
+            d.sync_error = None;
+            d.report = format!(
+                "Sync · commit {} · {}",
+                &document.head.key()[..12],
+                document.head.name
+            );
             if let Err(error) = Self::autosave_shared(d) {
-                save_error.get_or_insert(error);
+                d.report = error;
+                diagnostics::event("sharing", "autosave_paused_local_file_preserved");
             }
         }
-        if forced_any {
-            self.persist();
-        }
-        save_error.map_or(Ok(()), Err)
+        self.persist();
+        Ok(())
     }
-    fn open_conflict(&mut self, id: &str) {
+    pub(super) fn open_conflict(&mut self, id: &str) {
         if let Some(document) = self.sharing.as_ref().and_then(|s| s.document(id)) {
-            self.conflicts.show(document);
+            let versions = self.sharing.as_ref().unwrap().versions(id);
+            let preferred = self
+                .windows
+                .iter()
+                .flatten()
+                .flat_map(|w| &w.docs)
+                .any(|d| {
+                    self.conflicts.editor_key.as_ref() == Some(&d.cache_key)
+                        && d.sharing.as_ref().is_some_and(|b| b.doc == id)
+                });
+            if !preferred {
+                self.conflicts.editor_key = self
+                    .windows
+                    .iter()
+                    .flatten()
+                    .flat_map(|w| &w.docs)
+                    .find(|d| d.sharing.as_ref().is_some_and(|b| b.doc == id))
+                    .map(|d| d.cache_key.clone());
+            }
+            self.conflicts.show(document, versions);
             self.preview_conflict();
         }
     }
@@ -467,7 +506,11 @@ impl Runtime {
                 .sharing
                 .as_ref()
                 .ok_or("Sharing unavailable".to_string())
-                .and_then(|s| s.body(&r.hash));
+                .and_then(|s| {
+                    s.revision_body(r).inspect_err(|_| {
+                        let _ = s.require_body(r);
+                    })
+                });
             let text = match result {
                 Ok(data) => {
                     let parsed = serde_json::from_str::<serde_json::Value>(&data).ok();
@@ -503,7 +546,10 @@ impl Runtime {
             .sharing
             .as_ref()
             .ok_or("Sharing service is missing")?
-            .body(&offer.revision.hash)?;
+            .revision_body(&offer.revision)?;
+        if offer.sync && self.repaired_offer(&offer, &data)? {
+            return Ok(());
+        }
         let wi = if let Some(wi) = self.windows.iter().position(Option::is_some) {
             wi
         } else {
@@ -528,6 +574,7 @@ impl Runtime {
         d.left_language = Some(Language::detect(Some(std::path::Path::new(&offer.title))));
         if offer.sync {
             d.sharing = Some(peer::Binding {
+                revision: Some(offer.revision.key()),
                 force: offer.revision.force.clone(),
                 doc: offer.doc.clone(),
                 clock: offer.revision.clock,
@@ -596,7 +643,14 @@ impl Runtime {
                 | Action::StopSync
                 | Action::ShowConflicts
                 | Action::PreviewConflict
-                | Action::ForceSyncMain
+                | Action::ResolveMain
+                | Action::ResolveEditedMain
+                | Action::RepairSync
+                | Action::RepairShownSync
+                | Action::RecoverLocalBranch
+                | Action::OpenSyncRevision
+                | Action::CompareSyncRevision
+                | Action::RefreshVersions
                 | Action::PeerEvent(_)
                 | Action::PublishDoc(..)
                 | Action::SyncCountdown
@@ -607,6 +661,28 @@ impl Runtime {
         ) {
             return Some(action);
         }
+        let background = matches!(
+            &action,
+            Action::PublishDoc(..)
+                | Action::SyncCountdown
+                | Action::PeerEvent(
+                    peer::Event::Updated(_)
+                        | peer::Event::Conflict(_)
+                        | peer::Event::DocumentStatus(..)
+                        | peer::Event::BaseReady(_)
+                        | peer::Event::Received(..)
+                )
+        );
+        let background_doc = match &action {
+            Action::PeerEvent(
+                peer::Event::Updated(id)
+                | peer::Event::Conflict(id)
+                | peer::Event::DocumentStatus(id, _)
+                | peer::Event::BaseReady(id),
+            ) => Some(id.clone()),
+            Action::PeerEvent(peer::Event::Received(offer, _)) => Some(offer.doc.clone()),
+            _ => None,
+        };
         let result: Result<(), String> = (|| {
             match action {
                 Action::SharingSettings => {
@@ -819,6 +895,8 @@ impl Runtime {
                     let s = self.sharing.as_ref().ok_or("Sharing service is missing")?;
                     let old = d.sharing.as_ref().and_then(|b| s.document(&b.doc));
                     let same = sync
+                        && !self.transfer.rebuild
+                        && !s.needs_new_history(d.sharing.as_ref().map_or("", |b| b.doc.as_str()))
                         && old.is_some_and(|doc| {
                             doc.active
                                 && !doc.head.signature.is_empty()
@@ -848,12 +926,18 @@ impl Runtime {
                             &d.left.cache_text(),
                             peers,
                             sync,
+                            if sync {
+                                d.sharing.as_ref().map(|b| b.doc.clone())
+                            } else {
+                                None
+                            },
                         )?;
                         if sync {
                             if let Some(binding) = &d.sharing {
                                 s.leave(&binding.doc)?;
                             }
                             d.sharing = Some(peer::Binding {
+                                revision: Some(r.key()),
                                 force: r.force,
                                 doc,
                                 clock: r.clock,
@@ -877,6 +961,32 @@ impl Runtime {
                     .into();
                     self.transfer.win.hide();
                     self.persist();
+                    self.store.flush()?;
+                    if sync && !same {
+                        let replacement = self.windows[wi]
+                            .as_ref()
+                            .and_then(|w| w.docs.iter().find(|d| d.id == id))
+                            .and_then(|d| d.sharing.as_ref())
+                            .and_then(|b| {
+                                self.sharing
+                                    .as_ref()
+                                    .unwrap()
+                                    .own_replacements()
+                                    .into_iter()
+                                    .find(|o| o.doc == b.doc)
+                            });
+                        if let Some(offer) = replacement {
+                            self.repaired_offer(&offer, "")?;
+                        }
+                    }
+                    if sync {
+                        if let Some(d) = self.windows[wi]
+                            .as_ref()
+                            .and_then(|w| w.docs.iter().find(|d| d.id == id))
+                        {
+                            self.sharing.as_ref().unwrap().ack_draft(&d.cache_key)?;
+                        }
+                    }
                 }
                 Action::StopSync => {
                     if let Some((wi, id, _)) = self.transfer.context {
@@ -902,33 +1012,23 @@ impl Runtime {
                         .and_then(Option::as_ref)
                         .and_then(|w| w.docs[w.active].sharing.as_ref().map(|b| b.doc.clone()))
                     {
+                        self.conflicts.editor_key = self.windows[wid]
+                            .as_ref()
+                            .map(|w| w.docs[w.active].cache_key.clone());
                         self.open_conflict(&id);
                     } else {
                         return Err("This document is not synchronised.".into());
                     }
                 }
                 Action::PreviewConflict => self.preview_conflict(),
-                Action::ForceSyncMain => {
-                    let id = self.conflicts.doc.clone().ok_or("No conflict selected")?;
-                    let i = self.conflicts.list.value();
-                    if i < 1 {
-                        return Ok(());
-                    }
-                    let key = self
-                        .conflicts
-                        .versions
-                        .get(i as usize - 1)
-                        .ok_or("Select a revision")?
-                        .key();
-                    if chrome::decision(None, "Force sync main", "Use the selected revision as the shared main version?", "Older force generations and offline edits based on them will not replace it. Unsent local drafts are preserved in separate recovery tabs. Later edits based on this main version can sync normally.", &["Cancel", "Force sync main"], 0) != Some(1) { return Ok(()); }
-                    self.sharing
-                        .as_ref()
-                        .ok_or("Sharing service is missing")?
-                        .force_main(&id, &key)?;
-                    self.conflict_notified.remove(&id);
-                    self.conflicts.win.hide();
-                    self.apply_shared(&id)?;
-                }
+                action @ (Action::ResolveMain
+                | Action::ResolveEditedMain
+                | Action::RepairSync
+                | Action::RepairShownSync
+                | Action::RecoverLocalBranch
+                | Action::OpenSyncRevision
+                | Action::CompareSyncRevision
+                | Action::RefreshVersions) => self.recovery_action(wid, action)?,
                 Action::SyncCountdown => {
                     self.countdown_timer = None;
                 }
@@ -937,10 +1037,73 @@ impl Runtime {
                         if let Some((wi, di)) = self.doc_position(&key) {
                             self.windows[wi].as_mut().unwrap().docs[di].sync_error = Some(revision);
                         }
-                        return Err(e);
+                        diagnostics::failure("sharing", "local_publish_paused", &e);
+                        if let Some((wi, di)) = self.doc_position(&key) {
+                            if let Some(binding) =
+                                &self.windows[wi].as_ref().unwrap().docs[di].sharing
+                            {
+                                self.sharing.as_ref().unwrap().note_error(&binding.doc, &e);
+                            }
+                        }
+                        if let Some((wi, di)) = self.doc_position(&key) {
+                            self.windows[wi].as_mut().unwrap().docs[di].report = e;
+                        }
                     }
                 }
                 Action::PeerEvent(event) => match event {
+                    peer::Event::RestoreRoot(proposal) => {
+                        let members = proposal
+                            .members
+                            .iter()
+                            .map(|p| format!("{} · {}:{}", p.name, p.host, p.port))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        if chrome::decision(None,"Restore original shared history?","A paired device found a signed root for this document. Local contents will be preserved and missing commits restored.",&format!("Document: {}\n\nParticipants:\n{}",proposal.title,members),&["Reject","Restore link"],0)==Some(1){
+                            if !self.cache_enabled{return Err("Save local contents first; protected session recovery is unavailable".into());}
+                            self.persist();self.store.flush()?;let offer=peer::Offer{id:format!("restore-{}",proposal.root.key()),doc:proposal.doc.clone(),title:proposal.title.clone(),sync:true,revision:proposal.root.clone(),members:proposal.members.clone(),len:proposal.root.bytes};
+                            self.sharing.as_ref().unwrap().install_root(proposal)?;
+                            if offer.revision.commit.as_ref().is_some_and(|c|c.replaces.is_some()){self.repaired_offer(&offer,"")?;}
+                        }else{self.sharing.as_ref().unwrap().decline_root(&proposal.doc)?;}
+                    }
+                    peer::Event::DocumentStatus(id, code) => {
+                        self.sync_status(&id, &code);
+                        if code == "integrity" {
+                            let jobs = self
+                                .windows
+                                .iter()
+                                .flatten()
+                                .flat_map(|w| &w.docs)
+                                .filter(|d| {
+                                    d.sharing.as_ref().is_some_and(|b| {
+                                        b.doc == id
+                                            && self.sharing.as_ref().unwrap().needs_cached_body(b)
+                                            && peer::hash(d.left.cache_text().as_bytes()) == b.hash
+                                    })
+                                })
+                                .map(|d| (d.cache_key.clone(), d.left_meta.borrow().revision))
+                                .collect::<Vec<_>>();
+                            for (key, revision) in jobs {
+                                self.tx.send((0, Action::PublishDoc(key, revision)));
+                            }
+                        }
+                    }
+                    peer::Event::BaseReady(id) => {
+                        let jobs = self
+                            .windows
+                            .iter_mut()
+                            .flatten()
+                            .flat_map(|w| &mut w.docs)
+                            .filter(|d| d.sharing.as_ref().is_some_and(|b| b.doc == id))
+                            .map(|d| {
+                                d.sync_error = None;
+                                (d.cache_key.clone(), d.left_meta.borrow().revision)
+                            })
+                            .collect::<Vec<_>>();
+                        for (key, revision) in jobs {
+                            self.tx.send((0, Action::PublishDoc(key, revision)));
+                        }
+                        self.apply_shared(&id)?;
+                    }
                     peer::Event::Disconnected(id) => {
                         let peer = self
                             .sharing
@@ -993,12 +1156,26 @@ impl Runtime {
                             .map(|w| w.win.clone());
                         let choice = chrome::decision(
                             owner.as_ref(),
-                            if o.sync {
+                            if o.sync
+                                && o.revision
+                                    .commit
+                                    .as_ref()
+                                    .is_some_and(|c| c.replaces.is_some())
+                            {
+                                "Repair document sync"
+                            } else if o.sync {
                                 "Synchronise document"
                             } else {
                                 "Receive document"
                             },
-                            if o.sync {
+                            if o.sync
+                                && o.revision
+                                    .commit
+                                    .as_ref()
+                                    .is_some_and(|c| c.replaces.is_some())
+                            {
+                                "This creates a new verified history. Matching old tabs keep their local contents as independent branches. Autosave must be enabled again explicitly. Choose the common main version after devices have rejoined."
+                            } else if o.sync {
                                 "After acceptance, changes are exchanged with these devices. Choose whether changes should also be saved to a local file."
                             } else {
                                 "After acceptance, the document opens as a new tab."
@@ -1063,8 +1240,24 @@ impl Runtime {
                         chrome::decision(owner.as_ref(),"Sync stopped for client",&crate::tr_format!("{} no longer synchronises this document. Sync for this client and document has also stopped here. Other documents remain connected.",name),&format!("Document: {}\nClient: {}",title,client),&["Understood"],0);
                     }
                     peer::Event::Received(o, a) => self.receive_shared(o, a)?,
-                    peer::Event::Updated(id) => self.apply_shared(&id)?,
+                    peer::Event::Updated(id) => {
+                        self.apply_shared(&id)?;
+                        if self.conflicts.win.shown() && self.conflicts.doc.as_deref() == Some(&id)
+                        {
+                            self.preview_conflict();
+                        }
+                    }
                     peer::Event::Conflict(id) => {
+                        let current = self
+                            .sharing
+                            .as_ref()
+                            .and_then(|service| service.document(&id));
+                        if current.as_ref().is_none_or(|d| {
+                            d.conflicts.is_empty()
+                                || d.conflicts.iter().all(|r| r.hash == d.head.hash)
+                        }) {
+                            return Ok(());
+                        }
                         if self.conflict_notified.insert(id.clone()) {
                             self.open_conflict(&id);
                         }
@@ -1084,6 +1277,16 @@ impl Runtime {
             Ok(())
         })();
         if let Err(e) = result {
+            if background {
+                diagnostics::failure("sharing", "background_sync_paused", &e);
+                if let Some(id) = background_doc {
+                    if let Some(service) = &self.sharing {
+                        service.note_error(&id, &e);
+                    }
+                    self.sync_status(&id, "network_wait");
+                }
+                return None;
+            }
             let owner = self
                 .windows
                 .iter()

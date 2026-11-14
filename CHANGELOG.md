@@ -1,5 +1,15 @@
 # Changelog
 
+## V1.5.5 - 2026-11-15
+
+- Replace force-generation winners with signed content ancestry, separate counter provenance and explicit resolution commits.
+- Fast-forward sequential edits, retain independent offline branches and concurrent decisions, and join identical contents.
+- Preserve encrypted upgrade backups, available historical bodies and pending drafts; repair old signed links and hidden branches.
+- Restore missing bases/proofs/bodies/approved roots through scoped resumable requests. Offer independent recovery branches or a new approved group.
+- Add repair actions, archived recovery copies, comparisons and document status without repeated background error dialogs.
+- Isolate transfer failures, schedule catch-up fairly, and archive damaged snapshots before atomic authenticated replacement.
+- Preserve consent, revocation, autosave checks and quotas; require V1.5.5 peers. Build/package without tests or app launches.
+
 ## V1.5.4 — 2026-11-14
 
 - Add a confirmed Force sync main action to the version/conflict view. Sign the selected parent and a logical force generation; consistently order competing force decisions without wall-clock timestamps.

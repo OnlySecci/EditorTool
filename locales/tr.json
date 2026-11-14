@@ -417,5 +417,8 @@
   "Use selected revision": "Seçili sürümü kullan",
   "Fit to text area": "Metin alanına sığdır",
   "Security": "Güvenlik",
-  "Force sync main": "Ana sürümü zorla"
+  "Force sync main": "Ana sürümü zorla",
+  "Use selected as main": "Seçili sürümü kullan",
+  "Use editor text as main": "Düzenleyici metnini kullan",
+  "Repair sync…": "Eşitlemeyi onar…"
 }

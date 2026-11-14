@@ -1,3 +1,5 @@
+> Historical V1.5.4 behavior only. V1.5.5 replaces force priority with signed branches and reviewed resolutions. See [Sync history and recovery](sync-history.md).
+
 # Force sync main
 
 Open a synchronised document's version/conflict view, select the revision whose contents should win, then choose **Force sync main** and confirm. This creates a signed decision, not a permanent primary device. Subsequent ordinary edits based on the chosen main version can synchronise normally.

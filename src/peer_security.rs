@@ -28,199 +28,32 @@ impl Inner {
             .values()
             .chain(s.offers.values().map(|o| &o.revision))
             .chain(s.outbox.iter().map(|o| &o.offer.revision));
-        let used_doc =
+        let mut used_doc =
             crate::security::retained_bytes(&self.root, revisions.clone().filter(|r| r.doc == doc));
-        let used_peer =
+        let mut used_peer =
             crate::security::retained_bytes(&self.root, revisions.filter(|r| r.author == author));
+        let mut doc_hashes = s
+            .proofs
+            .values()
+            .filter(|r| r.doc == doc)
+            .map(|r| r.hash.clone())
+            .collect::<BTreeSet<_>>();
+        let mut own_hashes = s
+            .proofs
+            .values()
+            .filter(|r| r.author == author)
+            .map(|r| r.hash.clone())
+            .collect::<BTreeSet<_>>();
+        for d in s.drafts.values() {
+            if d.base.doc == doc && doc_hashes.insert(d.hash.clone()) {
+                used_doc = used_doc.saturating_add(d.bytes);
+            }
+            if author == self.id && own_hashes.insert(d.hash.clone()) {
+                used_peer = used_peer.saturating_add(d.bytes);
+            }
+        }
         crate::security::reserve(&self.root, doc, author, bytes, used_doc, used_peer)
     }
-    pub(super) fn accept_proofs(
-        &self,
-        doc: &str,
-        mut nodes: Vec<Revision>,
-        source: &str,
-        epoch: u64,
-    ) -> Result<(), String> {
-        if nodes.len() > 512 {
-            return Err("Too many signed proof nodes".into());
-        }
-        let mut s = self.state.lock().unwrap();
-        if self.network_epoch.load(Ordering::Relaxed) != epoch || !self.allowed(&s, doc, source) {
-            return Err("Proof permission changed".into());
-        }
-        let d = s.docs.get(doc).ok_or("Unknown document")?;
-        let members = d.members.clone();
-        let root = d.root.clone();
-        for r in &nodes {
-            validate_revision(r)?;
-            crate::revision::verify(r, doc, &members)?;
-            if r.parents.is_empty() && r.key() != root {
-                return Err("Unapproved signed root".into());
-            }
-        }
-        while !nodes.is_empty() {
-            let before = nodes.len();
-            let mut waiting = vec![];
-            for r in nodes {
-                if s.proofs.contains_key(&r.key()) {
-                    continue;
-                }
-                if r.parents.iter().any(|p| !s.proofs.contains_key(p)) {
-                    waiting.push(r);
-                    continue;
-                }
-                crate::revision::causal(&r, &s.proofs)?;
-                if s.proofs.len() >= crate::security::limits().proofs as usize {
-                    return Err("Signed history quota reached; start a fresh sharing group or adjust Security limits".into());
-                }
-                if s.proofs.values().any(|known| {
-                    known.doc == doc
-                        && known.author == r.author
-                        && known.clock.get(&r.author) == r.clock.get(&r.author)
-                        && known.key() != r.key()
-                }) {
-                    return Err("Device revision fork detected; inspect versions and revoke a copied identity".into());
-                }
-                s.proofs.insert(r.key(), r);
-            }
-            if waiting.len() == before {
-                return Err("Signed revision parents are missing or cyclic".into());
-            }
-            nodes = waiting;
-        }
-        self.save(&s)
-    }
-}
-pub(super) fn fetch_proofs(
-    inner: &Arc<Inner>,
-    peer: &Peer,
-    doc: &str,
-    head: &Revision,
-    started: Instant,
-    epoch: u64,
-) -> Result<(), String> {
-    {
-        let s = inner.state.lock().unwrap();
-        if !inner.allowed(&s, doc, &peer.id) {
-            return Err("Unexpected document in peer reply".into());
-        }
-        let d = &s.docs[doc];
-        validate_revision(head)?;
-        if s.proofs
-            .get(&head.key())
-            .is_some_and(|known| known.signature == head.signature)
-        {
-            return Ok(());
-        }
-        crate::revision::verify(head, doc, &d.members)?;
-    }
-    let mut nodes = BTreeMap::from([(head.key(), head.clone())]);
-    loop {
-        let missing = {
-            let s = inner.state.lock().unwrap();
-            nodes
-                .values()
-                .flat_map(|r| r.parents.iter())
-                .filter(|id| !s.proofs.contains_key(*id) && !nodes.contains_key(*id))
-                .cloned()
-                .collect::<BTreeSet<_>>()
-        };
-        if missing.is_empty() {
-            break;
-        }
-        if nodes.len() + missing.len() > 512 {
-            return Err("Too many unseen signed versions; share a fresh group".into());
-        }
-        for keys in missing.into_iter().collect::<Vec<_>>().chunks(32) {
-            let mut stream = connect(inner, peer, started)?;
-            write_header(
-                &mut stream,
-                &Request::Proofs {
-                    doc: doc.into(),
-                    keys: keys.to_vec(),
-                },
-            )?;
-            let Reply::Proofs(proofs) = read_header(&mut stream)? else {
-                return Err("Missing signed provenance reply".into());
-            };
-            if proofs.len() != keys.len() {
-                return Err("Incomplete signed provenance reply".into());
-            }
-            for proof in proofs {
-                if !keys.contains(&proof.key()) {
-                    return Err("Unexpected signed provenance".into());
-                }
-                {
-                    let s = inner.state.lock().unwrap();
-                    crate::revision::verify(
-                        &proof,
-                        doc,
-                        &s.docs.get(doc).ok_or("Document closed")?.members,
-                    )?;
-                }
-                nodes.insert(proof.key(), proof);
-            }
-        }
-    }
-    inner.accept_proofs(doc, nodes.into_values().collect(), &peer.id, epoch)
-}
-pub(super) fn push_proofs(
-    inner: &Arc<Inner>,
-    peer: &Peer,
-    doc: &str,
-    head: &Revision,
-    started: Instant,
-) -> Result<(), String> {
-    let known = inner
-        .acknowledgements
-        .lock()
-        .unwrap()
-        .get(&(doc.into(), peer.id.clone()))
-        .cloned();
-    let nodes = {
-        let s = inner.state.lock().unwrap();
-        if !inner.allowed(&s, doc, &peer.id) {
-            return Err("Document no longer shared".into());
-        }
-        let mut pending = vec![(head.key(), false)];
-        let mut seen = BTreeSet::new();
-        let mut ordered = vec![];
-        while let Some((id, visited)) = pending.pop() {
-            if known.as_ref() == Some(&id) {
-                continue;
-            }
-            if visited {
-                ordered.push(s.proofs.get(&id).ok_or("Missing signed parent")?.clone());
-                continue;
-            }
-            if !seen.insert(id.clone()) {
-                continue;
-            }
-            if seen.len() > 512 {
-                return Err("Peer is too far behind; share a fresh group".into());
-            }
-            let r = s.proofs.get(&id).ok_or("Missing signed parent")?;
-            pending.push((id, true));
-            for p in r.parents.iter().rev() {
-                pending.push((p.clone(), false));
-            }
-        }
-        ordered
-    };
-    for nodes in nodes.chunks(32) {
-        let mut stream = connect(inner, peer, started)?;
-        write_header(
-            &mut stream,
-            &Request::ProofPush {
-                doc: doc.into(),
-                nodes: nodes.to_vec(),
-            },
-        )?;
-        if !matches!(read_header(&mut stream)?, Reply::Done) {
-            return Err("Signed provenance refused".into());
-        }
-    }
-    Ok(())
 }
 impl Service {
     pub fn revoked(&self) -> Vec<String> {
@@ -277,6 +110,7 @@ impl Service {
             .chain(s.outbox.iter().map(|o| &o.offer))
             .chain(s.inbox.values().map(|(o, _)| o))
             .map(|o| o.doc.clone())
+            .chain(s.drafts.values().map(|d| d.base.doc.clone()))
             .collect::<BTreeSet<_>>();
         s.docs.retain(|id, d| d.active || pending.contains(id));
         let retained_groups = s
@@ -286,8 +120,22 @@ impl Service {
             .chain(pending)
             .collect::<BTreeSet<_>>();
         s.proofs.retain(|_, r| retained_groups.contains(&r.doc));
+        s.unverified.retain(|_, r| retained_groups.contains(&r.doc));
+        s.quarantine.retain(|_, r| retained_groups.contains(&r.doc));
+        s.bases.retain(|_, r| retained_groups.contains(&r.doc));
+        let existing = s.proofs.keys().cloned().collect::<BTreeSet<_>>();
+        s.want_bodies.retain(|key| existing.contains(key));
         self.inner.save(&s)?;
         let mut retained = BTreeSet::new();
+        for r in s.proofs.values() {
+            retained.insert(r.hash.clone());
+        }
+        for d in s.drafts.values() {
+            retained.insert(d.hash.clone());
+        }
+        for r in s.quarantine.values().chain(s.unverified.values()) {
+            retained.insert(r.hash.clone());
+        }
         for d in s.docs.values() {
             retained.insert(d.head.hash.clone());
             for r in d.conflicts.iter().chain(&d.history) {
@@ -302,8 +150,8 @@ impl Service {
         {
             retained.insert(o.revision.hash.clone());
         }
-        // Proof-only history keeps causal metadata; bodies no longer in the retained
-        // document history can be removed. Open tabs/session files are separate.
+        // Every retained signed branch and pending proof keeps its available body.
+        // Only explicitly retired, unreferenced data is eligible for removal.
         let mut removed = 0;
         for entry in fs::read_dir(self.inner.root.join("content")).map_err(err)? {
             let entry = entry.map_err(err)?;

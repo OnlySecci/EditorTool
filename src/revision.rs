@@ -2,9 +2,47 @@
 use crate::peer::{Clock, Peer, Revision};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const PROTOCOL: u16 = 154;
-/// Logical force order, independent of device clocks. The signed origin chooses
-/// an existing parent; normal descendants retain its exact marker.
+pub const PROTOCOL: u16 = 155;
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub enum Kind {
+    Root,
+    Edit,
+    IdenticalMerge,
+    Resolution,
+    Recovered,
+}
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Commit {
+    pub kind: Kind,
+    pub counter_parent: Option<String>,
+    pub chosen: Option<String>,
+    pub anchor: Option<String>,
+    pub replaces: Option<String>,
+}
+impl Commit {
+    pub fn new(kind: Kind) -> Self {
+        Self {
+            kind,
+            counter_parent: None,
+            chosen: None,
+            anchor: None,
+            replaces: None,
+        }
+    }
+}
+pub fn dependencies(r: &Revision) -> Vec<String> {
+    let mut keys = r.parents.clone();
+    if let Some(c) = &r.commit {
+        for key in [&c.counter_parent, &c.anchor].into_iter().flatten() {
+            if !keys.contains(key) {
+                keys.push(key.clone());
+            }
+        }
+    }
+    keys
+}
+/// Historical V1.5.4 signature payload only; never a V1.5.5 winner rule.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(deny_unknown_fields)]
 pub struct ForceMain {
@@ -19,6 +57,21 @@ pub fn group(members: &[Peer]) -> String {
     crate::peer::hash(&serde_json::to_vec(&ids).expect("serializable group"))
 }
 pub fn payload(r: &Revision) -> Vec<u8> {
+    if let Some(commit) = &r.commit {
+        return serde_json::to_vec(&(
+            "EditorTool tree commit v1",
+            &r.doc,
+            &r.group,
+            &r.hash,
+            r.bytes,
+            &r.clock,
+            &r.author,
+            &r.name,
+            &r.parents,
+            commit,
+        ))
+        .expect("serializable tree commit");
+    }
     if let Some(force) = &r.force {
         return serde_json::to_vec(&(
             "EditorTool force main revision v1",
@@ -61,7 +114,7 @@ pub fn verify(r: &Revision, doc: &str, members: &[Peer]) -> Result<(), String> {
         || r.bytes > crate::limits::DOCUMENT
     {
         return Err(
-            "Unsigned or invalid document revision; compatible V1.5.4 peers are required".into(),
+            "Unsigned or invalid document revision; compatible V1.5.5 peers are required".into(),
         );
     }
     if members.iter().map(|p| &p.id).collect::<BTreeSet<_>>().len() != members.len() {
@@ -81,7 +134,7 @@ pub fn verify(r: &Revision, doc: &str, members: &[Peer]) -> Result<(), String> {
 pub fn causal(r: &Revision, parents: &BTreeMap<String, Revision>) -> Result<(), String> {
     let mut expected = Clock::new();
     let mut seen = BTreeSet::new();
-    for id in &r.parents {
+    for id in &dependencies(r) {
         if !seen.insert(id) {
             return Err("Duplicate revision parent".into());
         }
@@ -100,6 +153,81 @@ pub fn causal(r: &Revision, parents: &BTreeMap<String, Revision>) -> Result<(), 
     *n = n.checked_add(1).ok_or("Revision counter overflow")?;
     if expected != r.clock {
         return Err("Unverifiable revision counters; update refused".into());
+    }
+    if let Some(c) = &r.commit {
+        if r.force.is_some()
+            || c.replaces
+                .as_ref()
+                .is_some_and(|s| s.is_empty() || s.len() > 128)
+        {
+            return Err("Invalid tree commit metadata".into());
+        }
+        if let Some(id) = &c.counter_parent {
+            if parents.get(id).is_none_or(|p| p.author != r.author) {
+                return Err("Counter provenance belongs to another author".into());
+            }
+        }
+        match c.kind {
+            Kind::Root
+                if r.parents.is_empty()
+                    && c.counter_parent.is_none()
+                    && c.anchor.is_none()
+                    && c.chosen.is_none() =>
+            {
+                ()
+            }
+            Kind::Edit
+                if !r.parents.is_empty()
+                    && c.anchor.is_none()
+                    && c.chosen.is_none()
+                    && c.replaces.is_none() =>
+            {
+                let first = &parents[&r.parents[0]];
+                if r.parents
+                    .iter()
+                    .any(|id| parents[id].hash != first.hash || parents[id].bytes != first.bytes)
+                {
+                    return Err("An edit cannot silently join different contents".into());
+                }
+            }
+            Kind::Recovered
+                if r.parents.is_empty()
+                    && c.anchor.is_some()
+                    && c.chosen.is_none()
+                    && c.replaces.is_none() =>
+            {
+                ()
+            }
+            Kind::IdenticalMerge
+                if r.parents.len() >= 2
+                    && c.anchor.is_none()
+                    && c.chosen.is_none()
+                    && c.replaces.is_none() =>
+            {
+                if r.parents.iter().any(|id| {
+                    parents
+                        .get(id)
+                        .is_none_or(|p| p.hash != r.hash || p.bytes != r.bytes)
+                }) {
+                    return Err("Identical merge changed its parent contents".into());
+                }
+            }
+            Kind::Resolution
+                if !r.parents.is_empty() && c.anchor.is_none() && c.replaces.is_none() =>
+            {
+                if let Some(id) = &c.chosen {
+                    if !r.parents.contains(id)
+                        || parents
+                            .get(id)
+                            .is_none_or(|p| p.hash != r.hash || p.bytes != r.bytes)
+                    {
+                        return Err("Resolution does not match the selected parent".into());
+                    }
+                }
+            }
+            _ => return Err("Invalid content-parent relationships".into()),
+        }
+        return Ok(());
     }
     let previous = r
         .parents

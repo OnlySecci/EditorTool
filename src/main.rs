@@ -22,6 +22,7 @@ mod security;
 mod security_ui;
 mod session;
 mod settings_page;
+mod sharing_repair;
 mod sharing_runtime;
 mod sharing_ui;
 mod shortcuts;
@@ -102,7 +103,14 @@ enum Action {
     StopSync,
     ShowConflicts,
     PreviewConflict,
-    ForceSyncMain,
+    ResolveMain,
+    ResolveEditedMain,
+    RepairSync,
+    RepairShownSync,
+    RecoverLocalBranch,
+    OpenSyncRevision,
+    CompareSyncRevision,
+    RefreshVersions,
     PeerEvent(peer::Event),
     PublishDoc(String, u64),
     SyncCountdown,
@@ -561,6 +569,16 @@ impl EditorWindow {
                 "&Settings/Keyboard shortcuts…",
                 Shortcut::None,
                 Action::KeyboardSettings,
+            ),
+            (
+                "&File/Document versions…",
+                Shortcut::None,
+                Action::ShowConflicts,
+            ),
+            (
+                "&File/Repair document sync…",
+                Shortcut::None,
+                Action::RepairSync,
             ),
             ("&File/New tab", Shortcut::Command | 't', Action::NewTab),
             (
@@ -2711,7 +2729,7 @@ fn main() {
         app::raw_open_callback(Some(mac_open_file));
     }
     let mut cache_enabled = true;
-    let protection = vault::initialize(config.parent().unwrap());
+    let protection = vault::initialize(config.parent().unwrap()).and_then(|_| store.backup_v155());
     if protection.is_ok() {
         if let Err(error) = security::load(config.parent().unwrap()) {
             dialog::alert_default(&error.to_string());
