@@ -3,8 +3,20 @@
 use crate::{session, Action, Message};
 #[path = "peer_security.rs"]
 mod protection;
+#[path = "peer_repair.rs"]
+mod repair;
+#[path = "peer_root_recovery.rs"]
+mod roots;
+pub use roots::RootProposal;
+#[path = "peer_tree.rs"]
+mod tree;
 use base64::{engine::general_purpose::STANDARD, Engine};
-use protection::{fetch_proofs, push_proofs};
+use repair::BaseLookup;
+#[path = "peer_proofs.rs"]
+mod proofs;
+#[path = "peer_transport.rs"]
+mod transport;
+use proofs::{fetch_proofs, push_proofs};
 use rustls::{
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
     pki_types::{CertificateDer, PrivatePkcs8KeyDer, ServerName, UnixTime},
@@ -171,6 +183,8 @@ impl Default for Config {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Revision {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<crate::revision::Commit>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub force: Option<crate::revision::ForceMain>,
     pub clock: Clock,
     pub hash: String,
@@ -203,47 +217,6 @@ fn dominates(a: &Clock, b: &Clock) -> bool {
 fn same(a: &Revision, b: &Revision) -> bool {
     a.key() == b.key()
 }
-fn supersedes(a: &Revision, b: &Revision) -> bool {
-    if a.force != b.force {
-        return a.force > b.force;
-    }
-    dominates(&a.clock, &b.clock) && a.clock != b.clock
-}
-fn include_local_provenance(s: &State, doc: &str, author: &str, parents: &mut Vec<Revision>) {
-    // A forced winner may not know this device's discarded counters. Retain a
-    // signed causal parent so subsequent edits never reuse an author counter.
-    let own = s
-        .proofs
-        .values()
-        .filter(|r| r.doc == doc && r.author == author)
-        .max_by_key(|r| r.clock.get(author).copied().unwrap_or(0));
-    let authority = s
-        .proofs
-        .values()
-        .filter(|r| {
-            r.doc == doc
-                && !s.revoked.contains(&r.author)
-                && s.docs
-                    .get(doc)
-                    .is_some_and(|d| !d.departed.contains(&r.author))
-        })
-        .max_by(|a, b| a.force.cmp(&b.force));
-    let own = own.filter(|r| {
-        r.clock.get(author).copied().unwrap_or(0)
-            > parents
-                .iter()
-                .map(|p| p.clock.get(author).copied().unwrap_or(0))
-                .max()
-                .unwrap_or(0)
-    });
-    let authority = authority
-        .filter(|r| r.force.as_ref() > parents.iter().filter_map(|p| p.force.as_ref()).max());
-    for r in [own, authority].into_iter().flatten() {
-        if !parents.iter().any(|p| p.key() == r.key()) {
-            parents.push(r.clone());
-        }
-    }
-}
 fn parent_clock(parents: &[Revision], author: &str) -> Result<Clock, String> {
     let mut clock = Clock::new();
     for r in parents {
@@ -258,6 +231,8 @@ fn parent_clock(parents: &[Revision], author: &str) -> Result<Clock, String> {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Document {
+    #[serde(default)]
+    pub issue: Option<String>,
     pub id: String,
     pub title: String,
     pub head: Revision,
@@ -296,6 +271,18 @@ struct Outbox {
 #[derive(Default, Serialize, Deserialize)]
 struct State {
     #[serde(default)]
+    links: BTreeMap<String, roots::LinkRecovery>,
+    #[serde(default)]
+    drafts: BTreeMap<String, Draft>,
+    #[serde(default)]
+    quarantine: BTreeMap<String, Revision>,
+    #[serde(default)]
+    want_bodies: BTreeSet<String>,
+    #[serde(default)]
+    unverified: BTreeMap<String, Revision>,
+    #[serde(default)]
+    bases: BTreeMap<String, BaseLookup>,
+    #[serde(default)]
     protocol: u16,
     #[serde(default)]
     revoked: BTreeSet<String>,
@@ -324,8 +311,18 @@ struct State {
     #[serde(default)]
     completed: BTreeMap<String, String>,
 }
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Draft {
+    pub key: String,
+    pub base: Binding,
+    pub hash: String,
+    pub bytes: u64,
+}
 #[derive(Clone, Debug)]
 pub enum Event {
+    RestoreRoot(RootProposal),
+    DocumentStatus(String, String),
+    BaseReady(String),
     Changed,
     Checked,
     Disconnected(String),
@@ -341,6 +338,8 @@ pub enum Event {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Binding {
     #[serde(default)]
+    pub revision: Option<String>,
+    #[serde(default)]
     pub force: Option<crate::revision::ForceMain>,
     pub doc: String,
     pub clock: Clock,
@@ -351,8 +350,18 @@ pub struct Binding {
     #[serde(default)]
     pub disk_hash: Option<String>,
 }
+impl Binding {
+    pub fn point_to(&mut self, r: &Revision) {
+        self.revision = Some(r.key());
+        self.clock = r.clock.clone();
+        self.hash = r.hash.clone();
+        self.force = None;
+    }
+}
 #[derive(Default)]
 pub struct Progress {
+    pub same_contents: bool,
+    pub issue: Option<String>,
     pub enabled: bool,
     pub conflict: bool,
     pub clients: usize,
@@ -362,6 +371,19 @@ pub struct Progress {
 }
 #[derive(Serialize, Deserialize)]
 enum Request {
+    RestoreRoot {
+        doc: String,
+    },
+    LookupBase {
+        doc: String,
+        key: Option<String>,
+        clock: Clock,
+        hash: String,
+    },
+    HaveProofs {
+        doc: String,
+        keys: Vec<String>,
+    },
     Leave {
         doc: String,
     },
@@ -390,6 +412,10 @@ enum Request {
 }
 #[derive(Serialize, Deserialize)]
 enum Reply {
+    Root(Option<RootProposal>),
+    Base(Option<Revision>),
+    Known(Vec<String>),
+    Missing,
     Hello {
         info: Peer,
         heads: Vec<(String, Revision)>,
@@ -412,6 +438,9 @@ trait WireLabel {
 impl WireLabel for Request {
     fn label(&self) -> &'static str {
         match self {
+            Self::RestoreRoot { .. } => "request RestoreRoot",
+            Self::LookupBase { .. } => "request LookupBase",
+            Self::HaveProofs { .. } => "request HaveProofs",
             Self::Hello { .. } => "request Hello",
             Self::Leave { .. } => "request Leave",
             Self::Offer(_) => "request Offer",
@@ -425,6 +454,10 @@ impl WireLabel for Request {
 impl WireLabel for Reply {
     fn label(&self) -> &'static str {
         match self {
+            Self::Root(_) => "reply Root",
+            Self::Base(_) => "reply Base",
+            Self::Known(_) => "reply Known",
+            Self::Missing => "reply Missing",
             Self::Hello { .. } => "reply Hello",
             Self::Pending => "reply Pending",
             Self::Proofs(_) => "reply Proofs",
@@ -448,6 +481,14 @@ pub struct Service {
     listener: Option<Listener>,
 }
 struct Inner {
+    body_cursor: Mutex<BTreeMap<(String, String), String>>,
+    unavailable_bodies: Mutex<BTreeSet<(String, String)>>,
+    unavailable_proofs: Mutex<BTreeSet<(String, String)>>,
+    author_lock: Mutex<()>,
+    content_lock: Mutex<()>,
+    doc_cursor: Mutex<BTreeMap<(String, String), (u64, String)>>,
+    doc_serial: AtomicU64,
+    hello_cursor: Mutex<BTreeMap<String, usize>>,
     state: Mutex<State>,
     root: PathBuf,
     cert: Vec<u8>,
@@ -491,22 +532,20 @@ impl Inner {
             .insert(key, value.clone())
             != Some(value);
         if changed {
-            if let Some(force) = &revision.force {
-                crate::traffic::force(
-                    doc,
-                    &format!(
-                        "Force sync main revision acknowledged by peer: generation {}",
-                        force.generation
-                    ),
-                    force,
-                    0,
-                );
-            }
+            crate::traffic::sync(
+                doc,
+                "Peer acknowledged signed commit",
+                &revision.key(),
+                &revision.author,
+            );
             self.event(Event::Changed);
         }
     }
     fn event(&self, event: Event) {
         let label = match &event {
+            Event::RestoreRoot(_) => Some("root_recovery_proposal"),
+            Event::DocumentStatus(_, _) => Some("document_sync_status_changed"),
+            Event::BaseReady(_) => Some("missing_base_restored_or_recovery_ready"),
             Event::Changed | Event::Checked => None,
             Event::Disconnected(_) => Some("peer_disconnected"),
             Event::Trust(_) => Some("trust_request"),
@@ -557,6 +596,23 @@ impl Inner {
         }
         Ok(self.root.join("content").join(format!("{hash}.txt")))
     }
+    fn archive_damaged(&self, path: &std::path::Path, key: &str) -> Result<(), String> {
+        let archive = self.root.join("recovery-v155");
+        crate::private_fs::directory(&archive).map_err(err)?;
+        if fs::metadata(path).map_err(err)?.len() > MAX + 1048576 {
+            return Err(
+                "Damaged snapshot exceeds its recovery archive limit; original preserved".into(),
+            );
+        }
+        let original = fs::read(path).map_err(err)?;
+        let preserved = archive.join(format!("corrupt-{key}-{}.bin", session::new_key()));
+        session::atomic_write(&preserved, &original).map_err(err)?;
+        let stored = crate::limits::read(&preserved, MAX + 1048576).map_err(err)?;
+        if stored != original {
+            return Err("Recovery archive verification failed; original preserved".into());
+        }
+        Ok(())
+    }
     fn put_content(
         &self,
         doc: &str,
@@ -571,7 +627,13 @@ impl Inner {
         // Reserve the full attribution even when another group already owns the
         // same CAS body; deduplication must not bypass document/author quotas.
         let reservation = self.reserve(doc, &self.id, data.len() as u64)?;
-        if !path.exists() {
+        let _content = self.content_lock.lock().unwrap();
+        let intact = path.is_file()
+            && crate::limits::read(&path, MAX).is_ok_and(|body| crate::peer::hash(&body) == key);
+        if !intact {
+            if path.exists() {
+                self.archive_damaged(&path, &key)?;
+            }
             session::atomic_write(&path, data.as_bytes()).map_err(err)?;
         }
         Ok((key, reservation))
@@ -620,102 +682,7 @@ impl Inner {
         source: &str,
         epoch: u64,
     ) -> Result<(), String> {
-        validate_revision(&revision)?;
-        let mut s = self.state.lock().unwrap();
-        if self.network_epoch.load(Ordering::Relaxed) != epoch || !self.allowed(&s, doc, source) {
-            return Err("Document permission changed; revision refused".into());
-        }
-        let document = s.docs.get(doc).ok_or("Unknown document")?;
-        if s.revoked.contains(&revision.author) || document.departed.contains(&revision.author) {
-            return Err("Revision author is revoked or has left this document".into());
-        }
-        crate::revision::verify(&revision, doc, &document.members)?;
-        if revision.parents.is_empty() && revision.key() != document.root {
-            return Err("Unapproved revision root".into());
-        }
-        crate::revision::causal(&revision, &s.proofs)?;
-        if s.proofs.len() >= crate::security::limits().proofs as usize
-            && !s.proofs.contains_key(&revision.key())
-        {
-            return Err(
-                "Signed history quota reached; share a fresh group or increase its limit".into(),
-            );
-        }
-        if s.proofs.values().any(|known| {
-            known.doc == doc
-                && known.author == revision.author
-                && known.clock.get(&revision.author) == revision.clock.get(&revision.author)
-                && known.key() != revision.key()
-        }) {
-            return Err("Signed device revision fork detected".into());
-        }
-        s.proofs.insert(revision.key(), revision.clone());
-        let Some(d) = s.docs.get_mut(doc) else {
-            return Err("Document is not shared.".into());
-        };
-        if same(&d.head, &revision) || d.conflicts.iter().any(|r| same(r, &revision)) {
-            return Ok(());
-        }
-        if revision
-            .clock
-            .keys()
-            .any(|id| !d.members.iter().any(|p| &p.id == id))
-        {
-            return Err("Unknown revision author.".into());
-        }
-        if std::iter::once(&d.head)
-            .chain(&d.conflicts)
-            .any(|r| supersedes(r, &revision))
-        {
-            if d.head.force > revision.force {
-                crate::traffic::force(
-                    doc,
-                    "Force sync main: superseded revision ignored",
-                    d.head.force.as_ref().unwrap(),
-                    0,
-                );
-            }
-            return Ok(());
-        }
-        let conflict;
-        let mut applied_force = None;
-        if std::iter::once(&d.head)
-            .chain(&d.conflicts)
-            .all(|r| supersedes(&revision, r))
-        {
-            if revision.force > d.head.force {
-                applied_force = revision
-                    .force
-                    .clone()
-                    .map(|marker| (marker, revision.bytes));
-            }
-            d.history.push(d.head.clone());
-            d.history.append(&mut d.conflicts);
-            d.head = revision;
-            conflict = false;
-        } else {
-            d.conflicts.retain(|r| !supersedes(&revision, r));
-            if d.conflicts.len() >= 32 {
-                return Err("Too many unresolved revision conflicts.".into());
-            }
-            d.conflicts.push(revision);
-            conflict = true;
-        }
-        if d.history.len() > 20 {
-            d.history.drain(..d.history.len() - 20);
-        }
-        self.save(&s)?;
-        drop(s);
-        if let Some((marker, bytes)) = applied_force {
-            crate::traffic::force(doc, "Force sync main applied", &marker, bytes);
-        }
-        self.event(if conflict {
-            Event::Conflict(doc.into())
-        } else {
-            Event::Updated(doc.into())
-        });
-        let _ = self.wake.send(());
-        Ok(())
+        self.tree_receive(doc, revision, source, epoch)
     }
     fn allowed(&self, s: &State, doc: &str, peer: &str) -> bool {
         self.enabled.load(Ordering::Relaxed)
@@ -784,22 +751,18 @@ impl Service {
         if state.protocol > crate::revision::PROTOCOL {
             return Err("This profile uses a newer sync protocol; downgrade refused".into());
         }
-        let legacy = state.protocol < 153;
-        if legacy {
-            for doc in state.docs.values_mut() {
-                doc.active = false;
-            }
-            state.outbox.clear();
-            state.offers.clear();
-            state.decisions.clear();
-            state.leaves.clear();
-            for (_, acceptance) in state.inbox.values_mut() {
-                acceptance.autosave = false;
-            }
-        }
-        state.protocol = crate::revision::PROTOCOL;
+        let upgraded = state.protocol < crate::revision::PROTOCOL;
+        repair::restore_state(&root, &mut state)?;
         let (wake, rx) = mpsc::channel();
         let inner = Arc::new(Inner {
+            body_cursor: Mutex::new(BTreeMap::new()),
+            unavailable_bodies: Mutex::new(BTreeSet::new()),
+            unavailable_proofs: Mutex::new(BTreeSet::new()),
+            author_lock: Mutex::new(()),
+            content_lock: Mutex::new(()),
+            doc_cursor: Mutex::new(BTreeMap::new()),
+            doc_serial: AtomicU64::new(1),
+            hello_cursor: Mutex::new(BTreeMap::new()),
             state: Mutex::new(state),
             root,
             cert: cert.clone(),
@@ -821,8 +784,8 @@ impl Service {
             let state = inner.state.lock().unwrap();
             inner.save(&state)?;
         }
-        if legacy {
-            inner.event(Event::Notice("V1.5.3 protects revision provenance. Existing unsigned groups are paused; update all peers and share a fresh group. Documents and device identities are preserved.".into()));
+        if upgraded {
+            inner.event(Event::Notice("V1.5.5 preserved existing contents and reconstructed signed version trees. Documents with an unverifiable old history offer Repair sync; no local draft is overwritten.".into()));
         }
         let worker = inner.clone();
         thread::spawn(move || loop {
@@ -1166,6 +1129,8 @@ impl Service {
         let _ = self.wake.send(());
     }
     pub fn retry(&self) {
+        self.inner.unavailable_bodies.lock().unwrap().clear();
+        self.inner.unavailable_proofs.lock().unwrap().clear();
         self.inner.seen.lock().unwrap().clear();
         self.wake();
     }
@@ -1260,12 +1225,33 @@ impl Service {
     }
     pub fn progress(&self, id: &str) -> Progress {
         let s = self.inner.state.lock().unwrap();
+        let link_issue = s.links.get(id).map(|r| {
+            if r.proposal.is_some() {
+                "root_approval"
+            } else if s
+                .config
+                .clients
+                .iter()
+                .filter(|p| !p.cert.is_empty() && !s.revoked.contains(&p.id))
+                .all(|p| r.checked.contains(&p.id))
+            {
+                "link_unavailable"
+            } else {
+                "waiting_link"
+            }
+            .to_owned()
+        });
         let Some(d) = s.docs.get(id) else {
-            return Progress::default();
+            return Progress {
+                issue: link_issue.or(Some("new_history_required".into())),
+                ..Default::default()
+            };
         };
         let mut p = Progress {
             enabled: self.inner.enabled.load(Ordering::Relaxed),
-            conflict: !d.conflicts.is_empty(),
+            issue: link_issue.or(d.issue.clone()),
+            conflict: !d.conflicts.is_empty() && !tree::identical(d),
+            same_contents: !d.conflicts.is_empty() && tree::identical(d),
             offers: s
                 .outbox
                 .iter()
@@ -1276,14 +1262,17 @@ impl Service {
         let acknowledgements = self.inner.acknowledgements.lock().unwrap();
         let statuses = self.inner.statuses.lock().unwrap();
         let key = d.head.key();
-        for member in d
-            .members
-            .iter()
-            .filter(|m| m.id != self.inner.id && !d.departed.contains(&m.id))
-        {
+        for member in d.members.iter().filter(|m| {
+            m.id != self.inner.id && !d.departed.contains(&m.id) && !s.revoked.contains(&m.id)
+        }) {
             p.clients += 1;
-            let configured = s.config.clients.iter().find(|c| c.id == member.id);
-            if let Some(client) = configured {
+            let client = s
+                .config
+                .clients
+                .iter()
+                .find(|c| c.id == member.id)
+                .unwrap_or(member);
+            {
                 if statuses.get(&format!("{}:{}", client.host, client.port)) == Some(&true) {
                     p.online += 1;
                 }
@@ -1328,8 +1317,10 @@ impl Service {
     pub fn set_active(&self, ids: &BTreeSet<String>) {
         let mut s = self.inner.state.lock().unwrap();
         let mut changed = false;
+        let verified = s.proofs.keys().cloned().collect::<BTreeSet<_>>();
         for d in s.docs.values_mut() {
             let active = ids.contains(&d.id)
+                && verified.contains(&d.root)
                 && !d.head.signature.is_empty()
                 && d.head.doc == d.id
                 && d.members.iter().any(|p| p.id == self.inner.id)
@@ -1353,6 +1344,7 @@ impl Service {
         data: &str,
         peers: Vec<Peer>,
         sync: bool,
+        replaces: Option<String>,
     ) -> Result<(String, Revision), String> {
         if !self.config().enabled {
             return Err("Send/Sync is not enabled.".into());
@@ -1366,7 +1358,10 @@ impl Service {
         let id = crate::private_fs::random_token().map_err(err)?;
         let (key, _reservation) = self.inner.put_content(&id, data)?;
         let own = self.inner.own();
+        let mut commit = crate::revision::Commit::new(crate::revision::Kind::Root);
+        commit.replaces = replaces;
         let mut revision = Revision {
+            commit: Some(commit),
             force: None,
             doc: id.clone(),
             group: crate::revision::group(
@@ -1394,7 +1389,9 @@ impl Service {
         if s.docs.len() >= crate::security::limits().documents as usize {
             return Err("Document quota reached; remove an inactive group first".into());
         }
-        if s.proofs.len() >= crate::security::limits().proofs as usize {
+        if s.proofs.len() + s.unverified.len() + s.quarantine.len()
+            >= crate::security::limits().proofs as usize
+        {
             return Err(
                 "Signed history quota reached; clean retired groups or adjust Security limits"
                     .into(),
@@ -1408,6 +1405,7 @@ impl Service {
             s.docs.insert(
                 id.clone(),
                 Document {
+                    issue: None,
                     id: id.clone(),
                     root: revision.key(),
                     title: title.clone(),
@@ -1485,124 +1483,6 @@ impl Service {
         self.wake();
         self.inner.event(Event::Changed);
         Ok(())
-    }
-    pub fn publish(&self, id: &str, base: &Clock, data: &str) -> Result<Revision, String> {
-        let (content, _reservation) = self.inner.put_content(id, data)?;
-        let s = self.inner.state.lock().unwrap();
-        let name = s.config.name.clone();
-        let d = s.docs.get(id).ok_or("Sync document is missing.")?;
-        if d.head.hash == content && d.conflicts.is_empty() {
-            return Ok(d.head.clone());
-        }
-        let parent = s
-            .proofs
-            .values()
-            .find(|r| r.doc == id && &r.clock == base)
-            .ok_or("The edited base revision is unavailable; select a current conflict version")?;
-        if parent.force < d.head.force {
-            return Err("A force-main decision superseded this draft; keep it as a separate copy before editing the current main version".into());
-        }
-        let mut parents = vec![parent.clone()];
-        include_local_provenance(&s, id, &self.inner.id, &mut parents);
-        if parents.iter().any(|r| r.force > parent.force) {
-            return Err("A newer signed force-main decision is pending; synchronise its main version before publishing".into());
-        }
-        let clock = parent_clock(&parents, &self.inner.id)?;
-        let mut revision = Revision {
-            force: parent.force.clone(),
-            clock,
-            hash: content,
-            author: self.inner.id.clone(),
-            name,
-            doc: id.into(),
-            group: parent.group.clone(),
-            bytes: data.len() as u64,
-            parents: parents.iter().map(Revision::key).collect(),
-            signature: String::new(),
-        };
-        if s.proofs.values().any(|r| {
-            r.doc == id
-                && r.author == self.inner.id
-                && r.clock.get(&self.inner.id) >= revision.clock.get(&self.inner.id)
-        }) {
-            return Err(
-                "A newer local revision exists; resolve the versions before publishing".into(),
-            );
-        }
-        crate::revision::sign(&mut revision, &self.inner.key)?;
-        drop(s);
-        self.inner.receive(
-            id,
-            revision.clone(),
-            &self.inner.id,
-            self.inner.network_epoch.load(Ordering::Relaxed),
-        )?;
-        Ok(revision)
-    }
-    pub fn force_main(&self, id: &str, key: &str) -> Result<Revision, String> {
-        let mut s = self.inner.state.lock().unwrap();
-        if s.proofs.len() >= crate::security::limits().proofs as usize {
-            return Err(
-                "Signed history quota reached; clean retired groups or adjust Security limits"
-                    .into(),
-            );
-        }
-        let name = s.config.name.clone();
-        let d = s.docs.get(id).ok_or("Document is missing.")?;
-        if !d.active || d.head.signature.is_empty() {
-            return Err(
-                "This archived group cannot publish revisions; share a fresh group first".into(),
-            );
-        }
-        let mut heads: Vec<_> = std::iter::once(d.head.clone())
-            .chain(d.conflicts.clone())
-            .collect();
-        let mut chosen = heads
-            .iter()
-            .find(|r| r.key() == key)
-            .cloned()
-            .ok_or("Revision has been replaced. Select it again.")?;
-        include_local_provenance(&s, id, &self.inner.id, &mut heads);
-        let generation = heads
-            .iter()
-            .filter_map(|r| r.force.as_ref())
-            .map(|f| f.generation)
-            .max()
-            .unwrap_or(0)
-            .checked_add(1)
-            .ok_or("Force-main generation overflow")?;
-        chosen.force = Some(crate::revision::ForceMain {
-            generation,
-            author: self.inner.id.clone(),
-            nonce: crate::private_fs::random_token().map_err(err)?,
-            selected: key.into(),
-        });
-        chosen.clock = parent_clock(&heads, &self.inner.id)?;
-        chosen.author = self.inner.id.clone();
-        chosen.name = name;
-        chosen.parents = heads.iter().map(Revision::key).collect();
-        crate::revision::sign(&mut chosen, &self.inner.key)?;
-        crate::revision::causal(&chosen, &s.proofs)?;
-        let chosen_proof = chosen.clone();
-        let d = s.docs.get_mut(id).ok_or("Document is missing.")?;
-        d.history.extend(heads);
-        if d.history.len() > 20 {
-            d.history.drain(..d.history.len() - 20);
-        }
-        d.head = chosen.clone();
-        d.conflicts.clear();
-        s.proofs.insert(chosen_proof.key(), chosen_proof);
-        self.inner.save(&s)?;
-        drop(s);
-        crate::traffic::force(
-            id,
-            &format!("Force sync main created: generation {generation}"),
-            chosen.force.as_ref().unwrap(),
-            chosen.bytes,
-        );
-        self.wake();
-        self.inner.event(Event::Updated(id.into()));
-        Ok(chosen)
     }
 }
 impl Drop for Service {
@@ -1825,11 +1705,24 @@ fn read_body(
             return Err("Content checksum mismatch.".into());
         }
         crate::traffic::record("RX", "document body validated", len);
-        if !path.exists() {
-            fs::rename(&temp, &path).map_err(err)?;
-        } else {
-            let _ = fs::remove_file(&temp);
+        let _content = inner.content_lock.lock().unwrap();
+        if path.exists() {
+            let intact = crate::limits::read(&path, MAX).is_ok_and(|body| {
+                body.len() as u64 == revision.bytes && crate::peer::hash(&body) == revision.hash
+            });
+            if intact {
+                fs::remove_file(&temp).map_err(err)?;
+                return Ok(());
+            }
+            inner.archive_damaged(&path, &revision.hash)?;
+            crate::traffic::sync(
+                &revision.doc,
+                "Damaged encrypted snapshot archived before authenticated replacement",
+                &revision.key(),
+                &revision.author,
+            );
         }
+        session::replace_file(&temp, &path).map_err(err)?;
         Ok(())
     })();
     if result.is_err() {
@@ -1888,6 +1781,45 @@ fn serve(
         return Err("Sharing is disabled.".into());
     }
     match read_header::<Request>(&mut stream)? {
+        Request::RestoreRoot { doc } => {
+            let s = inner.state.lock().unwrap();
+            if doc.is_empty() || doc.len() > 128 || !s.config.clients.iter().any(|p| p.id == peer) {
+                return Err("Root recovery requires an approved device".into());
+            }
+            let direct = s
+                .docs
+                .get(&doc)
+                .filter(|d| inner.allowed(&s, &d.id, &peer) && s.proofs.contains_key(&d.root));
+            let replacement = s
+                .docs
+                .values()
+                .filter(|d| inner.allowed(&s, &d.id, &peer))
+                .filter(|d| {
+                    s.proofs
+                        .get(&d.root)
+                        .and_then(|r| r.commit.as_ref())
+                        .and_then(|c| c.replaces.as_ref())
+                        == Some(&doc)
+                })
+                .collect::<Vec<_>>();
+            let found = direct.or_else(|| {
+                if replacement.len() == 1 {
+                    Some(replacement[0])
+                } else {
+                    None
+                }
+            });
+            let proposal = found.and_then(|d| {
+                s.proofs.get(&d.root).map(|root| RootProposal {
+                    doc: d.id.clone(),
+                    title: d.title.clone(),
+                    root: root.clone(),
+                    members: d.members.clone(),
+                })
+            });
+            drop(s);
+            write_header(&mut stream, &Reply::Root(proposal))?;
+        }
         Request::Leave { doc } => {
             let mut s = inner.state.lock().unwrap();
             if !s.docs.contains_key(&doc) {
@@ -1942,7 +1874,7 @@ fn serve(
             info.host = remote.ip().to_canonical().to_string();
             if info.protocol != crate::revision::PROTOCOL {
                 return Err(
-                    "All sharing devices must use compatible EditorTool V1.5.4 peers".into(),
+                    "All sharing devices must use compatible EditorTool V1.5.5 peers".into(),
                 );
             }
             if info.id != peer || !peer_valid(&info) {
@@ -1958,17 +1890,39 @@ fn serve(
                     }
                 }
             }
-            let heads = s
+            let all = s
                 .docs
                 .values()
                 .filter(|d| inner.allowed(&s, &d.id, &peer))
                 .flat_map(|d| {
                     std::iter::once(&d.head)
                         .chain(&d.conflicts)
-                        .map(|r| (d.id.clone(), r.clone()))
+                        .map(|r| (&d.id, r))
                 })
-                .take(256)
-                .collect();
+                .collect::<Vec<_>>();
+            let mut cursors = inner.hello_cursor.lock().unwrap();
+            let offset = *cursors.get(&peer).unwrap_or(&0);
+            let mut heads = vec![];
+            let mut size = 0usize;
+            for (doc, r) in all
+                .iter()
+                .cycle()
+                .skip(if all.is_empty() {
+                    0
+                } else {
+                    offset % all.len()
+                })
+                .take(all.len().min(256))
+            {
+                let cost = serde_json::to_vec(r).map_err(err)?.len() + doc.len() + 12;
+                if size + cost > HEADER - 65536 {
+                    break;
+                }
+                size += cost;
+                heads.push(((*doc).clone(), (*r).clone()));
+            }
+            cursors.insert(peer.clone(), offset + heads.len());
+            drop(cursors);
             drop(s);
             write_header(
                 &mut stream,
@@ -2009,6 +1963,12 @@ fn serve(
             crate::revision::verify(&offer.revision, &offer.doc, &offer.members)?;
             crate::revision::causal(&offer.revision, &BTreeMap::new())?;
             let mut s = inner.state.lock().unwrap();
+            if s.docs
+                .get(&offer.doc)
+                .is_some_and(|d| d.root != offer.revision.key())
+            {
+                return Err("A different signed root already owns this document identifier".into());
+            }
             if !s.config.clients.iter().any(|p| p.id == peer)
                 || s.revoked.contains(&peer)
                 || s.revoked
@@ -2097,7 +2057,8 @@ fn serve(
                     return Err("Consent changed during transfer".into());
                 }
                 if (!s.proofs.contains_key(&revision.key())
-                    && s.proofs.len() >= crate::security::limits().proofs as usize)
+                    && s.proofs.len() + s.unverified.len() + s.quarantine.len()
+                        >= crate::security::limits().proofs as usize)
                     || (o.sync
                         && !s.docs.contains_key(&doc)
                         && s.docs.len() >= crate::security::limits().documents as usize)
@@ -2108,6 +2069,7 @@ fn serve(
                 if o.sync {
                     let departed = s.departures.remove(&doc).unwrap_or_default();
                     s.docs.entry(doc.clone()).or_insert(Document {
+                        issue: None,
                         id: doc.clone(),
                         root: revision.key(),
                         title: o.title.clone(),
@@ -2135,6 +2097,46 @@ fn serve(
             }
             write_header(&mut stream, &Reply::Done)?;
         }
+        Request::LookupBase {
+            doc,
+            key,
+            clock,
+            hash,
+        } => {
+            let s = inner.state.lock().unwrap();
+            if !inner.allowed(&s, &doc, &peer)
+                || clock.len() > 64
+                || hash.len() != 64
+                || key.as_ref().is_some_and(|k| k.len() != 64)
+            {
+                return Err("Base lookup access denied".into());
+            }
+            let binding = Binding {
+                doc: doc.clone(),
+                revision: key,
+                clock,
+                hash,
+                force: None,
+                autosave: false,
+                approved_target: None,
+                disk_hash: None,
+            };
+            let found = tree::exact_base(&s, &binding);
+            drop(s);
+            write_header(&mut stream, &Reply::Base(found))?;
+        }
+        Request::HaveProofs { doc, keys } => {
+            let s = inner.state.lock().unwrap();
+            if keys.len() > 512 || !inner.allowed(&s, &doc, &peer) {
+                return Err("Proof receipt access denied".into());
+            }
+            let known = keys
+                .into_iter()
+                .filter(|key| s.proofs.get(key).is_some_and(|r| r.doc == doc))
+                .collect();
+            drop(s);
+            write_header(&mut stream, &Reply::Known(known))?;
+        }
         Request::Proofs { doc, keys } => {
             let s = inner.state.lock().unwrap();
             if keys.len() > 32 || !inner.allowed(&s, &doc, &peer) {
@@ -2142,14 +2144,8 @@ fn serve(
             }
             let nodes = keys
                 .iter()
-                .map(|key| {
-                    s.proofs
-                        .get(key)
-                        .filter(|r| r.doc == doc)
-                        .cloned()
-                        .ok_or("Signed parent unavailable; share a fresh group")
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+                .filter_map(|key| s.proofs.get(key).filter(|r| r.doc == doc).cloned())
+                .collect();
             drop(s);
             write_header(&mut stream, &Reply::Proofs(nodes))?;
         }
@@ -2162,13 +2158,32 @@ fn serve(
             if !inner.allowed(&s, &doc, &peer) {
                 return Err("Document is not shared.".into());
             }
-            let d = &s.docs[&doc];
-            let r = std::iter::once(&d.head)
-                .chain(&d.conflicts)
-                .find(|r| r.key() == key)
-                .cloned()
-                .ok_or("Revision is missing.")?;
+            let r = s.proofs.get(&key).filter(|r| r.doc == doc).cloned();
+            let Some(r) = r else {
+                drop(s);
+                write_header(&mut stream, &Reply::Missing)?;
+                return Ok(());
+            };
+            if !inner.content_path(&r.hash)?.is_file() {
+                drop(s);
+                write_header(&mut stream, &Reply::Missing)?;
+                return Ok(());
+            }
             drop(s);
+            if !crate::limits::read(&inner.content_path(&r.hash)?, MAX)
+                .is_ok_and(|bytes| hash(&bytes) == r.hash && bytes.len() as u64 == r.bytes)
+            {
+                let mut s = inner.state.lock().unwrap();
+                s.want_bodies.insert(r.key());
+                if let Some(d) = s.docs.get_mut(&doc) {
+                    d.issue = Some("integrity".into());
+                }
+                inner.save(&s)?;
+                drop(s);
+                inner.event(Event::DocumentStatus(doc.clone(), "integrity".into()));
+                write_header(&mut stream, &Reply::Missing)?;
+                return Ok(());
+            }
             let len = r.bytes;
             write_header(
                 &mut stream,
@@ -2297,15 +2312,17 @@ fn sweep(inner: &Arc<Inner>) {
             };
             if info.protocol != crate::revision::PROTOCOL {
                 return Err(
-                    "All sharing devices must use compatible EditorTool V1.5.4 peers".into(),
+                    "All sharing devices must use compatible EditorTool V1.5.5 peers".into(),
                 );
             }
             if info.id != peer.id && !peer.id.is_empty() {
                 return Err("Device identifier mismatch.".into());
             }
-            for (doc, revision) in &heads {
-                fetch_proofs(inner, &peer, doc, revision, started, checked_generation)?;
-                inner.confirmed(&info.id, doc, revision);
+            if let Err(error) = roots::round(inner, &peer, started) {
+                crate::diagnostics::failure("sharing", "root_recovery_wait", &error);
+            }
+            if let Err(error) = repair::lookup_round(inner, &peer, started, checked_generation) {
+                crate::diagnostics::failure("sharing", "base_lookup_wait", &error);
             }
             let leaves = inner
                 .state
@@ -2325,89 +2342,41 @@ fn sweep(inner: &Arc<Inner>) {
                     inner.save(&s)?;
                 }
             }
-            let docs = inner
-                .state
-                .lock()
-                .unwrap()
-                .docs
-                .values()
-                .filter(|d| {
-                    d.active
-                        && !d.departed.contains(&info.id)
-                        && !d.departed.contains(&inner.id)
-                        && d.members.iter().any(|p| p.id == info.id)
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            for d in docs {
-                for (_, remote) in heads.iter().filter(|(id, _)| id == &d.id) {
-                    if std::iter::once(&d.head)
-                        .chain(&d.conflicts)
-                        .any(|r| same(r, remote) || supersedes(r, remote))
-                    {
-                        if d.head.force > remote.force {
-                            crate::traffic::force(&d.id, &format!("Force sync main retained: generation {}; superseded peer generation {} ignored", d.head.force.as_ref().unwrap().generation, remote.force.as_ref().map_or(0, |f| f.generation)), d.head.force.as_ref().unwrap(), 0);
-                        }
-                        continue;
-                    }
-                    let mut stream = connect(inner, &peer, started)?;
-                    write_header(
-                        &mut stream,
-                        &Request::Get {
-                            doc: d.id.clone(),
-                            key: remote.key(),
-                        },
-                    )?;
-                    if let Reply::Data { revision, len } = read_header(&mut stream)? {
-                        if !same(&revision, remote) {
-                            return Err("Revision reply mismatch.".into());
-                        }
-                        let _reservation = read_body(inner, &mut stream, &revision, len)?;
-                        inner.receive(&d.id, revision, &info.id, checked_generation)?;
-                    }
+            let visible = heads
+                .iter()
+                .map(|(id, _)| id.clone())
+                .collect::<BTreeSet<_>>();
+            let mut docs = {
+                let s = inner.state.lock().unwrap();
+                let previous = inner.doc_cursor.lock().unwrap();
+                s.docs
+                    .values()
+                    .filter(|d| visible.contains(&d.id) && inner.allowed(&s, &d.id, &peer.id))
+                    .map(|d| {
+                        let mut keys = tree::heads(d).iter().map(Revision::key).collect::<Vec<_>>();
+                        keys.sort();
+                        let digest = hash(&serde_json::to_vec(&keys).expect("serializable heads"));
+                        let old = previous.get(&(peer.id.clone(), d.id.clone()));
+                        let changed = old.is_none_or(|(_, known)| known != &digest);
+                        ((!changed, old.map_or(0, |p| p.0), d.id.clone()), digest)
+                    })
+                    .collect::<Vec<_>>()
+            };
+            docs.sort_by(|a, b| a.0.cmp(&b.0));
+            for ((_, _, doc), digest) in docs.into_iter().take(8) {
+                if started.elapsed() > Duration::from_secs(40) {
+                    break;
                 }
-                let fresh = inner
-                    .state
+                let serial = inner.doc_serial.fetch_add(1, Ordering::Relaxed);
+                inner
+                    .doc_cursor
                     .lock()
                     .unwrap()
-                    .docs
-                    .get(&d.id)
-                    .cloned()
-                    .unwrap();
-                for local in std::iter::once(&fresh.head).chain(&fresh.conflicts) {
-                    if !heads.iter().any(|(id, _)| id == &d.id)
-                        || heads
-                            .iter()
-                            .filter(|(id, _)| id == &d.id)
-                            .any(|(_, r)| same(r, local) || supersedes(r, local))
-                    {
-                        continue;
-                    }
-                    push_proofs(inner, &peer, &d.id, local, started)?;
-                    let mut stream = connect(inner, &peer, started)?;
-                    let len = local.bytes;
-                    write_header(
-                        &mut stream,
-                        &Request::Put {
-                            doc: d.id.clone(),
-                            revision: local.clone(),
-                            offer: None,
-                            len,
-                        },
-                    )?;
-                    if matches!(read_header(&mut stream)?, Reply::Ready) {
-                        send_body(
-                            inner,
-                            &mut stream,
-                            &local.hash,
-                            &d.id,
-                            &info.id,
-                            checked_generation,
-                        )?;
-                        if matches!(read_header(&mut stream)?, Reply::Done) {
-                            inner.confirmed(&info.id, &d.id, local);
-                        }
-                    }
+                    .insert((peer.id.clone(), doc.clone()), (serial, digest));
+                if let Err(error) =
+                    transport::document(inner, &peer, &doc, &heads, started, checked_generation)
+                {
+                    transport::report(inner, &doc, &error);
                 }
             }
             let outbox = {
@@ -2511,6 +2480,18 @@ fn sweep(inner: &Arc<Inner>) {
         inner.event(Event::Checked);
         drop(statuses);
         if changed {
+            if result.is_ok() {
+                inner
+                    .unavailable_bodies
+                    .lock()
+                    .unwrap()
+                    .retain(|(id, _)| id != &peer.id);
+                inner
+                    .unavailable_proofs
+                    .lock()
+                    .unwrap()
+                    .retain(|(id, _)| id != &peer.id);
+            }
             if let Err(error) = &result {
                 crate::diagnostics::failure("sharing", "outgoing_failed", error);
             }

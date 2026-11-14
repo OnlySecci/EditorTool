@@ -113,13 +113,17 @@ pub(crate) fn atomic_write(path: &Path, data: &[u8]) -> io::Result<()> {
         let file = crate::private_fs::create(&tmp)?;
         crate::vault::write(file, path, data)?;
     }
+    replace_file(&tmp, path)
+}
+
+pub(crate) fn replace_file(tmp: &Path, path: &Path) -> io::Result<()> {
     #[cfg(windows)]
     {
         #[link(name = "kernel32")]
         extern "system" {
             fn MoveFileExW(from: *const u16, to: *const u16, flags: u32) -> i32;
         }
-        let from = crate::private_fs::windows_wide(&tmp)?;
+        let from = crate::private_fs::windows_wide(tmp)?;
         let to = crate::private_fs::windows_wide(path)?;
         if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), 1 | 8) } == 0 {
             return Err(io::Error::last_os_error());
@@ -127,7 +131,7 @@ pub(crate) fn atomic_write(path: &Path, data: &[u8]) -> io::Result<()> {
     }
     #[cfg(not(windows))]
     {
-        fs::rename(&tmp, path)?;
+        fs::rename(tmp, path)?;
         if let Some(parent) = path.parent() {
             File::open(parent)?.sync_all()?;
         }
@@ -136,6 +140,60 @@ pub(crate) fn atomic_write(path: &Path, data: &[u8]) -> io::Result<()> {
 }
 
 impl Store {
+    pub fn backup_v155(&self) -> io::Result<()> {
+        let backup = self.root.join("recovery-v155");
+        if backup.join("complete.json").exists() {
+            let bytes = crate::limits::read(&backup.join("complete.json"), 1024)?;
+            let marker: serde_json::Value = serde_json::from_slice(&bytes)?;
+            if marker["version"] != 155 || marker["preserved"] != true {
+                return Err(io::Error::other(
+                    "Invalid session recovery marker; existing data preserved",
+                ));
+            }
+            return Ok(());
+        }
+        crate::private_fs::directory(&backup)?;
+        for entry in fs::read_dir(&self.root)? {
+            let entry = entry?;
+            let path = entry.path();
+            if crate::private_fs::is_link(&fs::symlink_metadata(&path)?) {
+                return Err(io::Error::other("Link in session recovery backup rejected"));
+            }
+            if !entry.file_type()?.is_file()
+                || path
+                    .file_name()
+                    .is_some_and(|n| n == "session.lock" || n == "instance.json")
+                || path.extension().is_some_and(|e| e == "pending")
+            {
+                continue;
+            }
+            let bytes =
+                zeroize::Zeroizing::new(crate::limits::read(&path, crate::limits::DOCUMENT)?);
+            let target = backup.join(entry.file_name());
+            if target.exists() {
+                let previous =
+                    zeroize::Zeroizing::new(crate::limits::read(&target, crate::limits::DOCUMENT)?);
+                if *previous != *bytes {
+                    let alternate = backup.join(format!(
+                        "{}-{}",
+                        crate::peer::hash(&bytes),
+                        entry.file_name().to_string_lossy()
+                    ));
+                    if !alternate.exists() {
+                        atomic_write(&alternate, &bytes)?;
+                    }
+                }
+            } else {
+                atomic_write(&target, &bytes)?;
+            }
+        }
+        atomic_write(
+            &backup.join("complete.json"),
+            b"{\"version\":155,\"preserved\":true}",
+        )?;
+        crate::diagnostics::event("session", "v155_pre_upgrade_backup_completed");
+        Ok(())
+    }
     pub fn orphan_files(&self, current: &Snapshot) -> io::Result<Vec<PathBuf>> {
         self.flush().map_err(io::Error::other)?;
         let mut keep = std::collections::BTreeSet::new();

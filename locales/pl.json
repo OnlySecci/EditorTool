@@ -417,5 +417,8 @@
   "Use selected revision": "Użyj wybranej wersji",
   "Fit to text area": "Dopasuj do obszaru tekstu",
   "Security": "Bezpieczeństwo",
-  "Force sync main": "Wymuś wersję główną"
+  "Force sync main": "Wymuś wersję główną",
+  "Use selected as main": "Użyj wybranej wersji",
+  "Use editor text as main": "Użyj tekstu edytora",
+  "Repair sync…": "Napraw synchronizację…"
 }

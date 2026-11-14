@@ -823,5 +823,11 @@
   "Unsafe cleanup path.": "Unsicherer Bereinigungspfad.",
   "Move to other view": "In andere Ansicht verschieben",
   "Security": "Sicherheit",
-  "Force sync main": "Force sync main"
+  "Force sync main": "Force sync main",
+  "Use selected as main": "Ausgewählten Stand übernehmen",
+  "Use editor text as main": "Editor-Text übernehmen",
+  "Open as recovery copy": "Als Wiederherstellungskopie öffnen",
+  "Compare with editor": "Mit Editor vergleichen",
+  "Repair sync…": "Sync reparieren…",
+  "Document versions — EditorTool": "Dokumentversionen — EditorTool"
 }

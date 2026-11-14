@@ -1,19 +1,32 @@
-# EditorTool V1.5.4
+# EditorTool V1.5.5
 
-## Force sync main
+## Shared history instead of force priority
 
-Select the desired revision in a document's version/conflict view and choose **Force sync main**. A signed logical force generation makes that content the common main version. Older generations and ordinary offline edits based on them cannot replace it. Later edits based on the winning main version can sync normally.
+All participating devices are equal. Sequential edits follow their signed content parents and sync after the five-second writing pause. An unchanged offline device catches up automatically. Independent edits remain branches until a user chooses or merges their contents.
 
-Concurrent force decisions use the same deterministic ordering on every device. Device clocks are not used; this cannot establish the real-world chronology of decisions created while disconnected. After learning a decision, another explicit force action advances to a higher generation. Concurrent ordinary edits within the same winning generation still require conflict resolution.
+The versions view offers **Use selected as main** and **Use editor text as main**. A confirmed choice creates a signed resolution joining the displayed branches. Unseen offline branches and concurrent decisions remain visible for another decision. Clocks and legacy force generations never silently select a winner. Identical contents can be joined without user arbitration.
 
-Unsent local edits are preserved in a separate unsynchronised recovery tab and the protected session is flushed before the shared tab is replaced. If recovery cannot be persisted, replacement is refused. Superseded published heads remain subject to the existing bounded history. A restart reconciles separately persisted main decisions with older cached tabs.
+## Existing links and recovery
 
-Communication logs record force creation, application, ignored superseded peers, acknowledgements and recovered drafts. Full logs show group, generation and deciding fingerprint; the new SYNC filter and text search help locate these events. Pseudonymised export excludes the added group/authority identifiers. An acknowledgement is not a claim that every offline client has applied the decision.
+- Preserve encrypted pre-migration session/sharing backups, available historical snapshots and independent pending drafts.
+- Revalidate V1.5.3/V1.5.4 signatures; recover branches hidden by force priority and store exact signed base IDs in local links.
+- Restore missing bases/history in bounded resumable batches. Show document status instead of repeated background error dialogs.
+- Add **Repair document sync**: retry restoration, keep text as an independent branch, ask paired devices for a missing root, or start a new approved history. Roots require confirmation; new groups require recipient approval and preserve different local copies.
+- Preview/compare historical and linked archived versions or open recovery copies. Unverifiable records cannot masquerade as signed ancestry.
+- Archive damaged stored snapshots before authenticated atomic replacement. Preserve pending drafts independently of session writes.
 
-## Compatibility and safeguards
+## Status and logs
 
-Upgrade all communicating devices to the compatible V1.5.4 protocol. V1.5.3 groups and signatures are preserved; older peers are refused because they cannot enforce force-main authority. Do not downgrade a profile after using the feature. Existing recovery-key protection and the update signing trust key are unchanged.
+Show per-document recovery, backlog, integrity, quota and connection states. Log signed commit IDs and authors without contents or keys. Isolate failed documents, fairly resume large histories and prioritise current edits over historical bodies.
 
-The implementation preserves a losing device's signed author-counter history when editing the new main version, avoiding counter reuse. Equal-content concurrent revisions remain separate signed records instead of mutating signed vector clocks in place. Force never bypasses document consent, revocation, quotas, executable-target approval, autosave preferences or external-file conflict checks.
+## Compatibility and limits
 
-See [Force sync main](https://github.com/OnlySecci/EditorTool/blob/main/docs/force-sync-main.md) for the design and convergence conditions. Source review and native builds/packaging only; no automated, interactive or installation tests and no app launches. Platform developer signing certificates remain unconfigured; update metadata uses the existing Ed25519 trust key. Original code remains under The Unlicense.
+Upgrade **all communicating devices to V1.5.5**. Older protocol peers are refused. Do not downgrade migrated profiles. Device identities, encryption and the update-signing key are unchanged.
+
+Migration does not silently delete available data. It cannot recreate bytes deleted before upgrading or recover an encrypted profile without its key. Unavailable peers, corrupt data, full disks and quotas can still pause sync; recovery paths remain available. Explicit cleanup can remove retired sync-only history and retains its confirmation. Keep a separate backup before upgrading important work.
+
+Membership, revocation, target consent, external-file checks and autosave remain enforced. No promise of error-free networking or automatic text conflict merging.
+
+Source review and native compilation/packaging only. **No automated, interactive or installation tests; no app launches.** Windows/Apple developer certificates remain unconfigured; update metadata uses the existing Ed25519 key. Original code remains under The Unlicense.
+
+See [Sync history and recovery](https://github.com/OnlySecci/EditorTool/blob/main/docs/sync-history.md).

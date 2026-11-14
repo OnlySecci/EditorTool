@@ -166,10 +166,17 @@ impl Panel {
                 e.bytes
             );
             if !e.document.is_empty() {
-                line.push_str(&format!(
-                    "    Group {} · Force {} · Authority {}\n",
-                    e.document, e.force_generation, e.force_author
-                ));
+                if e.revision.is_empty() && e.force_generation > 0 {
+                    line.push_str(&format!(
+                        "    Group {} · Legacy force {} · Authority {}\n",
+                        e.document, e.force_generation, e.force_author
+                    ));
+                } else {
+                    line.push_str(&format!(
+                        "    Group {} · Commit {} · Author {}\n",
+                        e.document, e.revision, e.force_author
+                    ));
+                }
             }
             if query.is_empty()
                 || line.to_lowercase().contains(&query)

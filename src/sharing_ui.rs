@@ -302,6 +302,7 @@ impl Clients {
     }
 }
 pub struct Transfer {
+    pub rebuild: bool,
     pub win: Window,
     pub clients: colored_checks::Checks,
     pub autosave: fltk::button::CheckButton,
@@ -348,6 +349,7 @@ impl Transfer {
             clients,
             autosave,
             stop,
+            rebuild: false,
             context: None,
             choices: vec![],
         }
@@ -360,6 +362,7 @@ impl Transfer {
         sync: bool,
         binding: Option<&peer::Binding>,
     ) {
+        self.rebuild = false;
         self.clients.clear();
         self.choices = service
             .config()
@@ -427,20 +430,35 @@ pub struct Conflicts {
     pub list: HoldBrowser,
     pub text: fltk::text::TextBuffer,
     pub versions: Vec<peer::Revision>,
+    pub tips: Vec<String>,
     pub doc: Option<String>,
+    pub editor_key: Option<String>,
+    pub mode: fltk::menu::Choice,
+    heading: Frame,
 }
 impl Conflicts {
+    pub fn note(&mut self, text: &str) {
+        self.heading.set_label(text);
+    }
     pub fn new(tx: app::Sender<Message>) -> Self {
         Group::set_current(None::<&Group>);
         let mut win = Window::default()
-            .with_size(680, 510)
-            .with_label(crate::i18n::tr("Versionskonflikt — EditorTool"));
+            .with_size(800, 660)
+            .with_label(crate::i18n::tr("Document versions — EditorTool"));
         win.set_color(PANEL);
         chrome::set_icon(&mut win);
-        let mut root = Flex::new(20, 18, 640, 474, None).column();
+        let mut root = Flex::new(20, 18, 760, 624, None).column();
         root.set_spacing(10);
-        let label = theme::heading("Which revision should be used?", 20);
-        root.fixed(&label, 30);
+        let heading = theme::heading("Document version tree", 18);
+        root.fixed(&heading, 32);
+        let mut mode = fltk::menu::Choice::default();
+        mode.add_choice("Current branches|Commit history");
+        mode.set_value(0);
+        mode.set_color(BG);
+        mode.set_text_color(FG);
+        mode.set_text_size(13);
+        mode.emit(tx, (0, Action::RefreshVersions));
+        root.fixed(&mode, 30);
         let mut list = HoldBrowser::default();
         list.set_color(BG);
         list.set_label_color(FG);
@@ -448,7 +466,7 @@ impl Conflicts {
         list.set_text_size(13);
         list.set_frame(FrameType::FlatBox);
         list.emit(tx, (0, Action::PreviewConflict));
-        root.fixed(&list, 100);
+        root.fixed(&list, 150);
         let text = fltk::text::TextBuffer::default();
         let mut view = fltk::text::TextDisplay::default();
         view.set_buffer(text.clone());
@@ -464,9 +482,13 @@ impl Conflicts {
         view.handle(move |w, e| theme::handle_scrollbars(w, e, &grab));
         let mut row = Flex::default().row();
         row.set_spacing(8);
-        let mut resolve = Button::default().with_label(crate::i18n::tr("Force sync main"));
-        theme::button(&mut resolve, true, None);
-        resolve.emit(tx, (0, Action::ForceSyncMain));
+        let mut selected = Button::default().with_label(crate::i18n::tr("Use selected as main"));
+        theme::button(&mut selected, true, None);
+        selected.emit(tx, (0, Action::ResolveMain));
+        let mut edited = Button::default().with_label(crate::i18n::tr("Use editor text as main"));
+        theme::button(&mut edited, false, None);
+        edited.emit(tx, (0, Action::ResolveEditedMain));
+        edited.set_tooltip("Edit the original shared document to combine contents, then commit that text as the common main version.");
         let mut later = Button::default().with_label(crate::i18n::tr("Decide later"));
         theme::button(&mut later, false, None);
         later.set_callback(|b| {
@@ -476,6 +498,20 @@ impl Conflicts {
         });
         row.end();
         root.fixed(&row, 36);
+        let mut tools = Flex::default().row();
+        tools.set_spacing(8);
+        for (label, action) in [
+            ("Open as recovery copy", Action::OpenSyncRevision),
+            ("Compare with editor", Action::CompareSyncRevision),
+            ("Repair sync…", Action::RepairShownSync),
+            ("Refresh", Action::RefreshVersions),
+        ] {
+            let mut button = Button::default().with_label(crate::i18n::tr(label));
+            theme::button(&mut button, false, None);
+            button.emit(tx, (0, action));
+        }
+        tools.end();
+        root.fixed(&tools, 34);
         root.end();
         win.end();
         win.set_callback(|w| w.hide());
@@ -484,25 +520,93 @@ impl Conflicts {
             list,
             text,
             versions: vec![],
+            tips: vec![],
             doc: None,
+            editor_key: None,
+            mode,
+            heading,
         }
     }
-    pub fn show(&mut self, document: peer::Document) {
-        self.doc = Some(document.id);
-        self.versions = std::iter::once(document.head)
-            .chain(document.conflicts)
-            .collect();
-        self.list.clear();
-        for r in &self.versions {
-            self.list.add(&format!(
-                "Force {} · {} · revision {} · content {}",
-                r.force.as_ref().map_or(0, |f| f.generation),
-                r.name,
+    pub fn show(&mut self, document: peer::Document, mut history: Vec<peer::Revision>) {
+        let changed = self.doc.as_deref() != Some(&document.id);
+        let old = self
+            .list
+            .value()
+            .checked_sub(1)
+            .and_then(|i| self.versions.get(i as usize))
+            .map(peer::Revision::key);
+        if changed {
+            self.mode.set_value(0);
+        }
+        let current = std::iter::once(document.head.clone())
+            .chain(document.conflicts.clone())
+            .collect::<Vec<_>>();
+        self.tips = current.iter().map(peer::Revision::key).collect();
+        self.doc = Some(document.id.clone());
+        history.sort_by_key(|r| {
+            (
                 r.clock.values().copied().fold(0u64, u64::saturating_add),
-                r.hash.get(..12).unwrap_or(&r.hash)
+                r.key(),
+            )
+        });
+        history.reverse();
+        self.versions = if self.mode.value() == 0 {
+            current
+        } else {
+            history
+        };
+        self.heading.set_label(&format!(
+            "{} · {} branch(es) · {}",
+            document.title,
+            self.tips.len(),
+            document
+                .issue
+                .as_deref()
+                .map(crate::sharing_repair::status)
+                .unwrap_or("Choose a branch or edit the shared document to merge")
+        ));
+        self.list.clear();
+        let mut selected = 1;
+        for (i, r) in self.versions.iter().enumerate() {
+            let key = r.key();
+            if old.as_ref() == Some(&key) {
+                selected = i as i32 + 1;
+            }
+            let role = if r.doc != document.id {
+                "ARCHIVE"
+            } else if self.tips.contains(&key) {
+                if self.tips.len() == 1 {
+                    "MAIN"
+                } else {
+                    "BRANCH"
+                }
+            } else {
+                "HISTORY"
+            };
+            let kind = r
+                .commit
+                .as_ref()
+                .map(|c| format!("{:?}", c.kind))
+                .unwrap_or_else(|| {
+                    if r.signature.is_empty() {
+                        "Archived".into()
+                    } else {
+                        "Legacy signed".into()
+                    }
+                });
+            let parents = r
+                .parents
+                .iter()
+                .map(|p| p.get(..8).unwrap_or(p))
+                .collect::<Vec<_>>()
+                .join(",");
+            self.list.add(&format!(
+                "{role} · {} · {kind} · {} · parents [{parents}]",
+                &key[..12],
+                r.name
             ));
         }
-        self.list.select(1);
+        self.list.select(selected);
         self.win.show();
         chrome::dark_title(&self.win);
     }

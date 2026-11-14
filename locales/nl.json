@@ -417,5 +417,8 @@
   "Use selected revision": "Geselecteerde versie gebruiken",
   "Fit to text area": "Aan tekstgebied aanpassen",
   "Security": "Beveiliging",
-  "Force sync main": "Hoofdversie afdwingen"
+  "Force sync main": "Hoofdversie afdwingen",
+  "Use selected as main": "Geselecteerde versie gebruiken",
+  "Use editor text as main": "Editortekst gebruiken",
+  "Repair sync…": "Synchronisatie herstellen…"
 }

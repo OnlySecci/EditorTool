@@ -417,5 +417,8 @@
   "Use selected revision": "Використати обрану версію",
   "Fit to text area": "Припасувати до текстової області",
   "Security": "Безпека",
-  "Force sync main": "Примусова основна версія"
+  "Force sync main": "Примусова основна версія",
+  "Use selected as main": "Використати вибрану версію",
+  "Use editor text as main": "Використати текст редактора",
+  "Repair sync…": "Відновити синхронізацію…"
 }

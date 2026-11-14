@@ -91,9 +91,17 @@ pub fn event(component: &str, message: &str) {
 // Classify internally generated errors without persisting their free-form text.
 pub fn failure(component: &str, phase: &str, error: &str) {
     let text = error.to_lowercase();
-    let class = if text.contains("permission")
-        || text.contains("denied")
-        || text.contains("verweigert")
+    let class = if text.contains("base")
+        && (text.contains("missing") || text.contains("unavailable"))
+    {
+        "sync_base_missing"
+    } else if text.contains("quota") {
+        "sync_quota"
+    } else if text.contains("proof") || text.contains("ancestry") || text.contains("parent") {
+        "sync_history"
+    } else if text.contains("compatible") || text.contains("protocol") {
+        "protocol_mismatch"
+    } else if text.contains("permission") || text.contains("denied") || text.contains("verweigert")
     {
         "permission"
     } else if text.contains("timed out") || text.contains("timeout") || text.contains("zeitübersch")
