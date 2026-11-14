@@ -94,6 +94,7 @@ pub fn listeners(automatic: bool, selected: &[Binding], port: u16) -> io::Result
             })?;
         let address = binding.address(port);
         let s = socket(address)?;
+        bind_interface(&s, binding)?;
         if address.is_ipv6() {
             s.set_only_v6(true)?;
         }
@@ -106,7 +107,7 @@ pub fn listeners(automatic: bool, selected: &[Binding], port: u16) -> io::Result
     }
     Ok(listeners)
 }
-fn select_interface(s: &socket2::Socket, binding: &Binding) -> io::Result<()> {
+fn bind_interface(s: &socket2::Socket, binding: &Binding) -> io::Result<()> {
     #[cfg(target_os = "macos")]
     {
         let index = std::num::NonZeroU32::new(binding.index)
@@ -119,25 +120,9 @@ fn select_interface(s: &socket2::Socket, binding: &Binding) -> io::Result<()> {
     }
     #[cfg(target_os = "linux")]
     {
-        use std::os::fd::AsRawFd;
-        let index = binding.index.to_be();
-        let (level, option) = if binding.ip.is_ipv4() {
-            (libc::IPPROTO_IP, 50)
-        } else {
-            (libc::IPPROTO_IPV6, 76)
-        };
-        if unsafe {
-            libc::setsockopt(
-                s.as_raw_fd(),
-                level,
-                option,
-                (&index as *const u32).cast(),
-                4,
-            )
-        } != 0
-        {
-            return Err(io::Error::last_os_error());
-        }
+        // Linux TCP uses sk_bound_dev_if, not IP_UNICAST_IF. A fresh socket
+        // can be bound without CAP_NET_RAW on current supported kernels.
+        s.bind_device(Some(binding.name.as_bytes()))?;
     }
     #[cfg(windows)]
     {
@@ -165,6 +150,10 @@ fn select_interface(s: &socket2::Socket, binding: &Binding) -> io::Result<()> {
             return Err(io::Error::from_raw_os_error(unsafe { WSAGetLastError() }));
         }
     }
+    Ok(())
+}
+fn select_interface(s: &socket2::Socket, binding: &Binding) -> io::Result<()> {
+    bind_interface(s, binding)?;
     s.bind(&binding.address(0).into())
 }
 pub fn connect(
