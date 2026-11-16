@@ -587,6 +587,8 @@ impl Runtime {
 pub fn wire_window(win: &mut Window, route: Rc<Cell<usize>>, tx: app::Sender<Message>) {
     let close_route = route.clone();
     win.set_callback(move |_| tx.send((close_route.get(), Action::CloseWindow)));
+    // Route application shortcuts once, before native child/menu dispatch.
+    win.super_handle_first(false);
     win.handle(move |_, ev| {
         let wid = route.get();
         if ev == Event::KeyDown {

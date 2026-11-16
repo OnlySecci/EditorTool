@@ -1,32 +1,40 @@
-# EditorTool V1.5.5
+# EditorTool V1.5.6
 
-## Shared history instead of force priority
+## macOS clipboard and application lifecycle
 
-All participating devices are equal. Sequential edits follow their signed content parents and sync after the five-second writing pause. An unchanged offline device catches up automatically. Independent edits remain branches until a user chooses or merges their contents.
+- Consume clipboard and shortcut events before native defaults, preventing the same paste from being inserted repeatedly by both handlers.
+- Route native Quit requests (including Command-Q) through the application-wide save/flush and shutdown path. Explicit quitting overrides background/tray mode; closing a window keeps its separate behavior.
+- Handle Dock reopen requests by showing existing windows or creating a window when needed.
+- Confirm file/window handoff only after the running instance processes it. Retry session acquisition briefly when the previous instance is shutting down. Never delete a live instance's lock or clear document caches as a startup workaround. Add diagnostic events for lifecycle and handoff failures.
 
-The versions view offers **Use selected as main** and **Use editor text as main**. A confirmed choice creates a signed resolution joining the displayed branches. Unseen offline branches and concurrent decisions remain visible for another decision. Clocks and legacy force generations never silently select a winner. Identical contents can be joined without user arbitration.
+The reported restart failure after Force Quit was not reproduced because no app launches or tests were requested. These changes address the identified quit/reopen/handoff paths. Force Quit can only recover the last completed durable session write.
 
-## Existing links and recovery
+## Immediate sync
 
-- Preserve encrypted pre-migration session/sharing backups, available historical snapshots and independent pending drafts.
-- Revalidate V1.5.3/V1.5.4 signatures; recover branches hidden by force priority and store exact signed base IDs in local links.
-- Restore missing bases/history in bounded resumable batches. Show document status instead of repeated background error dialogs.
-- Add **Repair document sync**: retry restoration, keep text as an independent branch, ask paired devices for a missing root, or start a new approved history. Roots require confirmation; new groups require recipient approval and preserve different local copies.
-- Preview/compare historical and linked archived versions or open recovery copies. Unverifiable records cannot masquerade as signed ancestry.
-- Archive damaged stored snapshots before authenticated atomic replacement. Preserve pending drafts independently of session writes.
+A **Sync now** button sits beside the document sync countdown. It publishes the current changes and wakes communication immediately instead of waiting for the writing pause. It does not force a version winner, bypass conflicts, grant access, or make offline devices available. Existing main-version decisions remain in Document versions.
 
-## Status and logs
+## Pinned tabs and groups
 
-Show per-document recovery, backlog, integrity, quota and connection states. Log signed commit IDs and authors without contents or keys. Isolate failed documents, fairly resume large histories and prioritise current edits over historical bodies.
+Pin/unpin tabs and assign named groups from the File menu or tab context menu. Pinned tabs appear first; tabs in the same named group appear together with a group label. Use an empty name or Remove from group to clear membership. Pin state, group names and the invisible-character display preference survive session restoration and are local to the editor, not shared document contents.
 
-## Compatibility and limits
+## Readable communication log
 
-Upgrade **all communicating devices to V1.5.5**. Older protocol peers are refused. Do not downgrade migrated profiles. Device identities, encryption and the update-signing key are unchanged.
+The default view shows plain-language connection checks, sharing requests, transfers, confirmations, conflict/recovery events and actionable problem explanations. Device filters and search remain available. **Show technical details and background messages** reveals protocol traffic, endpoints and commit identifiers. The filtered export follows the selected view; pseudonymised export retains its separate privacy rules. A confirmation is not a claim that every offline device is current.
 
-Migration does not silently delete available data. It cannot recreate bytes deleted before upgrading or recover an encrypted profile without its key. Unavailable peers, corrupt data, full disks and quotas can still pause sync; recovery paths remain available. Explicit cleanup can remove retired sync-only history and retains its confirmation. Keep a separate backup before upgrading important work.
+## Optional text cleanup
 
-Membership, revocation, target consent, external-file checks and autosave remain enforced. No promise of error-free networking or automatic text conflict merging.
+Choose **Edit > Clean up text** to remove trailing spaces/tabs, reduce consecutive empty lines to one, or apply both. Indentation and images are retained. Cleanup is explicitly invoked and supports Undo/Redo. Mixed documents retain text-only cleanup snapshots and recalculate image offsets without duplicating encoded image payloads. A subsequent document load or incoming replacement resets that cleanup context.
 
-Source review and native compilation/packaging only. **No automated, interactive or installation tests; no app launches.** Windows/Apple developer certificates remain unconfigured; update metadata uses the existing Ed25519 key. Original code remains under The Unlicense.
+**View > Show invisible characters** displays spaces, tabs and line breaks as an overlay. It does not insert symbols into the document, clipboard or sync data. Rendering is limited to visible text with a fixed work budget.
 
-See [Sync history and recovery](https://github.com/OnlySecci/EditorTool/blob/main/docs/sync-history.md).
+## Automatic unlock for installed profiles
+
+Existing password-protected, non-portable profiles can move their existing master key to the system key store after a successful password unlock. A one-time offer and **Settings > Security > Use system key store** provide the conversion. Verify storage before switching; preserve a password-wrapped fallback header and retain the current protection if conversion fails. Documents, history, device identity and sync associations use the same key and remain intact.
+
+Linux now supports native KDE Wallet 6/5 as a fallback when Secret Service storage cannot be used, including scoped Flatpak D-Bus permissions. This addresses KDE/Nobara installations without a usable Secret Service endpoint; it cannot unlock a disabled or unavailable system wallet without OS cooperation. The OS can still request its own wallet unlock/access approval. Portable profiles retain password protection. Key-store failures are logged without password/key values. A previously converted profile can use its preserved password header for a session if OS key storage is unavailable.
+
+## Compatibility and packages
+
+The sync wire protocol remains compatible with V1.5.5. Do not downgrade profiles that now use the new KDE Wallet storage mode. Original saved files keep their existing formats. Update metadata uses the existing pinned Ed25519 trust key; Windows developer signing and Apple notarisation remain unconfigured.
+
+Source review, native compilation and packaging only. **No automated, interactive or installation tests, no application launches and no screen control.** All six native platform targets and all 16 package formats are required for publication. Original code remains under The Unlicense.

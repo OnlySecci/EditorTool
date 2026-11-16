@@ -208,10 +208,22 @@ fn protect_os(header: &mut Header, master: &[u8]) -> io::Result<()> {
         header.mode = "dpapi".into();
         header.wrapped = STANDARD.encode(&*dpapi(master, false)?);
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     {
         header.mode = "keychain".into();
         key_entry(&header.id)?.set_secret(master).map_err(error)?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        match key_entry(&header.id).and_then(|entry| entry.set_secret(master).map_err(error)) {
+            Ok(()) => header.mode = "keychain".into(),
+            Err(secret_service) => {
+                crate::kwallet::access(&header.id, Some(master)).map_err(|wallet| {
+                    error(format!("Secret Service: {secret_service}; {wallet}"))
+                })?;
+                header.mode = "kwallet".into();
+            }
+        }
     }
     let restored = load_master(header)?;
     if restored.as_slice() != master {
@@ -224,6 +236,8 @@ fn load_master(header: &Header) -> io::Result<Zeroizing<Vec<u8>>> {
         "password" => unwrap_password(header),
         #[cfg(windows)]
         "dpapi" => dpapi(&decode(&header.wrapped)?, true),
+        #[cfg(target_os = "linux")]
+        "kwallet" => crate::kwallet::access(&header.id, None),
         #[cfg(not(windows))]
         "keychain" => key_entry(&header.id)?
             .get_secret()
@@ -392,7 +406,20 @@ pub fn initialize(root: &Path) -> io::Result<()> {
                 if let Some(key) = unlocked {
                     (header, key)
                 } else {
-                    recover_profile(root, Some(&header))?
+                    let backup = read_header(&root.join("security/vault.password-backup.json"))
+                        .ok()
+                        .filter(|b| {
+                            b.id == header.id && b.check == header.check && b.mode == "password"
+                        });
+                    if let Some(backup) = backup {
+                        if crate::chrome::decision(None,"System key store is locked","Unlock with the previous EditorTool password for this session?","The system-protected profile remains unchanged. No new device key is generated.",&["Keep locked","Use previous password"],1) == Some(1) {
+                            let master = unwrap_password(&backup)?;
+                            check(&backup, &master)?;
+                            (backup, master)
+                        } else { return Err(error("Protected data remains locked")); }
+                    } else {
+                        recover_profile(root, Some(&header))?
+                    }
                 }
             }
             Err(_) => recover_profile(root, None)?,
@@ -413,12 +440,30 @@ pub fn initialize(root: &Path) -> io::Result<()> {
             migration_complete: false,
         };
         let portable = portable(root);
-        if portable || protect_os(&mut header, &master).is_err() {
+        let os_result = if portable {
+            Err(error("Portable profile"))
+        } else {
+            protect_os(&mut header, &master)
+        };
+        if let Err(e) = os_result {
+            if !portable {
+                crate::diagnostics::failure(
+                    "security",
+                    "system_key_store_setup_failed",
+                    &e.to_string(),
+                );
+            }
             let action=crate::chrome::decision(None,"Protect local data",if portable {"Portable profiles use a protection password."}else{"The operating-system key store is unavailable. Use a password to protect local data."},"Cancelling leaves existing data unchanged and locked. Send/Sync and session saving will remain unavailable until protection is configured.",&["Continue with data locked","Set protection password…"],1);
             if action != Some(1) {
                 return Err(error("Protection setup cancelled"));
             }
             wrap_password(&mut header, &master)?;
+            if !portable {
+                crate::session::atomic_write(
+                    &root.join("security/keep-password.txt"),
+                    b"system-store-unavailable-retry-from-settings",
+                )?;
+            }
         }
         let nonce = random::<12>()?;
         let mut check_bytes = nonce.to_vec();
@@ -454,6 +499,7 @@ pub fn initialize(root: &Path) -> io::Result<()> {
     *KEY.lock().unwrap() = Some(key);
     *MODE.lock().unwrap() = match header.mode.as_str() {
         "dpapi" => "Windows DPAPI",
+        "kwallet" => "KDE Wallet",
         "keychain" => {
             if cfg!(target_os = "macos") {
                 "macOS Keychain"
@@ -489,6 +535,9 @@ pub fn initialize(root: &Path) -> io::Result<()> {
         }
         crate::diagnostics::event("security", "local_data_migration_completed");
     }
+    if read_header(&path).is_ok_and(|h| h.mode == "password") {
+        offer_system_key_store(root, &header);
+    }
     Ok(())
 }
 pub fn status() -> String {
@@ -499,6 +548,102 @@ pub fn status() -> String {
 }
 pub fn unlocked() -> bool {
     KEY.lock().unwrap().is_some()
+}
+fn system_name() -> &'static str {
+    if cfg!(windows) {
+        "Windows DPAPI"
+    } else if cfg!(target_os = "macos") {
+        "macOS Keychain"
+    } else {
+        "Linux Secret Service"
+    }
+}
+fn use_system(root: &Path, header: &Header, master: &[u8]) -> io::Result<()> {
+    if portable(root) {
+        return Err(error("Portable profiles retain password protection"));
+    }
+    if header.mode != "password" {
+        return Ok(());
+    }
+    check(header, master)?;
+    let path = root.join("security/vault.json");
+    let backup = root.join("security/vault.password-backup.json");
+    let original = serde_json::to_vec(header).map_err(error)?;
+    // Preserve the password-wrapped header before changing OS credentials or disk state.
+    crate::session::atomic_write(&backup, &original)?;
+    let stored_backup = read_header(&backup)?;
+    check(&stored_backup, master)?;
+    if serde_json::to_vec(&stored_backup).map_err(error)? != original {
+        return Err(error(
+            "Password recovery header confirmation failed; original profile preserved",
+        ));
+    }
+    let mut replacement = header.clone();
+    protect_os(&mut replacement, master)?;
+    replacement.salt.clear();
+    replacement.nonce.clear();
+    #[cfg(not(windows))]
+    replacement.wrapped.clear();
+    let result = (|| {
+        crate::session::atomic_write(&path, &serde_json::to_vec(&replacement).map_err(error)?)?;
+        let saved = read_header(&path)?;
+        let restored = load_master(&saved)?;
+        check(&saved, &restored)?;
+        if restored.as_slice() != master {
+            return Err(error("System key verification failed"));
+        }
+        Ok(())
+    })();
+    if let Err(e) = result {
+        crate::session::atomic_write(&path, &original)?;
+        return Err(e);
+    }
+    *MODE.lock().unwrap() = if replacement.mode == "kwallet" {
+        "KDE Wallet"
+    } else {
+        system_name()
+    };
+    crate::diagnostics::event("security", "existing_profile_switched_to_system_key_store");
+    Ok(())
+}
+pub fn use_system_key_store() -> io::Result<()> {
+    let root = ROOT
+        .get()
+        .ok_or_else(|| error("Protection is not initialized"))?;
+    let header = read_header(&root.join("security/vault.json"))?;
+    if header.mode != "password" {
+        return Ok(());
+    }
+    let key = KEY
+        .lock()
+        .unwrap()
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| error("Unlock protected data first"))?;
+    use_system(root, &header, &*key)
+}
+fn offer_system_key_store(root: &Path, header: &Header) {
+    if header.mode != "password" || portable(root) {
+        return;
+    }
+    let preference = root.join("security/keep-password.txt");
+    if preference.exists() {
+        return;
+    }
+    let choice = crate::chrome::decision(None, "Automatic unlock", "Use the system key store to unlock this installed profile automatically?", "Your existing key, documents, history and paired devices remain unchanged. The previous password stays available as a fallback if the system key store becomes unavailable.", &["Keep password", "Use system key store"], 1);
+    if choice == Some(1) {
+        if let Err(e) = use_system_key_store() {
+            crate::diagnostics::failure(
+                "security",
+                "system_key_store_switch_failed",
+                &e.to_string(),
+            );
+            crate::chrome::decision(None, "System key store unavailable", "Automatic unlock could not be confirmed. Your existing data and password recovery header were preserved.", &format!("{}: {}. Unlock or enable your system key store, then use Settings > Security > Use system key store to retry.", system_name(), e), &["Close"], 0);
+            let _ = crate::session::atomic_write(&preference, b"retry-from-security-settings");
+        }
+    } else if choice == Some(0) {
+        let _ = crate::session::atomic_write(&preference, b"password-selected");
+    }
 }
 pub fn sensitive(path: &Path) -> bool {
     let Some(root) = ROOT.get() else {

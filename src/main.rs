@@ -6,11 +6,14 @@ mod core;
 #[cfg(target_os = "linux")]
 mod desktop;
 mod diagnostics;
+mod editing_tools;
 mod file_dialog;
 mod i18n;
 mod identity;
 mod ipc;
+mod kwallet;
 mod limits;
+mod mac_lifecycle;
 mod network;
 mod notices;
 mod peer;
@@ -117,7 +120,15 @@ enum Action {
     InitTray,
     TrayUnavailable,
     ShowWindows,
+    IpcOpen(String, Vec<PathBuf>, std::sync::mpsc::Sender<()>),
     QuitAll,
+    SyncNow,
+    TogglePin,
+    SetTabGroup,
+    ClearTabGroup,
+    CleanupText,
+    ToggleInvisibles,
+    SecurityUseSystem,
     NewWindow,
     NewTab,
     Select(usize),
@@ -209,6 +220,10 @@ struct Document {
     compared: Option<(u64, u64)>,
     status: Frame,
     sync_status: Frame,
+    sync_row: Flex,
+    sync_now: Button,
+    pinned: bool,
+    tab_group: String,
     sync_text: String,
     sync_error: Option<u64>,
     status_text: String,
@@ -266,6 +281,9 @@ impl Document {
     }
     fn snapshot(&self) -> session::TabState {
         session::TabState {
+            pinned: self.pinned,
+            tab_group: self.tab_group.clone(),
+            show_invisibles: self.left.invisibles(),
             page: self.page,
             zoom: self.left.zoom(),
             right_zoom: self.right.zoom(),
@@ -604,6 +622,19 @@ impl EditorWindow {
                 Shortcut::Alt | fltk::enums::Key::F4,
                 Action::CloseWindow,
             ),
+            ("&File/Pin or unpin tab", Shortcut::None, Action::TogglePin),
+            (
+                "&File/Move tab to group…",
+                Shortcut::None,
+                Action::SetTabGroup,
+            ),
+            ("&Edit/Clean up text…", Shortcut::None, Action::CleanupText),
+            (
+                "&View/Show invisible characters",
+                Shortcut::None,
+                Action::ToggleInvisibles,
+            ),
+            ("&File/Quit", Shortcut::Command | 'q', Action::QuitAll),
             ("&Edit/Undo", Shortcut::Command | 'z', Action::Undo),
             ("&Edit/Cut", Shortcut::Command | 'x', Action::Cut),
             (
@@ -1007,12 +1038,19 @@ impl EditorWindow {
         status.set_label_size(11);
         status.set_label_color(MUTED);
         group.fixed(&status, 36);
+        let mut sync_row = Flex::default().row();
+        sync_row.set_spacing(8);
         let mut sync_status = Frame::default();
         sync_status.set_align(Align::Left | Align::Inside);
         sync_status.set_label_color(theme::BLUE);
         sync_status.set_label_size(12);
-        group.fixed(&sync_status, 20);
-        sync_status.hide();
+        let mut sync_now = Button::default().with_label(i18n::tr("Sync now"));
+        theme::button(&mut sync_now, false, None);
+        sync_now.emit(tx, (wid, Action::SyncNow));
+        sync_row.fixed(&sync_now, 108);
+        sync_row.end();
+        group.fixed(&sync_row, 28);
+        sync_row.hide();
         group.end();
         self.area.end();
         Group::set_current(None::<&Group>);
@@ -1036,6 +1074,10 @@ impl EditorWindow {
             compared: None,
             status,
             sync_status,
+            sync_row,
+            sync_now,
+            pinned: false,
+            tab_group: String::new(),
             sync_text: String::new(),
             sync_error: None,
             status_text: String::new(),
@@ -1144,13 +1186,25 @@ impl EditorWindow {
         let signature = format!(
             "{}:{:?}",
             self.active,
-            self.docs.iter().map(Document::title).collect::<Vec<_>>()
+            self.docs
+                .iter()
+                .enumerate()
+                .map(|(i, _)| self.tab_label(i))
+                .collect::<Vec<_>>()
         );
         if signature != self.tab_signature {
             self.bar.clear();
             self.bar.begin();
-            for (i, d) in self.docs.iter().enumerate() {
-                let tab = theme::tab(&d.title(), i == self.active, wid, i, tx);
+            for i in self.tab_order() {
+                let tab = theme::tab(
+                    &self.docs[i].title(),
+                    i == self.active,
+                    &self.docs[i].tab_group,
+                    self.docs[i].pinned,
+                    wid,
+                    i,
+                    tx,
+                );
                 let _ = tab;
             }
             let mut add = Button::default();
@@ -1211,7 +1265,11 @@ impl EditorWindow {
         let maximum = (content_length - viewport_length).max(0);
         let mut position = current.clamp(0, maximum);
         if self.reveal_tab {
-            let start = self.active as i32
+            let start = self
+                .tab_order()
+                .iter()
+                .position(|i| *i == self.active)
+                .unwrap_or(0) as i32
                 * if self.vertical {
                     TAB_VERTICAL_STEP
                 } else {
@@ -1413,6 +1471,11 @@ impl EditorWindow {
             }
         }
         match action {
+            Action::TogglePin
+            | Action::SetTabGroup
+            | Action::ClearTabGroup
+            | Action::CleanupText
+            | Action::ToggleInvisibles => self.editing_action(action),
             Action::DismissNotice => self.notice.dismiss(),
             Action::TabContext(index, x, y) => {
                 if index >= self.docs.len() {
@@ -1925,7 +1988,16 @@ impl EditorWindow {
             let d = &mut self.docs[index];
             d.id = tab.id;
             d.cache_key = tab.key.clone();
-            d.page = tab.page.min(6);
+            d.pinned = tab.pinned;
+            d.tab_group = tab
+                .tab_group
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(48)
+                .collect();
+            d.left.set_invisibles(tab.show_invisibles);
+            d.right.set_invisibles(tab.show_invisibles);
+            d.page = tab.page.min(7);
             if d.page != 0 {
                 d.panes.hide();
                 d.status.hide();
@@ -2058,6 +2130,7 @@ struct Runtime {
     conflict_notified: std::collections::BTreeSet<String>,
     tray: Option<tray::Native>,
     quit_requested: bool,
+    ipc_seen: std::collections::BTreeSet<String>,
 }
 impl Runtime {
     fn snapshot(&self) -> session::Snapshot {
@@ -2168,6 +2241,19 @@ impl Runtime {
             None => return,
         };
         match action {
+            Action::IpcOpen(request_id, paths, confirmation) => {
+                if !self.quit_requested {
+                    self.handle(wid, Action::ShowWindows);
+                    let _ = confirmation.send(());
+                    if !self.ipc_seen.contains(&request_id) {
+                        if self.ipc_seen.len() >= 512 {
+                            self.ipc_seen.pop_first();
+                        }
+                        self.ipc_seen.insert(request_id);
+                        self.handle(wid, Action::OpenExternal(paths));
+                    }
+                }
+            }
             Action::OpenExternal(paths) => {
                 let id = if let Some(index) = self.windows.iter().position(Option::is_some) {
                     let active = self.windows[index].as_ref().unwrap().route.get();
@@ -2532,6 +2618,7 @@ impl Runtime {
             Action::FileHistory => self.history_dialog(wid),
             Action::Security => self.open_management_tab(wid, 7),
             Action::SecuritySave
+            | Action::SecurityUseSystem
             | Action::SecurityRecovery
             | Action::SecurityRotate
             | Action::SecurityClean
@@ -2711,13 +2798,31 @@ fn main() {
         .map(|p| p.canonicalize().unwrap_or(p))
         .collect::<Vec<_>>();
     let session_directory = config.parent().unwrap().join("session");
-    let store = match session::Store::new(session_directory.clone(), tx) {
-        Ok(store) => store,
-        Err(error) => {
-            if ipc::forward(&session_directory, input_files).is_err() {
+    let mut attempts = 0;
+    let store = loop {
+        match session::Store::new(session_directory.clone(), tx) {
+            Ok(store) => break store,
+            Err(error) => {
+                diagnostics::failure("session", "startup_session_unavailable", &error);
+                if error.contains("already open") {
+                    match ipc::forward(&session_directory, input_files.clone()) {
+                        Ok(()) => {
+                            diagnostics::event("app", "startup_confirmed_by_existing_instance");
+                            return;
+                        }
+                        Err(forward_error) => {
+                            diagnostics::failure("app", "startup_handoff_failed", &forward_error)
+                        }
+                    }
+                    if attempts < 3 {
+                        attempts += 1;
+                        std::thread::sleep(std::time::Duration::from_millis(250));
+                        continue;
+                    }
+                }
                 dialog::alert_default(&error);
+                return;
             }
-            return;
         }
     };
     if let Err(e) = ipc::listen(&session_directory, tx) {
@@ -2807,6 +2912,7 @@ fn main() {
         conflict_notified: Default::default(),
         tray: None,
         quit_requested: false,
+        ipc_seen: Default::default(),
     }));
     {
         let mut runtime = state.borrow_mut();
@@ -2834,6 +2940,10 @@ fn main() {
         }
         runtime.update();
         runtime.persist();
+    }
+    #[cfg(target_os = "macos")]
+    if let Err(error) = mac_lifecycle::install(tx) {
+        diagnostics::failure("app", "macos_lifecycle_install", error);
     }
     if let Some(error) =
         updater::previous_error(&state.borrow().config.parent().unwrap().join("updates"))

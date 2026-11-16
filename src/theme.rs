@@ -219,6 +219,7 @@ fn hover<W: WidgetBase + WidgetExt>(widget: &mut W) -> Rc<Cell<bool>> {
 
 #[derive(Clone, Copy)]
 pub enum Icon {
+    Pin,
     Search,
     Compare,
     Plus,
@@ -230,6 +231,15 @@ pub fn icon(kind: Icon, x: i32, y: i32, color: Color) {
     draw::set_draw_color(color);
     draw::set_line_style(LineStyle::Solid, 2);
     match kind {
+        Icon::Pin => {
+            draw::draw_line(x + 6, y + 3, x + 14, y + 3);
+            draw::draw_line(x + 8, y + 3, x + 8, y + 9);
+            draw::draw_line(x + 12, y + 3, x + 12, y + 9);
+            draw::draw_line(x + 8, y + 9, x + 5, y + 12);
+            draw::draw_line(x + 12, y + 9, x + 15, y + 12);
+            draw::draw_line(x + 5, y + 12, x + 15, y + 12);
+            draw::draw_line(x + 10, y + 12, x + 10, y + 19);
+        }
         Icon::Search => {
             draw::draw_arc(x + 2, y + 2, 12, 12, 0., 360.);
             draw::draw_line(x + 12, y + 12, x + 18, y + 18);
@@ -368,12 +378,28 @@ pub fn heading(label: &str, size: i32) -> Frame {
 pub fn tab(
     title: &str,
     active: bool,
+    group: &str,
+    pinned: bool,
     wid: usize,
     index: usize,
     tx: app::Sender<Message>,
 ) -> Button {
     let mut b = Button::default().with_label(title);
-    b.set_tooltip(title);
+    b.set_tooltip(&format!(
+        "{}{}{}",
+        title,
+        if group.is_empty() {
+            String::new()
+        } else {
+            format!("\n{}: {}", crate::i18n::tr("Group"), group)
+        },
+        if pinned {
+            format!("\n{}", crate::i18n::tr("Pinned"))
+        } else {
+            String::new()
+        }
+    ));
+    let group = group.to_owned();
     b.set_frame(FrameType::NoBox);
     b.clear_visible_focus();
     let hovered = hover(&mut b);
@@ -392,10 +418,10 @@ pub fn tab(
             }
         }
         icon(
-            Icon::Document,
+            if pinned { Icon::Pin } else { Icon::Document },
             b.x() + 13,
             b.y() + (b.h() - 20) / 2,
-            if active { BLUE } else { SECONDARY },
+            if active || pinned { BLUE } else { SECONDARY },
         );
         let dirty = b.label().ends_with(" *");
         let mut title = b.label().trim_end_matches(" *").to_owned();
@@ -411,11 +437,27 @@ pub fn tab(
         draw::draw_text2(
             &title,
             b.x() + 40,
-            b.y(),
+            if group.is_empty() { b.y() } else { b.y() + 3 },
             max,
-            b.h(),
+            if group.is_empty() { b.h() } else { 14 },
             Align::Left | Align::Inside,
         );
+        if !group.is_empty() {
+            draw::set_font(Font::Helvetica, 10);
+            let mut caption = group.clone();
+            while !caption.is_empty() && draw::measure(&caption, false).0 > max {
+                caption.pop();
+            }
+            draw::set_draw_color(SECONDARY);
+            draw::draw_text2(
+                &caption,
+                b.x() + 40,
+                b.y() + 17,
+                max,
+                11,
+                Align::Left | Align::Inside,
+            );
+        }
         if dirty {
             draw::set_draw_color(SECONDARY);
             draw::draw_pie(b.x() + b.w() - 45, b.y() + b.h() / 2 - 2, 5, 5, 0., 360.);

@@ -1,5 +1,17 @@
 # Changelog
 
+## V1.5.6 - 2026-11-16
+
+- Consume native/custom paste and shortcut events once, fixing repeated macOS clipboard insertion.
+- Route macOS native quit through full application shutdown, support Dock reopen, confirm UI handoffs and retry startup during previous-instance shutdown.
+- Add Sync now beside the countdown without overriding conflict, consent or version rules.
+- Add session-persisted pinned tabs, named groups and invisible-character display preferences.
+- Make communication logs readable by default with optional technical/background details and existing filtered/pseudonymised export.
+- Add explicit trailing-whitespace/empty-line cleanup with Undo/Redo; preserve mixed-document image contents and offsets.
+- Convert installed password profiles to verified OS key storage using the existing master key and a password-wrapped fallback header. Add native KDE Wallet 6/5 support and Flatpak permissions.
+- Translate new core controls in the existing language catalogs; keep protocol identifiers and diagnostic details in English.
+- Preserve the V1.5.5 sync protocol and update trust key. Build/package without tests, app launches or screen control.
+
 ## V1.5.5 - 2026-11-15
 
 - Replace force-generation winners with signed content ancestry, separate counter provenance and explicit resolution commits.

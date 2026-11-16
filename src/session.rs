@@ -16,6 +16,12 @@ use std::{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TabState {
     #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub tab_group: String,
+    #[serde(default)]
+    pub show_invisibles: bool,
+    #[serde(default)]
     pub page: u8,
     #[serde(default = "default_zoom")]
     pub zoom: i32,

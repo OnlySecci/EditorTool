@@ -207,15 +207,26 @@ impl Runtime {
                 } else {
                     String::new()
                 };
+                if let Some(binding) = &d.sharing {
+                    if self
+                        .sharing
+                        .as_ref()
+                        .is_some_and(|s| s.progress(&binding.doc).enabled)
+                    {
+                        d.sync_now.activate();
+                    } else {
+                        d.sync_now.deactivate();
+                    }
+                }
                 if note != d.sync_text {
                     let show = !note.is_empty();
                     d.sync_text = note;
                     d.sync_status.set_label(&d.sync_text);
-                    if show != d.sync_status.visible() {
+                    if show != d.sync_row.visible() {
                         if show {
-                            d.sync_status.show();
+                            d.sync_row.show();
                         } else {
-                            d.sync_status.hide();
+                            d.sync_row.hide();
                         }
                         d.group.recalc();
                     }
@@ -657,6 +668,7 @@ impl Runtime {
                 | Action::InitTray
                 | Action::TrayUnavailable
                 | Action::ShowWindows
+                | Action::SyncNow
                 | Action::QuitAll
         ) {
             return Some(action);
@@ -830,14 +842,57 @@ impl Runtime {
                     return Err("No accessible system tray. EditorTool stays open as a window. GNOME needs a StatusNotifier/AppIndicator extension.".into());
                 }
                 Action::ShowWindows => self.show_windows(),
+                Action::SyncNow => {
+                    let d = self
+                        .windows
+                        .get(wid)
+                        .and_then(Option::as_ref)
+                        .and_then(|w| w.docs.get(w.active))
+                        .ok_or("No document selected")?;
+                    let binding = d.sharing.as_ref().ok_or("This document is not shared")?;
+                    let doc = binding.doc.clone();
+                    let key = d.cache_key.clone();
+                    let revision = d.left_meta.borrow().revision;
+                    if let Some(pending) = self.share_timers.remove(&key) {
+                        app::remove_timeout3(pending.timer);
+                    }
+                    traffic::sync(
+                        &doc,
+                        "User requested immediate sync; conflict rules remain enforced",
+                        "",
+                        "",
+                    );
+                    self.publish_shared(&key, revision)?;
+                    if let Some(service) = &self.sharing {
+                        service.retry();
+                    }
+                    self.apply_shared(&doc)?;
+                }
                 Action::QuitAll => {
+                    if !self.cache_enabled {
+                        for w in self.windows.iter_mut().flatten() {
+                            for index in 0..w.docs.len() {
+                                if !w.confirm_close(index) {
+                                    #[cfg(target_os = "macos")]
+                                    mac_lifecycle::complete(false);
+                                    return Ok(());
+                                }
+                            }
+                        }
+                    }
                     self.persist();
-                    self.store.flush()?;
+                    if let Err(error) = self.store.flush() {
+                        #[cfg(target_os = "macos")]
+                        mac_lifecycle::complete(false);
+                        return Err(error);
+                    }
                     self.quit_requested = true;
                     if let Some(s) = &mut self.sharing {
                         s.stop_listener();
                     }
                     app::quit();
+                    #[cfg(target_os = "macos")]
+                    mac_lifecycle::complete(true);
                 }
                 Action::Transfer(sync) => {
                     if let Some(Some(w)) = self.windows.get(wid) {

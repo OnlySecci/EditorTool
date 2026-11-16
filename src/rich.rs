@@ -73,7 +73,17 @@ enum Part {
     Text(TextPart),
     Image(Frame, i32, i32),
 }
+struct CleanupUndo {
+    start: usize,
+    before: String,
+    after: String,
+    before_hash: String,
+    after_hash: String,
+    undone: bool,
+}
 struct State {
+    cleanup_undo: Option<CleanupUndo>,
+    invisibles: Rc<Cell<bool>>,
     viewport: Scroll,
     content: Group,
     buffer: TextBuffer,
@@ -216,6 +226,8 @@ impl RichEditor {
         let buffer = TextBuffer::default();
         let guard = Rc::new(Cell::new(false));
         let state = Rc::new(RefCell::new(State {
+            cleanup_undo: None,
+            invisibles: Rc::new(Cell::new(false)),
             viewport: scroll.clone(),
             content,
             buffer: buffer.clone(),
@@ -312,6 +324,7 @@ impl RichEditor {
     }
     fn load_snapshot(&mut self, text: &str, preserve_view: bool) -> Result<(), String> {
         validate_snapshot(text)?;
+        self.state.borrow_mut().cleanup_undo = None;
         let mut document = if text.starts_with('{') {
             serde_json::from_str::<FileDocument>(text)
                 .ok()
@@ -503,6 +516,9 @@ impl RichEditor {
         }
     }
     pub fn undo(&self) {
+        if self.cleanup_history(false) {
+            return;
+        }
         let s = self.state.borrow();
         if let Some(Part::Text(t)) = s.parts.get(s.current) {
             let ed = t.editor.clone();
@@ -511,11 +527,106 @@ impl RichEditor {
         }
     }
     pub fn redo(&self) {
+        if self.cleanup_history(true) {
+            return;
+        }
         let s = self.state.borrow();
         if let Some(Part::Text(t)) = s.parts.get(s.current) {
             let ed = t.editor.clone();
             drop(s);
             ed.redo();
+        }
+    }
+    pub fn invisibles(&self) -> bool {
+        self.state.borrow().invisibles.get()
+    }
+    pub fn set_invisibles(&mut self, show: bool) {
+        let mut s = self.state.borrow_mut();
+        s.invisibles.set(show);
+        for p in &mut s.parts {
+            if let Part::Text(t) = p {
+                t.editor.redraw();
+            }
+        }
+    }
+    pub fn cleanup(&mut self, trailing: bool, blanks: bool) -> bool {
+        let before = self.state.borrow().buffer.text();
+        let mut after = String::with_capacity(before.len());
+        let mut empty = 0;
+        for segment in before.split_inclusive('\n') {
+            let newline = segment.ends_with('\n');
+            let line = segment.strip_suffix('\n').unwrap_or(segment);
+            let line = if trailing {
+                line.trim_end_matches([' ', '\t'])
+            } else {
+                line
+            };
+            if line.trim_matches([' ', '\t']).is_empty() {
+                empty += 1;
+            } else {
+                empty = 0;
+            }
+            if !blanks || empty <= 1 {
+                after.push_str(line);
+                if newline {
+                    after.push('\n');
+                }
+            }
+        }
+        if before == after {
+            return false;
+        }
+        if self.state.borrow().assets.is_empty() {
+            let mut s = self.state.borrow_mut();
+            s.cleanup_undo = None;
+            replace_text(&mut s.buffer, &after);
+        } else {
+            apply_cleanup(&self.state, &after);
+            let edit = Edit::between(&before, &after);
+            self.state.borrow_mut().cleanup_undo = Some(CleanupUndo {
+                start: edit.start,
+                before_hash: crate::peer::hash(before.as_bytes()),
+                after_hash: crate::peer::hash(after.as_bytes()),
+                before: before[edit.start..edit.old_end].to_owned(),
+                after: after[edit.start..edit.new_end].to_owned(),
+                undone: false,
+            });
+        }
+        true
+    }
+    fn cleanup_history(&self, redo: bool) -> bool {
+        let action = {
+            let s = self.state.borrow();
+            s.cleanup_undo.as_ref().and_then(|h| {
+                if h.undone != redo {
+                    return None;
+                }
+                let mut text = s.buffer.text();
+                let expected = if redo { &h.before_hash } else { &h.after_hash };
+                if crate::peer::hash(text.as_bytes()) != *expected {
+                    return None;
+                }
+                let (old, new) = if redo {
+                    (&h.before, &h.after)
+                } else {
+                    (&h.after, &h.before)
+                };
+                let end = h.start.checked_add(old.len())?;
+                if !text.is_char_boundary(h.start) || !text.is_char_boundary(end) {
+                    return None;
+                }
+                text.replace_range(h.start..end, new);
+                Some(text)
+            })
+        };
+        if let Some(text) = action {
+            apply_cleanup(&self.state, &text);
+            if let Some(h) = &mut self.state.borrow_mut().cleanup_undo {
+                h.undone = !redo;
+            }
+            true
+        } else {
+            false
         }
     }
     pub fn paste(&mut self) {
@@ -760,7 +871,13 @@ fn rebuild(state: &Rc<RefCell<State>>) {
         editor.set_linenumber_bgcolor(BG);
         editor.set_scrollbar_size(14);
         editor.super_draw_first(true);
-        editor.draw(|w| crate::theme::draw_scrollbars(w));
+        let invisibles = s.invisibles.clone();
+        editor.draw(move |w| {
+            crate::theme::draw_scrollbars(w);
+            if invisibles.get() {
+                draw_invisibles(w);
+            }
+        });
         let index = s.parts.len();
         let weak = Rc::downgrade(state);
         let target = s.target.clone();
@@ -827,6 +944,8 @@ fn rebuild(state: &Rc<RefCell<State>>) {
         }
         let weak = Rc::downgrade(state);
         let scroll_grab = Cell::new(None);
+        // Consumed paste/key events must not also run the native editor handler.
+        editor.super_handle_first(false);
         editor.handle(move |editor, event| {
             if event == Event::Unfocus || event == Event::Hide {
                 crate::caret::stop(editor);
@@ -1585,4 +1704,111 @@ fn expand_tabs(line: &str, distance: i32) -> String {
         }
     }
     out
+}
+
+// Bulk cleanup retains only text snapshots, never duplicate encoded image payloads.
+fn apply_cleanup(state: &Rc<RefCell<State>>, text: &str) {
+    let positions = text
+        .match_indices(IMAGE_MARKER)
+        .map(|(p, _)| p)
+        .collect::<Vec<_>>();
+    {
+        let mut s = state.borrow_mut();
+        if positions.len() != s.assets.len() {
+            return;
+        }
+        for (asset, position) in s.assets.iter_mut().zip(positions) {
+            asset.position = position;
+        }
+        s.guard.set(true);
+        replace_text(&mut s.buffer, text);
+        s.guard.set(false);
+        s.geometry = None;
+    }
+    rebuild(state);
+}
+fn draw_invisibles(editor: &TextEditor) {
+    let Some(buffer) = editor.buffer() else {
+        return;
+    };
+    draw::set_font(editor.text_font(), editor.text_size());
+    draw::set_draw_color(MUTED);
+    let height = draw::height().max(1);
+    let mut left = editor.x() + editor.linenumber_width() + 4;
+    let mut right = editor.x() + editor.w() - 16;
+    let mut top = editor.y() + 2;
+    let mut bottom = editor.y() + editor.h() - 16;
+    // Mixed-flow text widgets can be much taller than their visible scroll area.
+    let mut parent = editor.parent();
+    while let Some(widget) = parent {
+        if widget.as_window().is_some() {
+            break;
+        }
+        left = left.max(widget.x());
+        right = right.min(widget.x() + widget.w());
+        top = top.max(widget.y());
+        bottom = bottom.min(widget.y() + widget.h());
+        parent = widget.parent();
+    }
+    if left >= right || top >= bottom {
+        return;
+    }
+    let first = editor.y() + 2 + (top - editor.y() - 2).max(0) / height * height + height / 2;
+    draw::push_clip(
+        left,
+        editor.y() + 2,
+        (right - left).max(0),
+        (bottom - editor.y() - 2).max(0),
+    );
+    let mut last = -1;
+    let mut budget = 16_384;
+    for y in (first..bottom).step_by(height as usize) {
+        let start = editor
+            .xy_to_position(left, y, fltk::text::PositionType::Character)
+            .max(0);
+        let end = editor
+            .xy_to_position(right, y, fltk::text::PositionType::Character)
+            .max(start)
+            .min(buffer.length());
+        if start == last {
+            continue;
+        }
+        last = start;
+        if let Some(text) = buffer.text_range(
+            start,
+            if buffer.char_at(end) == Some('\n') {
+                end + 1
+            } else {
+                end
+            },
+        ) {
+            for (offset, c) in text.char_indices() {
+                if budget == 0 {
+                    break;
+                }
+                budget -= 1;
+                let glyph = match c {
+                    ' ' => "·",
+                    '\t' => "→",
+                    '\n' => "¶",
+                    _ => continue,
+                };
+                let (x, y) = editor.position_to_xy(start + offset as i32);
+                if x >= left && x < right && y >= editor.y() && y < bottom {
+                    draw::draw_text2(
+                        glyph,
+                        x,
+                        y,
+                        height,
+                        height,
+                        fltk::enums::Align::Left | fltk::enums::Align::Inside,
+                    );
+                }
+            }
+        }
+        if budget == 0 {
+            break;
+        }
+    }
+    draw::pop_clip();
 }
