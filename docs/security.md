@@ -1,4 +1,4 @@
-# Security design and recovery — V1.5.3
+# Security design and recovery — V1.5.6
 
 ## Scope and limitations
 
@@ -8,7 +8,9 @@ EditorTool uses authenticated private-network sharing over TLS/TCP, not a cloud 
 
 A random 256-bit profile master key protects files beneath `session`, `history` and `sharing`, except the session process lock and local IPC rendezvous file. Settings, size-limit configuration, diagnostic logs and communication logs are outside this content vault; they can contain local metadata and should be reviewed before export. Files manually saved by the user retain their normal format.
 
-Windows uses user-bound DPAPI. macOS uses Keychain and Linux uses Secret Service. Flatpak has explicit access to the Secret Service name, without a broad home-directory grant. These credential services have their own account/unlock policies and may prompt. Portable profiles use a password. If OS credential storage is unavailable on first setup, the user can explicitly choose password protection or leave protected data locked. There is no silent plaintext fallback.
+Windows uses user-bound DPAPI. macOS uses Keychain and Linux uses Secret Service, with native KDE Wallet 6/5 as a fallback when Secret Service storage cannot be used. Flatpak has explicit access to the Secret Service name, without a broad home-directory grant. These credential services have their own account/unlock policies and may prompt. Portable profiles use a password. If OS credential storage is unavailable on first setup, the user can explicitly choose password protection or leave protected data locked. There is no silent plaintext fallback.
+
+Installed password profiles can explicitly switch to the system key store after unlocking, using the same master key. Conversion persists a password-wrapped fallback header, verifies the OS credential and the committed header, and attempts to restore the original header on confirmation failure. The fallback remains sensitive offline password-guessing material and must be protected with the profile; it is not a plaintext master key. If OS retrieval later fails, a matching profile/canary permits unlocking that session with the previous password. Keep a separately exported recovery key and encrypted-profile backup. Portable profiles retain password protection; OS key-store prompts remain under operating-system policy.
 
 Password wrapping uses PBKDF2-HMAC-SHA256 with 600,000 iterations, a random 16-byte salt and AES-256-GCM; passwords must contain at least 12 characters. A strong unique password remains necessary. `security/vault.json` contains the public profile identifier, wrapping metadata and an authenticated canary, never the unwrapped master key. The migration-complete state is bound into that canary.
 

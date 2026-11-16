@@ -11,17 +11,22 @@ use std::{
 };
 #[derive(Serialize, Deserialize)]
 struct Endpoint {
+    #[serde(default)]
+    protocol: u16,
     port: u16,
     token: String,
 }
 #[derive(Serialize, Deserialize)]
 struct Request {
+    #[serde(default)]
+    id: String,
     token: String,
     paths: Vec<PathBuf>,
 }
 pub fn listen(directory: &Path, tx: app::Sender<Message>) -> Result<(), String> {
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|e| e.to_string())?;
     let endpoint = Endpoint {
+        protocol: 156,
         port: listener.local_addr().map_err(|e| e.to_string())?.port(),
         token: crate::private_fs::random_token().map_err(|e| e.to_string())?,
     };
@@ -57,8 +62,13 @@ pub fn listen(directory: &Path, tx: app::Sender<Message>) -> Result<(), String> 
                 })();
                 if received.is_ok() {
                     if let Ok(request) = serde_json::from_slice::<Request>(&bytes) {
-                        if request.token == endpoint.token && request.paths.len() <= 64 {
-                            tx.send((0, Action::OpenExternal(request.paths)));
+                        if request.token == endpoint.token && request.paths.len() <= 64 && request.id.len()<=64 && request.id.bytes().all(|c|c.is_ascii_hexdigit()) {
+                            let (confirmed, reply) = std::sync::mpsc::channel();
+                            let id=if request.id.is_empty() {crate::private_fs::random_token().unwrap_or_default()}else{request.id};
+                            tx.send((0, Action::IpcOpen(id,request.paths, confirmed)));
+                            if reply.recv_timeout(Duration::from_secs(3)).is_ok() {
+                                let _ = stream.write_all(b"ET156OK");
+                            }
                         }
                     }
                 }
@@ -68,6 +78,8 @@ pub fn listen(directory: &Path, tx: app::Sender<Message>) -> Result<(), String> 
     Ok(())
 }
 pub fn forward(directory: &Path, paths: Vec<PathBuf>) -> Result<(), String> {
+    static ID: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    let id=ID.get_or_init(||crate::private_fs::random_token().ok()).as_ref().ok_or("Could not create handoff identifier")?.clone();
     let endpoint: Endpoint = serde_json::from_slice(
         &crate::limits::read(&directory.join("instance.json"), 4096).map_err(|e| e.to_string())?,
     )
@@ -81,11 +93,28 @@ pub fn forward(directory: &Path, paths: Vec<PathBuf>) -> Result<(), String> {
     stream
         .write_all(
             &serde_json::to_vec(&Request {
+                id,
                 token: endpoint.token,
                 paths,
             })
             .map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string())?;
+    if endpoint.protocol < 156 {
+        return Ok(());
+    }
+    stream
+        .shutdown(std::net::Shutdown::Write)
+        .map_err(|e| e.to_string())?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(4)))
+        .map_err(|e| e.to_string())?;
+    let mut confirmation = [0u8; 7];
+    stream
+        .read_exact(&mut confirmation)
+        .map_err(|e| e.to_string())?;
+    if &confirmation != b"ET156OK" {
+        return Err("Existing instance did not confirm reopening".into());
+    }
     Ok(())
 }

@@ -5,6 +5,7 @@ pub struct Panel {
     pub page: settings_page::Page,
     device: Choice,
     direction: Choice,
+    details: fltk::button::CheckButton,
     search: Input,
     buffer: TextBuffer,
     keys: Vec<String>,
@@ -31,8 +32,7 @@ impl Panel {
         device.add_choice(crate::i18n::tr("All devices"));
         device.set_value(0);
         let mut direction = Choice::default();
-        direction.add_choice(crate::i18n::tr("All directions|TX|RX|OUT|IN|ERROR"));
-        direction.add_choice("SYNC");
+        direction.add_choice(crate::i18n::tr("All activity|Sent|Received|Outgoing connections|Incoming connections|Problems|Synchronization"));
         direction.set_value(0);
         filters.fixed(&direction, 140);
         let mut search = Input::default();
@@ -50,6 +50,12 @@ impl Panel {
         search.emit(tx, (0, Action::TrafficFilter));
         filters.end();
         root.fixed(&filters, 34);
+        let mut details = fltk::button::CheckButton::default().with_label(crate::i18n::tr(
+            "Show technical details and background messages",
+        ));
+        theme::check(&mut details);
+        details.emit(tx, (0, Action::TrafficFilter));
+        root.fixed(&details, 26);
         let buffer = TextBuffer::default();
         let mut display = fltk::text::TextDisplay::default();
         display.set_buffer(buffer.clone());
@@ -83,6 +89,7 @@ impl Panel {
             page,
             device,
             direction,
+            details,
             search,
             buffer,
             keys: vec![String::new()],
@@ -122,7 +129,10 @@ impl Panel {
             .get(self.device.value().max(0) as usize)
             .cloned()
             .unwrap_or_default();
-        let direction = self.direction.choice().unwrap_or_default();
+        let direction = ["", "TX", "RX", "OUT", "IN", "ERROR", "SYNC"]
+            .get(self.direction.value().max(0) as usize)
+            .copied()
+            .unwrap_or("");
         let query = self.search.value().to_lowercase();
         let mut text = String::new();
         let mut anonymous=String::from("Pseudonymized communication log. Names, addresses and fingerprints removed. Timestamps and traffic sizes remain.\n");
@@ -153,13 +163,13 @@ impl Panel {
             }
             let t = time::OffsetDateTime::from_unix_timestamp(e.time as i64)
                 .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
-            let mut line = format!(
+            let mut technical = format!(
                 "{:02}:{:02}:{:02} UTC  {:5}  {}  {} -> {}  {}  {} B\n",
                 t.hour(),
                 t.minute(),
                 t.second(),
                 e.direction,
-                peer.map(|p| p.name.as_str()).unwrap_or("Unbekannt"),
+                peer.map(|p| p.name.as_str()).unwrap_or("Unlisted device"),
                 e.local,
                 e.remote,
                 e.event,
@@ -167,19 +177,50 @@ impl Panel {
             );
             if !e.document.is_empty() {
                 if e.revision.is_empty() && e.force_generation > 0 {
-                    line.push_str(&format!(
+                    technical.push_str(&format!(
                         "    Group {} · Legacy force {} · Authority {}\n",
                         e.document, e.force_generation, e.force_author
                     ));
                 } else {
-                    line.push_str(&format!(
+                    technical.push_str(&format!(
                         "    Group {} · Commit {} · Author {}\n",
                         e.document, e.revision, e.force_author
                     ));
                 }
             }
+            let friendly = friendly_event(&e);
+            if !self.details.value() && friendly.is_none() {
+                continue;
+            }
+            let name = peer
+                .map(|p| p.name.as_str())
+                .filter(|name| !name.is_empty())
+                .unwrap_or(if e.direction == "SYNC" && e.peer.is_empty() {
+                    crate::i18n::tr("This device")
+                } else {
+                    crate::i18n::tr("Unlisted device")
+                });
+            let mut line = if let Some((title, explanation)) = friendly {
+                format!(
+                    "{} {:02}:{:02}:{:02} UTC  ·  {}\n{}\n{}\n\n",
+                    t.date(),
+                    t.hour(),
+                    t.minute(),
+                    t.second(),
+                    name,
+                    crate::i18n::tr(title),
+                    crate::i18n::tr(explanation)
+                )
+            } else {
+                String::new()
+            };
+            if self.details.value() {
+                line.push_str(&technical);
+                line.push('\n');
+            }
             if query.is_empty()
                 || line.to_lowercase().contains(&query)
+                || technical.to_lowercase().contains(&query)
                 || e.peer.to_lowercase().contains(&query)
             {
                 text.push_str(&line);
@@ -237,4 +278,96 @@ impl Panel {
         }
         Ok(())
     }
+}
+
+fn friendly_event(e: &traffic::Entry) -> Option<(&'static str, &'static str)> {
+    let event = e.event.to_lowercase();
+    if event == "request hello" && e.direction == "TX" {
+        return Some((
+            "Checking device availability",
+            "Asking the other device for its current connection and document status.",
+        ));
+    }
+    if event == "reply hello" && e.direction == "RX" {
+        return Some((
+            "Device responded",
+            "The other device is reachable and returned its document status.",
+        ));
+    }
+    if e.direction == "ERROR" && event.contains("timeout") {
+        return Some(("Device did not respond in time", "Check the network or VPN connection and whether EditorTool is running on the other device."));
+    }
+    if e.direction == "ERROR" && event.contains("refused") {
+        return Some(("Connection was refused", "Check that Send / Sync is enabled on the other device and that its address, port and interface are correct."));
+    }
+    if e.direction == "ERROR" && event.contains("trust") {
+        return Some(("Device security check needs attention", "Review device approval and identity on both devices. Do not approve an unfamiliar device."));
+    }
+    if e.direction == "ERROR" || event == "reply error" {
+        return Some(("Communication problem", "The action could not be completed. Check that the other device is online; technical details can help diagnose the cause."));
+    }
+    if event.contains("immediate sync") {
+        return Some(("Sync requested now", "The writing countdown was skipped. Device permissions and conflict decisions still apply."));
+    }
+    if event.contains("main decision") || event.contains("resolution applied") {
+        return Some(("Main version selected", "The chosen contents were recorded in the shared history. Offline devices will receive them when connected."));
+    }
+    if event.contains("conflict") || event.contains("independent branch") {
+        return Some(("A document version needs attention", "Different changes were preserved. Open Document versions to review and choose or merge them."));
+    }
+    if event.contains("local tree commit") {
+        return Some((
+            "Local changes saved for sync",
+            "Your changes have been recorded locally and are ready for connected devices.",
+        ));
+    }
+    if event.contains("acknowledged") || event == "reply done" {
+        return Some(("Other device confirmed a step", "The other device acknowledged the request. This does not mean that all offline devices are up to date."));
+    }
+    if event == "document body completed" {
+        return Some(("Document sent", "The document data was sent. A separate confirmation is needed from the receiving device."));
+    }
+    if event == "document body validated" {
+        return Some((
+            "Document received and checked",
+            "The received document data passed the content checks.",
+        ));
+    }
+    if event == "request offer" {
+        return Some((
+            "Document sharing requested",
+            "A device is asking to send or synchronise a document. Approval may be required.",
+        ));
+    }
+    if event == "reply accepted" {
+        return Some((
+            "Sharing approved",
+            "The recipient accepted the document request.",
+        ));
+    }
+    if event == "reply rejected" {
+        return Some((
+            "Sharing declined",
+            "The recipient declined the document request.",
+        ));
+    }
+    if event == "request leave" {
+        return Some((
+            "Document sync stopped",
+            "A device has left this document's synchronisation group.",
+        ));
+    }
+    if event.contains("paused") {
+        return Some(("Document sync paused", "Your local contents are preserved. Check document status, available storage and device connectivity."));
+    }
+    if event.contains("restored") || event.contains("recovered") || event.contains("archived") {
+        return Some(("Document recovery progressed", "Stored history or contents were preserved or restored. Open Document versions for the available versions."));
+    }
+    if event.contains("identical contents joined") {
+        return Some((
+            "Matching versions joined",
+            "Versions with the same contents were joined without choosing a winner.",
+        ));
+    }
+    None
 }

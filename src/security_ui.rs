@@ -30,6 +30,11 @@ impl Panel {
         theme::button(&mut export, false, None);
         export.emit(tx, (0, Action::SecurityRecovery));
         root.fixed(&export, 34);
+        let mut automatic = Button::default()
+            .with_label(crate::i18n::tr("Use system key store (automatic unlock)"));
+        theme::button(&mut automatic, false, None);
+        automatic.emit(tx, (0, Action::SecurityUseSystem));
+        root.fixed(&automatic, 34);
         let caption = theme::heading(
             "Sharing storage limits (MiB; lowering limits never deletes active documents)",
             13,
@@ -140,6 +145,11 @@ impl Panel {
 impl Runtime {
     pub fn security_action(&mut self, action: Action) -> Result<(), String> {
         match action {
+            Action::SecurityUseSystem=>{
+                vault::use_system_key_store().map_err(|e|e.to_string())?;
+                self.security_panel.refresh(self.sharing.as_ref());
+                chrome::decision(None,"Automatic unlock","The existing profile key is protected by the system key store.","Device identity, encrypted documents and sync links were preserved. The operating system may still request its own key-store unlock.",&["Close"],0);
+            }
             Action::SecuritySave=>self.security_panel.save(self.config.parent().unwrap())?,
             Action::SecurityRecovery=>vault::export_recovery().map_err(|e|e.to_string())?,
             Action::SecurityUnblock=>{

@@ -7,6 +7,8 @@ finish-args:
   - --share=network
   - --talk-name=org.freedesktop.Flatpak
   - --talk-name=org.freedesktop.secrets
+  - --talk-name=org.kde.kwalletd6
+  - --talk-name=org.kde.kwalletd5
   - --talk-name=org.kde.StatusNotifierWatcher
   - --socket=x11
   - --share=ipc
