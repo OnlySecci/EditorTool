@@ -1,5 +1,9 @@
 # Changelog
 
+## Planned V1.5.6 (not released)
+
+- Handle application shortcuts and mixed-editor paste events before native defaults. Consume each paste once instead of running both native and custom handlers, fixing repeated clipboard insertion on macOS and duplicate shortcut actions.
+
 ## V1.5.5 - 2026-11-15
 
 - Replace force-generation winners with signed content ancestry, separate counter provenance and explicit resolution commits.

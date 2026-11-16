@@ -827,6 +827,8 @@ fn rebuild(state: &Rc<RefCell<State>>) {
         }
         let weak = Rc::downgrade(state);
         let scroll_grab = Cell::new(None);
+        // Consumed paste/key events must not also run the native editor handler.
+        editor.super_handle_first(false);
         editor.handle(move |editor, event| {
             if event == Event::Unfocus || event == Event::Hide {
                 crate::caret::stop(editor);
