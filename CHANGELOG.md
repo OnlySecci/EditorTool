@@ -2,6 +2,7 @@
 
 ## Planned V1.5.6 (not released)
 
+- Track the remaining requested UI, cleanup, Nobara key-storage and macOS lifecycle work in [the V1.5.6 preparation plan](docs/v1.5.6-plan.md). These items are pending implementation and verification.
 - Handle application shortcuts and mixed-editor paste events before native defaults. Consume each paste once instead of running both native and custom handlers, fixing repeated clipboard insertion on macOS and duplicate shortcut actions.
 
 ## V1.5.5 - 2026-11-15
