@@ -1196,7 +1196,15 @@ impl EditorWindow {
             self.bar.clear();
             self.bar.begin();
             for i in self.tab_order() {
-                let tab = theme::tab(&self.tab_label(i), i == self.active, wid, i, tx);
+                let tab = theme::tab(
+                    &self.docs[i].title(),
+                    i == self.active,
+                    &self.docs[i].tab_group,
+                    self.docs[i].pinned,
+                    wid,
+                    i,
+                    tx,
+                );
                 let _ = tab;
             }
             let mut add = Button::default();
@@ -1981,7 +1989,12 @@ impl EditorWindow {
             d.id = tab.id;
             d.cache_key = tab.key.clone();
             d.pinned = tab.pinned;
-            d.tab_group = tab.tab_group.chars().take(48).collect();
+            d.tab_group = tab
+                .tab_group
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(48)
+                .collect();
             d.left.set_invisibles(tab.show_invisibles);
             d.right.set_invisibles(tab.show_invisibles);
             d.page = tab.page.min(7);
@@ -2233,7 +2246,9 @@ impl Runtime {
                     self.handle(wid, Action::ShowWindows);
                     let _ = confirmation.send(());
                     if !self.ipc_seen.contains(&request_id) {
-                        if self.ipc_seen.len()>=512 {self.ipc_seen.pop_first();}
+                        if self.ipc_seen.len() >= 512 {
+                            self.ipc_seen.pop_first();
+                        }
                         self.ipc_seen.insert(request_id);
                         self.handle(wid, Action::OpenExternal(paths));
                     }

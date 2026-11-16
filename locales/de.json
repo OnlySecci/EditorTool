@@ -904,5 +904,7 @@
   "Use the system key store to unlock this installed profile automatically?": "Soll der System-Schlüsselbund dieses installierte Profil automatisch entsperren?",
   "Unlock with the previous EditorTool password for this session?": "Für diese Sitzung mit dem bisherigen EditorTool-Passwort entsperren?",
   "Automatic unlock could not be confirmed. Your existing data and password recovery header were preserved.": "Automatisches Entsperren konnte nicht bestätigt werden. Deine Daten und die passwortgeschützte Schlüssel-Sicherung bleiben erhalten.",
-  "The existing profile key is protected by the system key store.": "Der bestehende Profilschlüssel ist im System-Schlüsselbund geschützt."
+  "The existing profile key is protected by the system key store.": "Der bestehende Profilschlüssel ist im System-Schlüsselbund geschützt.",
+  "Group": "Gruppe",
+  "Pinned": "Angeheftet"
 }

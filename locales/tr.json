@@ -439,5 +439,7 @@
   "Automatic unlock": "Otomatik kilit açma",
   "Use system key store": "Sistem anahtarlığını kullan",
   "Keep password": "Parolayı koru",
-  "No cleanup needed": "Temizleme gerekmiyor"
+  "No cleanup needed": "Temizleme gerekmiyor",
+  "Group": "Grup",
+  "Pinned": "Sabitlenmiş"
 }

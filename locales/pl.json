@@ -439,5 +439,7 @@
   "Automatic unlock": "Automatyczne odblokowanie",
   "Use system key store": "Użyj systemowego magazynu kluczy",
   "Keep password": "Zachowaj hasło",
-  "No cleanup needed": "Oczyszczanie nie jest potrzebne"
+  "No cleanup needed": "Oczyszczanie nie jest potrzebne",
+  "Group": "Grupa",
+  "Pinned": "Przypięta"
 }

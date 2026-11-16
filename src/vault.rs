@@ -573,6 +573,11 @@ fn use_system(root: &Path, header: &Header, master: &[u8]) -> io::Result<()> {
     crate::session::atomic_write(&backup, &original)?;
     let stored_backup = read_header(&backup)?;
     check(&stored_backup, master)?;
+    if serde_json::to_vec(&stored_backup).map_err(error)? != original {
+        return Err(error(
+            "Password recovery header confirmation failed; original profile preserved",
+        ));
+    }
     let mut replacement = header.clone();
     protect_os(&mut replacement, master)?;
     replacement.salt.clear();

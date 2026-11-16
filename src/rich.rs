@@ -1734,9 +1734,26 @@ fn draw_invisibles(editor: &TextEditor) {
     draw::set_font(editor.text_font(), editor.text_size());
     draw::set_draw_color(MUTED);
     let height = draw::height().max(1);
-    let left = editor.x() + editor.linenumber_width() + 4;
-    let right = editor.x() + editor.w() - 16;
-    let bottom = editor.y() + editor.h() - 16;
+    let mut left = editor.x() + editor.linenumber_width() + 4;
+    let mut right = editor.x() + editor.w() - 16;
+    let mut top = editor.y() + 2;
+    let mut bottom = editor.y() + editor.h() - 16;
+    // Mixed-flow text widgets can be much taller than their visible scroll area.
+    let mut parent = editor.parent();
+    while let Some(widget) = parent {
+        if widget.as_window().is_some() {
+            break;
+        }
+        left = left.max(widget.x());
+        right = right.min(widget.x() + widget.w());
+        top = top.max(widget.y());
+        bottom = bottom.min(widget.y() + widget.h());
+        parent = widget.parent();
+    }
+    if left >= right || top >= bottom {
+        return;
+    }
+    let first = editor.y() + 2 + (top - editor.y() - 2).max(0) / height * height + height / 2;
     draw::push_clip(
         left,
         editor.y() + 2,
@@ -1745,7 +1762,7 @@ fn draw_invisibles(editor: &TextEditor) {
     );
     let mut last = -1;
     let mut budget = 16_384;
-    for y in (editor.y() + height / 2 + 2..bottom).step_by(height as usize) {
+    for y in (first..bottom).step_by(height as usize) {
         let start = editor
             .xy_to_position(left, y, fltk::text::PositionType::Character)
             .max(0);

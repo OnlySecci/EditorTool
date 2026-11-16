@@ -439,5 +439,7 @@
   "Automatic unlock": "Автоматичне розблокування",
   "Use system key store": "Використати системне сховище ключів",
   "Keep password": "Зберегти пароль",
-  "No cleanup needed": "Очищення не потрібне"
+  "No cleanup needed": "Очищення не потрібне",
+  "Group": "Група",
+  "Pinned": "Закріплено"
 }

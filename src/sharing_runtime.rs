@@ -853,9 +853,8 @@ impl Runtime {
                     let doc = binding.doc.clone();
                     let key = d.cache_key.clone();
                     let revision = d.left_meta.borrow().revision;
-                    self.publish_shared(&key, revision)?;
-                    if let Some(service) = &self.sharing {
-                        service.retry();
+                    if let Some(pending) = self.share_timers.remove(&key) {
+                        app::remove_timeout3(pending.timer);
                     }
                     traffic::sync(
                         &doc,
@@ -863,6 +862,10 @@ impl Runtime {
                         "",
                         "",
                     );
+                    self.publish_shared(&key, revision)?;
+                    if let Some(service) = &self.sharing {
+                        service.retry();
+                    }
                     self.apply_shared(&doc)?;
                 }
                 Action::QuitAll => {

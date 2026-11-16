@@ -439,5 +439,7 @@
   "Automatic unlock": "Automatisch ontgrendelen",
   "Use system key store": "Systeemsleutelbos gebruiken",
   "Keep password": "Wachtwoord behouden",
-  "No cleanup needed": "Opschonen niet nodig"
+  "No cleanup needed": "Opschonen niet nodig",
+  "Group": "Groep",
+  "Pinned": "Vastgemaakt"
 }

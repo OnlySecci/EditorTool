@@ -439,5 +439,7 @@
   "Automatic unlock": "Sblocco automatico",
   "Use system key store": "Usa portachiavi di sistema",
   "Keep password": "Mantieni password",
-  "No cleanup needed": "Nessuna pulizia necessaria"
+  "No cleanup needed": "Nessuna pulizia necessaria",
+  "Group": "Gruppo",
+  "Pinned": "Fissata"
 }

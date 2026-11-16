@@ -439,5 +439,7 @@
   "Automatic unlock": "Déverrouillage automatique",
   "Use system key store": "Utiliser le trousseau système",
   "Keep password": "Conserver le mot de passe",
-  "No cleanup needed": "Aucun nettoyage nécessaire"
+  "No cleanup needed": "Aucun nettoyage nécessaire",
+  "Group": "Groupe",
+  "Pinned": "Épinglé"
 }
